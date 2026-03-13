@@ -1,0 +1,38 @@
+CREATE DATABASE IF NOT EXISTS gestorrutas
+  CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+USE gestorrutas;
+
+CREATE TABLE IF NOT EXISTS clients (
+    id          INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    name        VARCHAR(150) NOT NULL,
+    address     VARCHAR(255) DEFAULT '',
+    phone       VARCHAR(30)  DEFAULT '',
+    notes       TEXT,
+    is_depot    TINYINT(1) NOT NULL DEFAULT 0,
+    x           DECIMAL(9,6) NOT NULL,
+    y           DECIMAL(9,6) NOT NULL,
+    open_time   TIME NOT NULL DEFAULT '09:00:00',
+    close_time  TIME NOT NULL DEFAULT '18:00:00',
+    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS orders (
+    id          INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    client_id   INT UNSIGNED NOT NULL,
+    order_date  DATE NOT NULL,
+    notes       TEXT,
+    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_client_date (client_id, order_date),
+    FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS order_items (
+    id          INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    order_id    INT UNSIGNED NOT NULL,
+    item_name   VARCHAR(200) NOT NULL,
+    quantity    INT UNSIGNED NOT NULL DEFAULT 1,
+    FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE
+) ENGINE=InnoDB;

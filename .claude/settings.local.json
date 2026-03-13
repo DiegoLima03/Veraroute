@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(\"c:/wamp64/bin/php/php8.3.20/php.exe\" -v)",
+      "Read(//c/wamp64/bin/php/**)"
+    ]
+  }
+}

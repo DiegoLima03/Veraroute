@@ -1,0 +1,1938 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ERP | Menu Superior</title>
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
+    />
+    <style>
+      :root {
+        --vz-negro: #10180e;
+        --vz-marron1: #46331f;
+        --vz-marron2: #85725e;
+        --vz-crema: #e5e2dc;
+        --vz-verde: #8e8b30;
+        --vz-rojo: #c83c32;
+        --vz-amarillo: #d4a830;
+        --vz-blanco: #ffffff;
+        --vz-verde-suave: rgba(142, 139, 48, 0.1);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+        background: var(--vz-crema);
+        color: var(--vz-negro);
+      }
+
+      .topnav {
+        background: var(--vz-verde);
+        border-bottom: 1px solid var(--vz-marron1);
+        box-shadow: 0 2px 8px rgba(16, 24, 14, 0.08);
+        position: sticky;
+        top: 0;
+        z-index: 20;
+      }
+
+      .topnav-inner {
+        width: 100%;
+        padding: 0 10px;
+        min-height: 60px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 18px;
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        color: var(--vz-crema);
+        font-weight: 700;
+        letter-spacing: 0.3px;
+      }
+
+      .brand .brand-img {
+        width: 38px;
+        height: 38px;
+        object-fit: contain;
+        background: transparent;
+      }
+
+      .main-menu {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        flex-wrap: wrap;
+      }
+
+      .main-menu a,
+      .main-menu .menu-trigger {
+        text-decoration: none;
+        color: var(--vz-crema);
+        padding: 10px 12px;
+        border-radius: 8px;
+        font-size: 14px;
+        transition: background 0.2s ease, color 0.2s ease;
+        font-family: inherit;
+        line-height: 1.2;
+      }
+
+      .main-menu .menu-trigger {
+        border: 0;
+        background: transparent;
+        cursor: pointer;
+      }
+
+      .main-menu .menu-trigger::after {
+        content: "v";
+        margin-left: 6px;
+        font-size: 12px;
+      }
+
+      .main-menu a:hover,
+      .main-menu .menu-trigger:hover,
+      .main-menu .menu-dropdown.is-open .menu-trigger {
+        background: var(--vz-crema);
+        color: var(--vz-negro);
+      }
+
+      .main-menu a.active {
+        background: var(--vz-crema);
+        color: var(--vz-negro);
+        font-weight: 600;
+      }
+
+      .menu-dropdown {
+        position: relative;
+      }
+
+      .menu-dropdown-panel {
+        position: absolute;
+        left: 0;
+        top: calc(100% + 6px);
+        min-width: 210px;
+        display: none;
+        padding: 6px;
+        border-radius: 10px;
+        border: 1px solid var(--vz-marron2);
+        background: var(--vz-crema);
+        box-shadow: 0 2px 8px rgba(16, 24, 14, 0.08);
+        z-index: 30;
+      }
+
+      .menu-dropdown.is-open .menu-dropdown-panel {
+        display: block;
+      }
+
+      .menu-dropdown-panel a {
+        display: block;
+        color: var(--vz-negro);
+        padding: 8px 10px;
+        border-radius: 8px;
+        text-decoration: none;
+        font-size: 13px;
+        transition: background 0.2s ease, transform 0.1s ease;
+      }
+
+      .menu-dropdown-panel a:hover {
+        background: var(--vz-verde-suave);
+        transform: translateX(2px);
+      }
+
+      .topnav-actions {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .chip {
+        border: 1px solid var(--vz-marron2);
+        background: var(--vz-crema);
+        color: var(--vz-negro);
+        font-size: 12px;
+        border-radius: 999px;
+        padding: 6px 10px;
+      }
+
+      .avatar {
+        width: 36px;
+        height: 36px;
+        border-radius: 50%;
+        display: grid;
+        place-items: center;
+        font-size: 13px;
+        font-weight: 700;
+        color: var(--vz-negro);
+        background: var(--vz-crema);
+        border: 1px solid var(--vz-marron2);
+      }
+
+      .layout {
+        width: 100%;
+        margin: 8px 0 10px;
+        padding: 0 10px;
+      }
+
+      .headline {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 10px;
+        gap: 8px;
+      }
+
+      .headline h1 {
+        margin: 0;
+        font-size: 24px;
+      }
+
+      .headline .meta {
+        color: var(--vz-marron2);
+        font-size: 13px;
+      }
+
+      .headline-actions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .btn-new {
+        border: 1px solid var(--vz-verde);
+        background: var(--vz-verde);
+        color: var(--vz-crema);
+        border-radius: 8px;
+        padding: 8px 12px;
+        font-size: 13px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+      }
+
+      .btn-new:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(142, 139, 48, 0.3);
+      }
+
+      .cards {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 14px;
+        margin-bottom: 10px;
+      }
+
+      .card {
+        background: var(--vz-blanco);
+        border: 1px solid var(--vz-marron2);
+        border-radius: 12px;
+        padding: 14px 16px;
+        box-shadow: 0 2px 8px rgba(16, 24, 14, 0.08);
+      }
+
+      .card h3 {
+        margin: 0 0 6px;
+        font-size: 13px;
+        color: var(--vz-marron2);
+        font-weight: 600;
+      }
+
+      .card strong {
+        font-size: 22px;
+      }
+
+      .panel {
+        background: var(--vz-blanco);
+        border: 1px solid var(--vz-marron2);
+        border-radius: 12px;
+        box-shadow: 0 2px 8px rgba(16, 24, 14, 0.08);
+        overflow: hidden;
+      }
+
+      .workspace {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 0;
+        gap: 10px;
+        align-items: start;
+      }
+      /*MODIFICAR PARA AUMENTAR EL ANCHO DEL DETAIL SI SE NECESITA, MIN MAX*/
+      .workspace.is-detail-open {
+        grid-template-columns: minmax(0, 58%) minmax(140px, 42%);
+      }
+
+      .orders-pane {
+        min-width: 0;
+      }
+
+      .detail-pane {
+        min-width: 0;
+        opacity: 0;
+        pointer-events: none;
+        transform: translateX(8px);
+        transition: opacity 0.2s ease, transform 0.2s ease;
+        display: flex;
+        flex-direction: column;
+        max-height: calc(100vh - 96px);
+        position: sticky;
+        top: 72px;
+      }
+
+      .workspace.is-detail-open .detail-pane {
+        opacity: 1;
+        pointer-events: auto;
+        transform: translateX(0);
+      }
+
+      .detail-head {
+        padding: 12px 14px;
+        border-bottom: 1px solid var(--vz-marron2);
+        background: var(--vz-blanco);
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 10px;
+      }
+
+      .detail-head h2 {
+        margin: 0 0 4px;
+        font-size: 17px;
+      }
+
+      .detail-head p {
+        margin: 0;
+        font-size: 12px;
+        color: var(--vz-marron2);
+      }
+
+      .detail-close {
+        border: 1px solid var(--vz-marron2);
+        background: var(--vz-blanco);
+        color: var(--vz-marron2);
+        border-radius: 8px;
+        padding: 8px 10px;
+        cursor: pointer;
+        font-size: 12px;
+        transition: background 0.2s ease, border-color 0.2s ease;
+      }
+
+      .detail-close:hover {
+        background: var(--vz-crema);
+        border-color: var(--vz-marron1);
+      }
+
+      .detail-body {
+        padding: 12px;
+        overflow: auto;
+      }
+
+      .detail-empty {
+        border: 1px dashed var(--vz-marron2);
+        border-radius: 10px;
+        padding: 14px;
+        color: var(--vz-marron2);
+        font-size: 13px;
+        background: var(--vz-blanco);
+      }
+
+      .detail-note {
+        margin: 0 0 12px;
+        padding: 8px 10px;
+        background: var(--vz-verde-suave);
+        border-left: 3px solid var(--vz-verde);
+        border-radius: 4px;
+        font-size: 12px;
+        color: var(--vz-marron1);
+      }
+
+      .detail-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+        margin-bottom: 12px;
+      }
+
+      .detail-field {
+        display: grid;
+        gap: 5px;
+        font-size: 12px;
+        color: var(--vz-marron2);
+      }
+
+      .detail-field.full {
+        grid-column: 1 / -1;
+      }
+
+      .detail-field input,
+      .detail-field select,
+      .detail-field textarea {
+        border: 1px solid var(--vz-marron2);
+        border-radius: 8px;
+        padding: 8px 9px;
+        font-size: 13px;
+        background: var(--vz-blanco);
+        color: var(--vz-negro);
+      }
+
+      .detail-field textarea {
+        min-height: 72px;
+        resize: vertical;
+      }
+
+      .detail-section-title {
+        margin: 0 0 8px;
+        font-size: 13px;
+        color: var(--vz-marron2);
+      }
+
+      .detail-lines {
+        border: 1px solid var(--vz-marron2);
+        border-radius: 10px;
+        overflow: hidden;
+        margin-bottom: 10px;
+      }
+
+      .detail-lines table {
+        width: 100%;
+        font-size: 12px;
+      }
+
+      .detail-lines thead {
+        background: var(--vz-verde);
+        color: var(--vz-crema);
+      }
+
+      .detail-lines thead tr {
+        border-left: 3px solid var(--vz-verde);
+      }
+
+      .detail-lines thead th {
+        border-left: none;
+        box-shadow: none;
+        border-bottom: none;
+      }
+
+      .detail-lines th,
+      .detail-lines td {
+        padding: 8px 10px;
+      }
+
+      .detail-lines input,
+      .detail-lines select {
+        width: 100%;
+        border: 1px solid var(--vz-marron2);
+        border-radius: 6px;
+        padding: 6px 8px;
+        font-size: 12px;
+        background: var(--vz-blanco);
+        color: var(--vz-negro);
+      }
+
+      .detail-totals {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        align-items: flex-end;
+        margin-bottom: 12px;
+        font-size: 13px;
+      }
+
+      .detail-totals strong {
+        font-size: 14px;
+      }
+
+      .detail-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+      }
+
+      .detail-actions button {
+        border: 1px solid var(--vz-marron2);
+        border-radius: 8px;
+        padding: 8px 12px;
+        font-size: 13px;
+        cursor: pointer;
+        background: var(--vz-blanco);
+        color: var(--vz-marron2);
+        transition: background 0.2s ease, border-color 0.2s ease;
+      }
+
+      .detail-actions button:hover {
+        background: var(--vz-crema);
+        border-color: var(--vz-marron1);
+      }
+
+      .detail-actions .primary {
+        background: var(--vz-verde);
+        border-color: var(--vz-verde);
+        color: var(--vz-crema);
+      }
+
+      .detail-actions .primary:hover {
+        background: var(--vz-verde);
+        border-color: var(--vz-verde);
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(142, 139, 48, 0.3);
+      }
+
+      .filters-toolbar {
+        display: flex;
+        justify-content: flex-end;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+        padding: 14px 14px 0;
+        background: var(--vz-blanco);
+      }
+
+      .btn-confirm-sample {
+        border: 1px solid var(--vz-marron2);
+        background: var(--vz-crema);
+        color: var(--vz-marron1);
+        border-radius: 8px;
+        padding: 9px 12px;
+        font-size: 13px;
+        font-weight: 700;
+        cursor: pointer;
+        transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+      }
+
+      .btn-confirm-sample:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(16, 24, 14, 0.14);
+        border-color: var(--vz-marron1);
+      }
+
+      .btn-popup-form-sample {
+        border: 1px solid var(--vz-verde);
+        background: var(--vz-verde);
+        color: var(--vz-crema);
+        border-radius: 8px;
+        padding: 9px 12px;
+        font-size: 13px;
+        font-weight: 700;
+        cursor: pointer;
+        transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+      }
+
+      .btn-popup-form-sample:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(142, 139, 48, 0.3);
+        background: #7c792b;
+      }
+
+      .btn-success-sample,
+      .btn-failure-sample {
+        border-radius: 8px;
+        padding: 9px 12px;
+        font-size: 13px;
+        font-weight: 700;
+        cursor: pointer;
+        transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+      }
+
+      .btn-success-sample {
+        border: 1px solid #198754;
+        background: #198754;
+        color: #fff;
+      }
+
+      .btn-success-sample:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(25, 135, 84, 0.35);
+        border-color: #157347;
+        background: #157347;
+      }
+
+      .btn-failure-sample {
+        border: 1px solid #dc3545;
+        background: #dc3545;
+        color: #fff;
+      }
+
+      .btn-failure-sample:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(220, 53, 69, 0.35);
+        border-color: #bb2d3b;
+        background: #bb2d3b;
+      }
+
+      .floating-alert-stack {
+        position: fixed;
+        top: 14px;
+        left: 50%;
+        transform: translateX(-50%);
+        width: min(92vw, 430px);
+        z-index: 2000;
+        display: grid;
+        gap: 10px;
+      }
+
+      .floating-alert {
+        display: none;
+        margin: 0;
+        box-shadow: 0 12px 24px rgba(16, 24, 14, 0.24);
+        align-items: center;
+        justify-content: space-between;
+        position: relative;
+        overflow: hidden;
+      }
+
+      .floating-alert.show-alert {
+        display: flex;
+      }
+
+      .floating-alert__text {
+        padding-right: 8px;
+      }
+
+      .floating-alert .alert-timebar {
+        position: absolute;
+        left: 0;
+        bottom: 0;
+        width: 100%;
+        height: 4px;
+      }
+
+      .floating-alert.alert-success .alert-timebar {
+        background: #87d6b1;
+      }
+
+      .floating-alert.alert-danger .alert-timebar {
+        background: #ec8892;
+      }
+
+      .floating-alert.is-timing .alert-timebar {
+        animation: alert-timebar-shrink var(--alert-duration, 2000ms) linear forwards;
+      }
+
+      @keyframes alert-timebar-shrink {
+        from {
+          width: 100%;
+        }
+        to {
+          width: 0%;
+        }
+      }
+
+      .floating-alert .btn-close {
+        margin-left: 12px;
+      }
+
+      .filters {
+        display: grid;
+        grid-template-columns: 2fr 1fr 1fr 1fr 1fr 1fr auto;
+        gap: 10px;
+        padding: 14px;
+        border-bottom: 1px solid var(--vz-marron2);
+        background: var(--vz-blanco);
+      }
+
+      .filters label {
+        display: grid;
+        gap: 6px;
+        font-size: 12px;
+        color: var(--vz-marron2);
+      }
+
+      .filters input,
+      .filters select,
+      .filters button {
+        border: 1px solid var(--vz-marron2);
+        border-radius: 8px;
+        padding: 9px 10px;
+        background: var(--vz-blanco);
+        color: var(--vz-negro);
+        font-size: 13px;
+      }
+
+      .filters button {
+        cursor: pointer;
+        color: var(--vz-crema);
+        background: var(--vz-verde);
+        border-color: var(--vz-verde);
+        font-weight: 600;
+        align-self: end;
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+      }
+
+      .filters button:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(142, 139, 48, 0.3);
+      }
+
+      .table-wrap {
+        overflow-x: auto;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 14px;
+      }
+
+      thead {
+        background: var(--vz-verde);
+        color: var(--vz-crema);
+        text-align: left;
+      }
+
+      thead tr {
+        border-left: 3px solid var(--vz-verde);
+      }
+
+      thead th {
+        border-left: none;
+        box-shadow: none;
+        border-bottom: none;
+      }
+
+      th,
+      td {
+        padding: 12px 14px;
+        border-bottom: 1px solid var(--vz-marron2);
+      }
+
+      tbody tr:hover {
+        border-left: 3px solid var(--vz-verde);
+        background: var(--vz-verde-suave);
+      }
+
+      tbody tr {
+        cursor: pointer;
+        border-left: 3px solid transparent;
+        transition: border-left 0.2s ease, background 0.2s ease;
+      }
+
+      tbody tr.row-active {
+        border-left: 3px solid var(--vz-verde);
+        background: linear-gradient(90deg, var(--vz-verde-suave) 0%, var(--vz-blanco) 100%);
+      }
+
+      .workspace.is-detail-open .orders-pane th,
+      .workspace.is-detail-open .orders-pane td {
+        padding: 10px 9px;
+        font-size: 13px;
+      }
+
+      .workspace.is-detail-open .orders-pane th:nth-child(4),
+      .workspace.is-detail-open .orders-pane td:nth-child(4),
+      .workspace.is-detail-open .orders-pane th:nth-child(7),
+      .workspace.is-detail-open .orders-pane td:nth-child(7) {
+        display: none;
+      }
+
+      .status {
+        display: inline-block;
+        border-radius: 999px;
+        padding: 4px 10px;
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      .status.ok {
+        color: var(--vz-crema);
+        background: var(--vz-verde);
+        border: 1px solid var(--vz-verde);
+      }
+
+      .status.pending {
+        color: var(--vz-negro);
+        background: var(--vz-amarillo);
+        border: 1px solid var(--vz-amarillo);
+      }
+
+      .status.warn {
+        color: var(--vz-crema);
+        background: var(--vz-rojo);
+        border: 1px solid var(--vz-rojo);
+      }
+
+      .status.draft {
+        color: var(--vz-blanco);
+        background: var(--vz-marron1);
+        border: 1px solid var(--vz-marron1);
+      }
+
+      .result-row td {
+        padding: 10px 14px;
+        font-size: 13px;
+        background: var(--vz-verde-suave);
+        color: var(--vz-marron2);
+      }
+
+      .table-hint {
+        padding: 9px 14px 12px;
+        font-size: 12px;
+        color: var(--vz-marron2);
+        border-top: 1px solid var(--vz-marron2);
+        background: var(--vz-blanco);
+      }
+
+      .confirm-modal .modal-content {
+        border: 1px solid var(--vz-marron2);
+        border-radius: 14px;
+        overflow: hidden;
+        box-shadow: 0 14px 30px rgba(16, 24, 14, 0.24);
+      }
+
+      .confirm-modal .modal-header {
+        border-bottom: 1px solid rgba(255, 255, 255, 0.16);
+        background: var(--vz-verde);
+        color: var(--vz-crema);
+      }
+
+      .confirm-modal .modal-title {
+        font-size: 17px;
+        font-weight: 700;
+      }
+
+      .confirm-modal .btn-close {
+        filter: invert(1) grayscale(1);
+        opacity: 0.85;
+      }
+
+      .confirm-modal .modal-body {
+        padding: 20px 22px 14px;
+        font-size: 16px;
+        color: var(--vz-marron1);
+      }
+
+      .confirm-modal .modal-footer {
+        border-top: 1px solid #e8e2d8;
+        padding: 10px 16px 14px;
+      }
+
+      .confirm-modal .btn-cancelar-confirm {
+        border: 1px solid var(--vz-marron2);
+        color: var(--vz-marron2);
+        background: var(--vz-blanco);
+      }
+
+      .confirm-modal .btn-cancelar-confirm:hover {
+        background: var(--vz-crema);
+        border-color: var(--vz-marron1);
+      }
+
+      .confirm-modal .btn-confirmar-accion {
+        border: 1px solid var(--vz-verde);
+        color: var(--vz-crema);
+        background: var(--vz-verde);
+        font-weight: 600;
+      }
+
+      .confirm-modal .btn-confirmar-accion:hover {
+        background: #7c792b;
+        border-color: #7c792b;
+      }
+
+      /* Estado de carga reutilizable: logo + texto "Aplicando Cambios..." */
+      .loading-state {
+        display: none;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 16px;
+        padding: 32px 24px;
+        min-height: 160px;
+        background: rgba(142, 139, 48, 0.08);
+      }
+
+      .loading-state.is-visible {
+        display: flex;
+      }
+
+      .loading-state__logo {
+        width: 56px;
+        height: 56px;
+        object-fit: contain;
+        animation: loading-spin 2s linear forwards;
+      }
+
+      /* Giro fluido de poco en poco, con parón cada 0.5s (2s total: 4 tramos de giro + pausa) */
+      @keyframes loading-spin {
+        0%     { transform: rotate(0deg); }
+        12.5%  { transform: rotate(90deg); }
+        25%    { transform: rotate(90deg); }
+        37.5%  { transform: rotate(180deg); }
+        50%    { transform: rotate(180deg); }
+        62.5%  { transform: rotate(270deg); }
+        75%    { transform: rotate(270deg); }
+        87.5%  { transform: rotate(360deg); }
+        100%   { transform: rotate(360deg); }
+      }
+
+      .loading-state__text {
+        margin: 0;
+        font-size: 15px;
+        font-weight: 600;
+        color: var(--vz-marron1);
+      }
+
+      .confirm-modal .modal-content.is-loading .modal-header,
+      .confirm-modal .modal-content.is-loading .modal-body,
+      .confirm-modal .modal-content.is-loading .modal-footer {
+        display: none;
+      }
+
+      .popup-form-modal .modal-content {
+        border: 1px solid var(--vz-marron2);
+        border-radius: 14px;
+        box-shadow: 0 14px 30px rgba(16, 24, 14, 0.24);
+      }
+
+      .popup-form-modal .modal-header {
+        background: var(--vz-blanco);
+        border-bottom: 1px solid var(--vz-marron2);
+        color: var(--vz-negro);
+      }
+
+      .popup-form-modal .modal-title {
+        font-size: 18px;
+        font-weight: 700;
+        color: var(--vz-negro);
+      }
+
+      .popup-form-note {
+        margin: 0 0 14px;
+        border-left: 3px solid var(--vz-verde);
+        background: var(--vz-verde-suave);
+        border-radius: 6px;
+        padding: 8px 10px;
+        font-size: 12px;
+        color: var(--vz-marron1);
+      }
+
+      .popup-form-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+      }
+
+      .popup-form-field {
+        display: grid;
+        gap: 5px;
+        font-size: 12px;
+        color: var(--vz-marron2);
+      }
+
+      .popup-form-field.full {
+        grid-column: 1 / -1;
+      }
+
+      .popup-form-field input,
+      .popup-form-field select,
+      .popup-form-field textarea {
+        border: 1px solid var(--vz-marron2);
+        border-radius: 8px;
+        padding: 8px 9px;
+        font-size: 13px;
+        background: var(--vz-blanco);
+        color: var(--vz-negro);
+      }
+
+      .popup-form-field textarea {
+        min-height: 74px;
+        resize: vertical;
+      }
+
+      .popup-form-modal .modal-footer {
+        border-top: 1px solid #e8e2d8;
+      }
+
+      .popup-form-modal .btn-popup-cancel {
+        border: 1px solid var(--vz-marron2);
+        color: var(--vz-marron2);
+      }
+
+      .popup-form-modal .btn-popup-save {
+        border: 1px solid var(--vz-verde);
+        background: var(--vz-verde);
+        color: var(--vz-crema);
+        font-weight: 600;
+      }
+    </style>
+  </head>
+  <body>
+    <header class="topnav">
+      <div class="topnav-inner">
+        <div class="brand">
+          <img class="brand-img" src="../assets/img/veraleza-blanco.png" alt="Veraleza" />
+          <span>Compras</span>
+        </div>
+
+        <nav class="main-menu">
+          <a class="active" href="#">Panel</a>
+          <div class="menu-dropdown" id="ventasMenu">
+            <button
+              class="menu-trigger"
+              id="ventasTrigger"
+              type="button"
+              aria-haspopup="true"
+              aria-expanded="false"
+            >
+              Ventas
+            </button>
+            <div class="menu-dropdown-panel" id="ventasSubmenu" role="menu" aria-label="Submenu Ventas">
+              <a href="#" role="menuitem">Pedidos de venta</a>
+              <a href="#" role="menuitem">Presupuestos</a>
+              <a href="#" role="menuitem">Clientes</a>
+            </div>
+          </div>
+          <a href="#">Compras</a>
+          <a href="#">Inventario</a>
+          <a href="#">Finanzas</a>
+          <a href="#">RRHH</a>
+          <a href="#">Configuracion</a>
+        </nav>
+
+        <div class="topnav-actions">
+          <span class="chip">Sede Madrid</span>
+          <span class="avatar">AP</span>
+        </div>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section class="headline">
+        <div>
+          <h1>Resumen de Operaciones</h1>
+          <div class="meta">Vista con menu superior y tabla filtrable en tiempo real</div>
+        </div>
+        <div class="headline-actions">
+          <button id="nuevoPedido" class="btn-new" type="button">Nuevo</button>
+        </div>
+      </section>
+
+      <section class="cards">
+        <article class="card">
+          <h3>Pedidos del dia</h3>
+          <strong>42</strong>
+        </article>
+        <article class="card">
+          <h3>Facturacion acumulada</h3>
+          <strong>EUR 188.430</strong>
+        </article>
+        <article class="card">
+          <h3>Pedidos pendientes</h3>
+          <strong>11</strong>
+        </article>
+        <article class="card">
+          <h3>Clientes activos</h3>
+          <strong>96</strong>
+        </article>
+      </section>
+
+      <section class="workspace" id="workspace">
+        <section class="panel orders-pane">
+          <div class="filters-toolbar">
+            <button
+              type="button"
+              class="btn-confirm-sample"
+              data-bs-toggle="modal"
+              data-bs-target="#exampleConfirmModal"
+            >
+              ejemplo confirmacion
+            </button>
+            <button
+              type="button"
+              class="btn-popup-form-sample"
+              data-bs-toggle="modal"
+              data-bs-target="#examplePopupFormModal"
+            >
+              ejemplo formulario popup
+            </button>
+            <button type="button" class="btn-success-sample" id="exampleSuccessBtn">ejemplo success</button>
+            <button type="button" class="btn-failure-sample" id="exampleFailureBtn">ejemplo fallido</button>
+          </div>
+          <form id="filtersForm" class="filters">
+            <label>
+              Buscar
+              <input id="q" type="text" placeholder="Pedido, cliente o responsable" />
+            </label>
+            <label>
+              Estado
+              <select id="estado">
+                <option value="">Todos</option>
+                <option value="Aprobada">Aprobada</option>
+                <option value="En revision">En revision</option>
+                <option value="Pendiente pago">Pendiente pago</option>
+                <option value="Borrador">Borrador</option>
+              </select>
+            </label>
+            <label>
+              Modulo
+              <select id="modulo">
+                <option value="">Todos</option>
+                <option value="Ventas">Ventas</option>
+                <option value="Compras">Compras</option>
+                <option value="Inventario">Inventario</option>
+                <option value="Finanzas">Finanzas</option>
+                <option value="Proyectos">Proyectos</option>
+              </select>
+            </label>
+            <label>
+              Desde
+              <input id="desde" type="date" />
+            </label>
+            <label>
+              Hasta
+              <input id="hasta" type="date" />
+            </label>
+            <label>
+              Min EUR
+              <input id="minImporte" type="number" min="0" step="10" placeholder="0" />
+            </label>
+            <button id="limpiar" type="button">Limpiar</button>
+          </form>
+
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Pedido</th>
+                  <th>Cliente</th>
+                  <th>Modulo</th>
+                  <th>Responsable</th>
+                  <th>Importe</th>
+                  <th>Estado</th>
+                  <th>Fecha</th>
+                </tr>
+              </thead>
+              <tbody id="tablaPedidos">
+                <tr data-pedido="PV-8601" data-cliente="Grupo Albor" data-modulo="Ventas" data-responsable="Nora Vidal" data-importe="18240" data-estado="Aprobada" data-fecha="2026-02-05">
+                  <td>PV-8601</td>
+                  <td>Grupo Albor</td>
+                  <td>Ventas</td>
+                  <td>Nora Vidal</td>
+                  <td>EUR 18.240</td>
+                  <td><span class="status ok">Aprobada</span></td>
+                  <td>05/02/2026</td>
+                </tr>
+                <tr data-pedido="OC-2150" data-cliente="Comercial Lira" data-modulo="Compras" data-responsable="Mario Solis" data-importe="9870" data-estado="En revision" data-fecha="2026-02-06">
+                  <td>OC-2150</td>
+                  <td>Comercial Lira</td>
+                  <td>Compras</td>
+                  <td>Mario Solis</td>
+                  <td>EUR 9.870</td>
+                  <td><span class="status pending">En revision</span></td>
+                  <td>06/02/2026</td>
+                </tr>
+                <tr data-pedido="AS-4022" data-cliente="Industrias Vecta" data-modulo="Finanzas" data-responsable="Alicia Ramos" data-importe="25430" data-estado="Pendiente pago" data-fecha="2026-02-07">
+                  <td>AS-4022</td>
+                  <td>Industrias Vecta</td>
+                  <td>Finanzas</td>
+                  <td>Alicia Ramos</td>
+                  <td>EUR 25.430</td>
+                  <td><span class="status warn">Pendiente pago</span></td>
+                  <td>07/02/2026</td>
+                </tr>
+                <tr data-pedido="MV-1374" data-cliente="Logistica Brio" data-modulo="Inventario" data-responsable="Pablo Mena" data-importe="6320" data-estado="Aprobada" data-fecha="2026-02-08">
+                  <td>MV-1374</td>
+                  <td>Logistica Brio</td>
+                  <td>Inventario</td>
+                  <td>Pablo Mena</td>
+                  <td>EUR 6.320</td>
+                  <td><span class="status ok">Aprobada</span></td>
+                  <td>08/02/2026</td>
+                </tr>
+                <tr data-pedido="PY-5521" data-cliente="Servicios Norte" data-modulo="Proyectos" data-responsable="Elena Ruiz" data-importe="14580" data-estado="En revision" data-fecha="2026-02-08">
+                  <td>PY-5521</td>
+                  <td>Servicios Norte</td>
+                  <td>Proyectos</td>
+                  <td>Elena Ruiz</td>
+                  <td>EUR 14.580</td>
+                  <td><span class="status pending">En revision</span></td>
+                  <td>08/02/2026</td>
+                </tr>
+                <tr data-pedido="OC-2159" data-cliente="Taller Viana" data-modulo="Compras" data-responsable="Luis Robles" data-importe="3950" data-estado="Borrador" data-fecha="2026-02-09">
+                  <td>OC-2159</td>
+                  <td>Taller Viana</td>
+                  <td>Compras</td>
+                  <td>Luis Robles</td>
+                  <td>EUR 3.950</td>
+                  <td><span class="status draft">Borrador</span></td>
+                  <td>09/02/2026</td>
+                </tr>
+                <tr data-pedido="PV-8607" data-cliente="Distribuciones Arlan" data-modulo="Ventas" data-responsable="Sara Navas" data-importe="12120" data-estado="Aprobada" data-fecha="2026-02-09">
+                  <td>PV-8607</td>
+                  <td>Distribuciones Arlan</td>
+                  <td>Ventas</td>
+                  <td>Sara Navas</td>
+                  <td>EUR 12.120</td>
+                  <td><span class="status ok">Aprobada</span></td>
+                  <td>09/02/2026</td>
+                </tr>
+                <tr data-pedido="OC-2163" data-cliente="Ferreteria Prisma" data-modulo="Compras" data-responsable="Jorge Cano" data-importe="8450" data-estado="En revision" data-fecha="2026-02-09">
+                  <td>OC-2163</td>
+                  <td>Ferreteria Prisma</td>
+                  <td>Compras</td>
+                  <td>Jorge Cano</td>
+                  <td>EUR 8.450</td>
+                  <td><span class="status pending">En revision</span></td>
+                  <td>09/02/2026</td>
+                </tr>
+                <tr data-pedido="FN-3330" data-cliente="Clinica San Teo" data-modulo="Finanzas" data-responsable="Andrea Molina" data-importe="31780" data-estado="Pendiente pago" data-fecha="2026-02-09">
+                  <td>FN-3330</td>
+                  <td>Clinica San Teo</td>
+                  <td>Finanzas</td>
+                  <td>Andrea Molina</td>
+                  <td>EUR 31.780</td>
+                  <td><span class="status warn">Pendiente pago</span></td>
+                  <td>09/02/2026</td>
+                </tr>
+                <tr data-pedido="IN-4481" data-cliente="Almacenes Delta" data-modulo="Inventario" data-responsable="Tomas Vera" data-importe="5240" data-estado="Aprobada" data-fecha="2026-02-10">
+                  <td>IN-4481</td>
+                  <td>Almacenes Delta</td>
+                  <td>Inventario</td>
+                  <td>Tomas Vera</td>
+                  <td>EUR 5.240</td>
+                  <td><span class="status ok">Aprobada</span></td>
+                  <td>10/02/2026</td>
+                </tr>
+                <tr data-pedido="PY-5530" data-cliente="Ingenieria Montex" data-modulo="Proyectos" data-responsable="Raul Becerra" data-importe="27600" data-estado="En revision" data-fecha="2026-02-10">
+                  <td>PY-5530</td>
+                  <td>Ingenieria Montex</td>
+                  <td>Proyectos</td>
+                  <td>Raul Becerra</td>
+                  <td>EUR 27.600</td>
+                  <td><span class="status pending">En revision</span></td>
+                  <td>10/02/2026</td>
+                </tr>
+                <tr data-pedido="PV-8610" data-cliente="Textiles Orbita" data-modulo="Ventas" data-responsable="Nora Vidal" data-importe="15990" data-estado="Aprobada" data-fecha="2026-02-10">
+                  <td>PV-8610</td>
+                  <td>Textiles Orbita</td>
+                  <td>Ventas</td>
+                  <td>Nora Vidal</td>
+                  <td>EUR 15.990</td>
+                  <td><span class="status ok">Aprobada</span></td>
+                  <td>10/02/2026</td>
+                </tr>
+                <tr data-pedido="OC-2165" data-cliente="Hosteleria Nexo" data-modulo="Compras" data-responsable="Mario Solis" data-importe="4680" data-estado="Borrador" data-fecha="2026-02-10">
+                  <td>OC-2165</td>
+                  <td>Hosteleria Nexo</td>
+                  <td>Compras</td>
+                  <td>Mario Solis</td>
+                  <td>EUR 4.680</td>
+                  <td><span class="status draft">Borrador</span></td>
+                  <td>10/02/2026</td>
+                </tr>
+                <tr data-pedido="FN-3334" data-cliente="Grupo Elipse" data-modulo="Finanzas" data-responsable="Alicia Ramos" data-importe="11200" data-estado="Pendiente pago" data-fecha="2026-02-10">
+                  <td>FN-3334</td>
+                  <td>Grupo Elipse</td>
+                  <td>Finanzas</td>
+                  <td>Alicia Ramos</td>
+                  <td>EUR 11.200</td>
+                  <td><span class="status warn">Pendiente pago</span></td>
+                  <td>10/02/2026</td>
+                </tr>
+              </tbody>
+              <tfoot>
+                <tr class="result-row">
+                  <td colspan="7" id="resultInfo">Mostrando 14 de 14 registros</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+          <div class="table-hint">Haz click en cualquier fila para abrir el detalle editable a la derecha.</div>
+        </section>
+
+        <aside class="panel detail-pane" id="detailPane">
+          <div class="detail-head">
+            <div>
+              <h2 id="detailTitle">Detalle del pedido</h2>
+              <p id="detailSub">Selecciona una fila para abrir la ficha editable.</p>
+            </div>
+            <button id="closeDetail" class="detail-close" type="button">Cerrar</button>
+          </div>
+          <div class="detail-body" id="detailBody">
+            <div class="detail-empty">Sin pedido seleccionado.</div>
+          </div>
+        </aside>
+      </section>
+
+      <template id="tplVentaPV8601">
+        <div class="detail-note">Demo visual sin backend: los botones y campos no guardan datos.</div>
+        <div class="detail-grid">
+          <label class="detail-field">
+            Cliente
+            <input type="text" value="Grupo Albor" />
+          </label>
+          <label class="detail-field">
+            Comercial
+            <input type="text" value="Nora Vidal" />
+          </label>
+          <label class="detail-field">
+            Fecha pedido
+            <input type="date" value="2026-02-05" />
+          </label>
+          <label class="detail-field">
+            Lista de precios
+            <select>
+              <option>Tarifa general 2026</option>
+              <option>Tarifa distribuidor</option>
+            </select>
+          </label>
+          <label class="detail-field full">
+            Observaciones
+            <textarea>Entregar en 2 lotes. Confirmado por cliente en llamada del 5 de febrero.</textarea>
+          </label>
+        </div>
+
+        <h3 class="detail-section-title">Lineas del pedido de venta</h3>
+        <div class="detail-lines">
+          <table>
+            <thead>
+              <tr>
+                <th>Producto</th>
+                <th>Cantidad</th>
+                <th>Precio</th>
+                <th>Descuento</th>
+                <th>Subtotal</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Monitor 24" IPS</td>
+                <td>12</td>
+                <td>EUR 178,00</td>
+                <td>5%</td>
+                <td>EUR 2.029,20</td>
+              </tr>
+              <tr>
+                <td>Teclado mecanico KX-Pro</td>
+                <td>8</td>
+                <td>EUR 64,00</td>
+                <td>0%</td>
+                <td>EUR 512,00</td>
+              </tr>
+              <tr>
+                <td>Dock USB-C empresarial</td>
+                <td>10</td>
+                <td>EUR 145,00</td>
+                <td>8%</td>
+                <td>EUR 1.334,00</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="detail-totals">
+          <div>Base imponible: EUR 3.875,20</div>
+          <div>IVA 21%: EUR 813,79</div>
+          <strong>Total pedido: EUR 4.688,99</strong>
+        </div>
+
+        <div class="detail-actions">
+          <button type="button">Guardar borrador</button>
+          <button type="button" class="primary">Confirmar venta</button>
+        </div>
+      </template>
+
+      <template id="tplCompraOC2150">
+        <div class="detail-note">Demo visual sin backend: los cambios son solo de interfaz.</div>
+        <div class="detail-grid">
+          <label class="detail-field">
+            Proveedor
+            <input type="text" value="Comercial Lira" />
+          </label>
+          <label class="detail-field">
+            Comprador
+            <input type="text" value="Mario Solis" />
+          </label>
+          <label class="detail-field">
+            Fecha recepcion prevista
+            <input type="date" value="2026-02-14" />
+          </label>
+          <label class="detail-field">
+            Condicion pago
+            <select>
+              <option>Transferencia 30 dias</option>
+              <option>Contado</option>
+            </select>
+          </label>
+          <label class="detail-field full">
+            Notas internas
+            <textarea>Revisar lote con control de calidad por nueva referencia del proveedor.</textarea>
+          </label>
+        </div>
+
+        <h3 class="detail-section-title">Lineas del pedido de compra</h3>
+        <div class="detail-lines">
+          <table>
+            <thead>
+              <tr>
+                <th>Articulo</th>
+                <th>Cantidad</th>
+                <th>Coste unitario</th>
+                <th>Plazo</th>
+                <th>Subtotal</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Fuente alimentacion 650W</td>
+                <td>20</td>
+                <td>EUR 31,50</td>
+                <td>7 dias</td>
+                <td>EUR 630,00</td>
+              </tr>
+              <tr>
+                <td>Modulo memoria 16GB DDR4</td>
+                <td>30</td>
+                <td>EUR 27,80</td>
+                <td>5 dias</td>
+                <td>EUR 834,00</td>
+              </tr>
+              <tr>
+                <td>Embalaje tecnico reforzado</td>
+                <td>120</td>
+                <td>EUR 1,95</td>
+                <td>3 dias</td>
+                <td>EUR 234,00</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="detail-totals">
+          <div>Base compra: EUR 1.698,00</div>
+          <div>IVA 21%: EUR 356,58</div>
+          <strong>Total compra: EUR 2.054,58</strong>
+        </div>
+
+        <div class="detail-actions">
+          <button type="button">Guardar cambios</button>
+          <button type="button" class="primary">Enviar a proveedor</button>
+        </div>
+      </template>
+
+      <template id="tplNuevoPedido">
+        <div class="detail-note">Alta ficticia: pantalla de ejemplo para insertar datos en una nueva hoja.</div>
+        <div class="detail-grid">
+          <label class="detail-field">
+            Tipo de hoja
+            <select>
+              <option>Pedido de venta</option>
+              <option>Pedido de compra</option>
+              <option>Solicitud interna</option>
+            </select>
+          </label>
+          <label class="detail-field">
+            Serie
+            <input type="text" value="AUTO-2026" />
+          </label>
+          <label class="detail-field">
+            Cliente / Proveedor
+            <input type="text" value="" placeholder="Escribe razon social" />
+          </label>
+          <label class="detail-field">
+            Responsable
+            <input type="text" value="" placeholder="Usuario ERP" />
+          </label>
+          <label class="detail-field">
+            Fecha documento
+            <input type="date" value="2026-02-10" />
+          </label>
+          <label class="detail-field">
+            Estado inicial
+            <select>
+              <option>Borrador</option>
+              <option>En revision</option>
+            </select>
+          </label>
+          <label class="detail-field full">
+            Observaciones
+            <textarea>Documento creado desde la demo de interfaz. Sin persistencia de datos.</textarea>
+          </label>
+        </div>
+
+        <h3 class="detail-section-title">Lineas iniciales</h3>
+        <div class="detail-lines">
+          <table>
+            <thead>
+              <tr>
+                <th>Concepto</th>
+                <th>Cantidad</th>
+                <th>Precio</th>
+                <th>Impuestos</th>
+                <th>Subtotal</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><input type="text" value="Linea 1 de ejemplo" /></td>
+                <td><input type="number" value="1" /></td>
+                <td><input type="text" value="0,00" /></td>
+                <td><input type="text" value="21%" /></td>
+                <td>EUR 0,00</td>
+              </tr>
+              <tr>
+                <td><input type="text" value="Linea 2 de ejemplo" /></td>
+                <td><input type="number" value="1" /></td>
+                <td><input type="text" value="0,00" /></td>
+                <td><input type="text" value="21%" /></td>
+                <td>EUR 0,00</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="detail-totals">
+          <div>Base: EUR 0,00</div>
+          <div>IVA: EUR 0,00</div>
+          <strong>Total: EUR 0,00</strong>
+        </div>
+
+        <div class="detail-actions">
+          <button type="button">Guardar borrador</button>
+          <button type="button" class="primary">Crear hoja</button>
+        </div>
+      </template>
+    </main>
+
+    <div class="modal fade confirm-modal" id="exampleConfirmModal" tabindex="-1" aria-labelledby="exampleConfirmModalLabel" aria-hidden="true">
+      <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content" id="exampleConfirmModalContent">
+          <div class="loading-state" id="exampleConfirmLoading" aria-live="polite" aria-busy="false">
+            <img class="loading-state__logo" src="../assets/img/veraleza-blanco.png" alt="" width="56" height="56">
+            <p class="loading-state__text">Aplicando Cambios...</p>
+          </div>
+          <div class="modal-header">
+            <h5 class="modal-title" id="exampleConfirmModalLabel">¿Seguro que deseas hacer accion inventada?</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+          </div>
+          <div class="modal-body">Aqui se indica lo que hara la accion</div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-cancelar-confirm" data-bs-dismiss="modal">Cancelar</button>
+            <button type="button" class="btn btn-confirmar-accion" id="exampleConfirmBtn">Confirmar</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div
+      class="modal fade popup-form-modal"
+      id="examplePopupFormModal"
+      tabindex="-1"
+      aria-labelledby="examplePopupFormModalLabel"
+      aria-hidden="true"
+    >
+      <div class="modal-dialog modal-lg modal-dialog-centered">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title" id="examplePopupFormModalLabel">Editar linea inventada</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+          </div>
+          <div class="modal-body">
+            <p class="popup-form-note">
+              Ejemplo visual: popup de edicion de linea con datos precargados, sin guardar cambios.
+            </p>
+            <div class="popup-form-grid">
+              <label class="popup-form-field">
+                Articulo
+                <input type="text" value="Pack gourmet naranja de invierno" />
+              </label>
+              <label class="popup-form-field">
+                Codigo
+                <input type="text" value="ART-RND-482" />
+              </label>
+              <label class="popup-form-field">
+                Cantidad
+                <input type="number" value="18" />
+              </label>
+              <label class="popup-form-field">
+                Precio unitario
+                <input type="text" value="EUR 36,50" />
+              </label>
+              <label class="popup-form-field">
+                Descuento
+                <select>
+                  <option>0%</option>
+                  <option selected>5%</option>
+                  <option>10%</option>
+                </select>
+              </label>
+              <label class="popup-form-field">
+                Estado linea
+                <select>
+                  <option>Borrador</option>
+                  <option selected>Reservada</option>
+                  <option>Confirmada</option>
+                </select>
+              </label>
+              <label class="popup-form-field full">
+                Comentario interno
+                <textarea>Cliente VIP. Mantener paletizado especial y etiquetado azul para expedicion.</textarea>
+              </label>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-popup-cancel" data-bs-dismiss="modal">Cancelar</button>
+            <button type="button" class="btn btn-popup-save" data-bs-dismiss="modal">Guardar cambios</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="floating-alert-stack" aria-live="polite" aria-atomic="true">
+      <div class="alert alert-success alert-dismissible fade floating-alert" id="exampleSuccessAlert" role="alert">
+        <span class="floating-alert__text">Ejemplo de exito</span>
+        <button type="button" class="btn-close" aria-label="Cerrar"></button>
+        <span class="alert-timebar" aria-hidden="true"></span>
+      </div>
+      <div class="alert alert-danger alert-dismissible fade floating-alert" id="exampleFailureAlert" role="alert">
+        <span class="floating-alert__text">Ejemplo fallido</span>
+        <button type="button" class="btn-close" aria-label="Cerrar"></button>
+        <span class="alert-timebar" aria-hidden="true"></span>
+      </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+      const rows = Array.from(document.querySelectorAll("#tablaPedidos tr"));
+      const q = document.getElementById("q");
+      const estado = document.getElementById("estado");
+      const modulo = document.getElementById("modulo");
+      const desde = document.getElementById("desde");
+      const hasta = document.getElementById("hasta");
+      const minImporte = document.getElementById("minImporte");
+      const limpiar = document.getElementById("limpiar");
+      const resultInfo = document.getElementById("resultInfo");
+      const workspace = document.getElementById("workspace");
+      const detailTitle = document.getElementById("detailTitle");
+      const detailSub = document.getElementById("detailSub");
+      const detailBody = document.getElementById("detailBody");
+      const closeDetail = document.getElementById("closeDetail");
+      const nuevoPedido = document.getElementById("nuevoPedido");
+      const ventasMenu = document.getElementById("ventasMenu");
+      const ventasTrigger = document.getElementById("ventasTrigger");
+      const total = rows.length;
+      let activeRow = null;
+
+      function closeVentasMenu() {
+        if (!ventasMenu.classList.contains("is-open")) {
+          return;
+        }
+
+        ventasMenu.classList.remove("is-open");
+        ventasTrigger.setAttribute("aria-expanded", "false");
+      }
+
+      function toggleVentasMenu() {
+        const isOpen = ventasMenu.classList.toggle("is-open");
+        ventasTrigger.setAttribute("aria-expanded", isOpen ? "true" : "false");
+      }
+
+      function escapeHtml(text) {
+        return text
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#039;");
+      }
+
+      function resetDetail() {
+        workspace.classList.remove("is-detail-open");
+
+        if (activeRow) {
+          activeRow.classList.remove("row-active");
+          activeRow = null;
+        }
+
+        detailTitle.textContent = "Detalle del pedido";
+        detailSub.textContent = "Selecciona una fila para abrir la ficha editable.";
+        detailBody.innerHTML = '<div class="detail-empty">Sin pedido seleccionado.</div>';
+      }
+
+      function renderTemplate(templateId) {
+        const template = document.getElementById(templateId);
+        const node = template.content.cloneNode(true);
+        detailBody.innerHTML = "";
+        detailBody.appendChild(node);
+      }
+
+      function renderGenericDetail(row) {
+        const pedido = escapeHtml(row.dataset.pedido);
+        const cliente = escapeHtml(row.dataset.cliente);
+        const moduloValue = escapeHtml(row.dataset.modulo);
+        const responsable = escapeHtml(row.dataset.responsable);
+        const estadoValue = escapeHtml(row.dataset.estado);
+        const fecha = escapeHtml(row.dataset.fecha);
+        const importe = Number(row.dataset.importe).toLocaleString("es-ES");
+
+        detailBody.innerHTML =
+          '<div class="detail-note">Ficha generica para demo. Este pedido no tiene maquetadas lineas de producto.</div>' +
+          '<div class="detail-grid">' +
+          '<label class="detail-field">Pedido<input type="text" value="' +
+          pedido +
+          '" /></label>' +
+          '<label class="detail-field">Cliente<input type="text" value="' +
+          cliente +
+          '" /></label>' +
+          '<label class="detail-field">Modulo<input type="text" value="' +
+          moduloValue +
+          '" /></label>' +
+          '<label class="detail-field">Responsable<input type="text" value="' +
+          responsable +
+          '" /></label>' +
+          '<label class="detail-field">Estado<select><option selected>' +
+          estadoValue +
+          '</option></select></label>' +
+          '<label class="detail-field">Fecha<input type="date" value="' +
+          fecha +
+          '" /></label>' +
+          '<label class="detail-field full">Notas<textarea>Interfaz de ejemplo para edicion de cabecera en ERP. Sin logica de guardado.</textarea></label>' +
+          "</div>" +
+          '<div class="detail-totals"><strong>Total referencia: EUR ' +
+          importe +
+          ",00</strong></div>" +
+          '<div class="detail-actions"><button type="button">Guardar</button><button type="button" class="primary">Enviar aprobacion</button></div>';
+      }
+
+      function openDetail(row) {
+        if (row.hidden) {
+          return;
+        }
+
+        if (activeRow) {
+          activeRow.classList.remove("row-active");
+        }
+
+        activeRow = row;
+        activeRow.classList.add("row-active");
+        workspace.classList.add("is-detail-open");
+
+        const pedido = row.dataset.pedido;
+
+        if (pedido === "PV-8601") {
+          detailTitle.textContent = "Editar venta PV-8601";
+          detailSub.textContent = "Pedido de venta con lineas ficticias de producto.";
+          renderTemplate("tplVentaPV8601");
+          return;
+        }
+
+        if (pedido === "OC-2150") {
+          detailTitle.textContent = "Editar compra OC-2150";
+          detailSub.textContent = "Pedido de compra con lineas ficticias de aprovisionamiento.";
+          renderTemplate("tplCompraOC2150");
+          return;
+        }
+
+        detailTitle.textContent = "Pedido " + pedido;
+        detailSub.textContent = "Vista generica de cabecera para demo de interfaz ERP.";
+        renderGenericDetail(row);
+      }
+
+      function openNewSheet() {
+        if (activeRow) {
+          activeRow.classList.remove("row-active");
+          activeRow = null;
+        }
+
+        workspace.classList.add("is-detail-open");
+        detailTitle.textContent = "Nueva hoja";
+        detailSub.textContent = "Formulario de alta ficticia para insertar datos.";
+        renderTemplate("tplNuevoPedido");
+      }
+
+      function filterRows() {
+        const text = q.value.trim().toLowerCase();
+        const estadoValue = estado.value;
+        const moduloValue = modulo.value;
+        const desdeValue = desde.value;
+        const hastaValue = hasta.value;
+        const minValue = minImporte.value ? Number(minImporte.value) : null;
+        let visibles = 0;
+
+        rows.forEach((row) => {
+          const pedido = row.dataset.pedido;
+          const cliente = row.dataset.cliente;
+          const responsable = row.dataset.responsable;
+          const estadoRow = row.dataset.estado;
+          const moduloRow = row.dataset.modulo;
+          const fecha = row.dataset.fecha;
+          const importe = Number(row.dataset.importe);
+
+          const matchText =
+            !text ||
+            pedido.toLowerCase().includes(text) ||
+            cliente.toLowerCase().includes(text) ||
+            responsable.toLowerCase().includes(text);
+          const matchEstado = !estadoValue || estadoRow === estadoValue;
+          const matchModulo = !moduloValue || moduloRow === moduloValue;
+          const matchDesde = !desdeValue || fecha >= desdeValue;
+          const matchHasta = !hastaValue || fecha <= hastaValue;
+          const matchMin = minValue === null || importe >= minValue;
+
+          const visible =
+            matchText && matchEstado && matchModulo && matchDesde && matchHasta && matchMin;
+          row.hidden = !visible;
+
+          if (visible) {
+            visibles += 1;
+          }
+        });
+
+        if (activeRow && activeRow.hidden) {
+          resetDetail();
+        }
+
+        resultInfo.textContent = "Mostrando " + visibles + " de " + total + " registros";
+      }
+
+      [q, estado, modulo, desde, hasta, minImporte].forEach((control) => {
+        control.addEventListener("input", filterRows);
+        control.addEventListener("change", filterRows);
+      });
+
+      limpiar.addEventListener("click", () => {
+        document.getElementById("filtersForm").reset();
+        filterRows();
+      });
+
+      nuevoPedido.addEventListener("click", openNewSheet);
+      closeDetail.addEventListener("click", resetDetail);
+      ventasTrigger.addEventListener("click", (event) => {
+        event.stopPropagation();
+        toggleVentasMenu();
+      });
+      document.addEventListener("click", (event) => {
+        if (!ventasMenu.contains(event.target)) {
+          closeVentasMenu();
+        }
+      });
+      document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") {
+          closeVentasMenu();
+        }
+      });
+      document.querySelectorAll("#ventasSubmenu a").forEach((link) => {
+        link.addEventListener("click", closeVentasMenu);
+      });
+
+      rows.forEach((row) => {
+        row.tabIndex = 0;
+        row.addEventListener("click", () => openDetail(row));
+        row.addEventListener("keydown", (event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            openDetail(row);
+          }
+        });
+      });
+
+      (function initConfirmLoading() {
+        const LOADING_DURATION_MS = 2000;
+        const modalEl = document.getElementById("exampleConfirmModal");
+        const contentEl = document.getElementById("exampleConfirmModalContent");
+        const loadingEl = document.getElementById("exampleConfirmLoading");
+        const confirmBtn = document.getElementById("exampleConfirmBtn");
+
+        if (!modalEl || !contentEl || !loadingEl || !confirmBtn) return;
+
+        function showLoading() {
+          contentEl.classList.add("is-loading");
+          loadingEl.classList.add("is-visible");
+          loadingEl.setAttribute("aria-busy", "true");
+        }
+
+        function hideLoading() {
+          contentEl.classList.remove("is-loading");
+          loadingEl.classList.remove("is-visible");
+          loadingEl.setAttribute("aria-busy", "false");
+        }
+
+        confirmBtn.addEventListener("click", function () {
+          showLoading();
+          setTimeout(function () {
+            hideLoading();
+            const modal = bootstrap.Modal.getInstance(modalEl);
+            if (modal) modal.hide();
+          }, LOADING_DURATION_MS);
+        });
+
+        modalEl.addEventListener("hidden.bs.modal", hideLoading);
+      })();
+
+      (function initFloatingExampleAlerts() {
+        const ALERT_DURATION_MS = 2000;
+        const successBtn = document.getElementById("exampleSuccessBtn");
+        const failureBtn = document.getElementById("exampleFailureBtn");
+        const successAlert = document.getElementById("exampleSuccessAlert");
+        const failureAlert = document.getElementById("exampleFailureAlert");
+        let activeTimeout = null;
+
+        if (!successBtn || !failureBtn || !successAlert || !failureAlert) return;
+
+        successAlert.style.setProperty("--alert-duration", ALERT_DURATION_MS + "ms");
+        failureAlert.style.setProperty("--alert-duration", ALERT_DURATION_MS + "ms");
+
+        function hideAlert(alertEl) {
+          alertEl.classList.remove("show");
+          alertEl.classList.remove("show-alert");
+          alertEl.classList.remove("is-timing");
+        }
+
+        function hideAllAlerts() {
+          hideAlert(successAlert);
+          hideAlert(failureAlert);
+        }
+
+        function startAutoHide(alertEl) {
+          if (activeTimeout) {
+            clearTimeout(activeTimeout);
+          }
+
+          activeTimeout = setTimeout(function () {
+            hideAlert(alertEl);
+            activeTimeout = null;
+          }, ALERT_DURATION_MS);
+        }
+
+        function showAlert(alertEl) {
+          hideAllAlerts();
+          alertEl.classList.add("show-alert");
+          alertEl.classList.add("show");
+          alertEl.classList.remove("is-timing");
+          void alertEl.offsetWidth;
+          alertEl.classList.add("is-timing");
+          startAutoHide(alertEl);
+        }
+
+        function wireCloseButton(alertEl) {
+          const closeBtn = alertEl.querySelector(".btn-close");
+          if (!closeBtn) return;
+
+          closeBtn.addEventListener("click", function () {
+            if (activeTimeout) {
+              clearTimeout(activeTimeout);
+              activeTimeout = null;
+            }
+            hideAlert(alertEl);
+          });
+        }
+
+        wireCloseButton(successAlert);
+        wireCloseButton(failureAlert);
+        successBtn.addEventListener("click", function () {
+          showAlert(successAlert);
+        });
+        failureBtn.addEventListener("click", function () {
+          showAlert(failureAlert);
+        });
+      })();
+
+      filterRows();
+    </script>
+  </body>
+</html>

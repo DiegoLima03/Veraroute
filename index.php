@@ -32,8 +32,11 @@ $router->get('', 'PageController@index');
 // API — Clientes
 $router->get('api/clients', 'ClientController@index');
 $router->post('api/clients', 'ClientController@store');
+$router->put('api/clients/(\d+)/toggle', 'ClientController@toggleActive');
 $router->put('api/clients/(\d+)', 'ClientController@update');
 $router->delete('api/clients/(\d+)', 'ClientController@destroy');
+$router->get('api/clients/(\d+)/schedules', 'ClientController@getSchedules');
+$router->put('api/clients/(\d+)/schedules', 'ClientController@saveSchedules');
 
 // API — Pedidos
 $router->get('api/orders', 'OrderController@index');
@@ -44,8 +47,33 @@ $router->delete('api/orders', 'OrderController@destroy');
 // Demo
 $router->post('api/demo', 'ClientController@loadDemo');
 
-// API — Settings (depot)
-$router->get('api/depot', 'SettingController@depot');
-$router->put('api/depot', 'SettingController@updateDepot');
+// API — Settings (delegacion) — retrocompatibilidad
+$router->get('api/delegation', 'SettingController@delegation');
+$router->put('api/delegation', 'SettingController@updateDelegation');
+
+// API — Delegaciones
+$router->get('api/delegations', 'DelegationController@index');
+$router->post('api/delegations', 'DelegationController@store');
+$router->put('api/delegations/(\d+)/toggle', 'DelegationController@toggleActive');
+$router->put('api/delegations/(\d+)', 'DelegationController@update');
+$router->delete('api/delegations/(\d+)', 'DelegationController@destroy');
+
+// API — Vehiculos
+$router->get('api/vehicles', 'VehicleController@index');
+$router->post('api/vehicles', 'VehicleController@store');
+$router->put('api/vehicles/(\d+)/toggle', 'VehicleController@toggleActive');
+$router->put('api/vehicles/(\d+)', 'VehicleController@update');
+$router->delete('api/vehicles/(\d+)', 'VehicleController@destroy');
+
+// API — Productos (catalogo)
+$router->get('api/products', 'ProductController@index');
+$router->post('api/products', 'ProductController@store');
+$router->put('api/products/(\d+)', 'ProductController@update');
+$router->delete('api/products/(\d+)', 'ProductController@destroy');
+
+// API — Rutas (optimizacion multi-vehiculo)
+$router->post('api/routes/optimize', 'RouteController@optimize');
+$router->get('api/routes', 'RouteController@index');
+$router->get('api/routes/(\d+)', 'RouteController@show');
 
 $router->dispatch($uri, $_SERVER['REQUEST_METHOD']);

@@ -3,19 +3,20 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>RouteFlow — Gestor de Rutas</title>
+<title>VeraRoute — Gestor de Rutas</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 <link rel="stylesheet" href="public/css/app.css">
 </head>
 <body>
 
 <header class="header">
-  <div class="logo">Route<span>Flow</span></div>
-  <div class="badge">v2.0</div>
+  <div class="logo">Vera<span>Route</span></div>
+  <div class="badge">v3.0</div>
   <div class="stats-bar">
     <div class="stat"><div class="stat-val" id="sClientes">0</div><div class="stat-label">Clientes</div></div>
     <div class="stat"><div class="stat-val" id="sPedidos">0</div><div class="stat-label">Con pedido</div></div>
-    <div class="stat"><div class="stat-val" id="sDist">—</div><div class="stat-label">Km ruta</div></div>
+    <div class="stat"><div class="stat-val" id="sVehicles">0</div><div class="stat-label">Vehiculos</div></div>
+    <div class="stat"><div class="stat-val" id="sDist">—</div><div class="stat-label">Km total</div></div>
     <div class="stat"><div class="stat-val" id="sTime">—</div><div class="stat-label">Horas</div></div>
   </div>
 </header>
@@ -24,7 +25,8 @@
   <div class="panel">
     <div class="tabs">
       <button class="tab active" id="tab-c" onclick="switchTab('c')">Clientes <span class="tab-badge green" id="bc">0</span></button>
-      <button class="tab" id="tab-p" onclick="switchTab('p')">Pedidos del dia <span class="tab-badge orange" id="bp">0</span></button>
+      <button class="tab" id="tab-p" onclick="switchTab('p')">Pedidos <span class="tab-badge orange" id="bp">0</span></button>
+      <button class="tab" id="tab-f" onclick="switchTab('f')">Flota</button>
     </div>
 
     <!-- CLIENTES -->
@@ -34,6 +36,16 @@
         <div style="display:flex;gap:6px">
           <button class="btn btn-secondary" onclick="loadDemo()">Demo</button>
           <button class="btn btn-primary" onclick="openClientModal()">+ Nuevo</button>
+        </div>
+      </div>
+      <div class="search-bar">
+        <input type="text" id="searchInput" placeholder="Buscar cliente por nombre o direccion..." oninput="onSearch(this.value)">
+        <div class="search-meta">
+          <span id="filterCount">0</span>
+          <div class="filter-btns">
+            <button class="btn btn-secondary btn-sm active-filter" id="btnFilterActive" onclick="setFilterMode('active')">Activos</button>
+            <button class="btn btn-secondary btn-sm" id="btnFilterInactive" onclick="setFilterMode('inactive')">Inactivos</button>
+          </div>
         </div>
       </div>
       <div class="scroll-list" id="clientList"></div>
@@ -53,8 +65,23 @@
       <div class="scroll-list" id="pedidosList"></div>
     </div>
 
+    <!-- FLOTA -->
+    <div id="vf" style="display:none;flex-direction:column;flex:1;overflow:hidden">
+      <div class="panel-header">
+        <div class="panel-title">Delegaciones</div>
+        <button class="btn btn-primary" onclick="openDelegationModal()">+ Delegacion</button>
+      </div>
+      <div class="scroll-list fleet-list" id="delegationList"></div>
+
+      <div class="panel-header">
+        <div class="panel-title">Vehiculos</div>
+        <button class="btn btn-primary" onclick="openVehicleModal()">+ Vehiculo</button>
+      </div>
+      <div class="scroll-list fleet-list" id="vehicleList"></div>
+    </div>
+
     <div class="optimize-bar">
-      <button class="btn btn-primary" onclick="optimizeRoute()">Optimizar ruta</button>
+      <button class="btn btn-primary" onclick="optimizeFleetRoutes()">Optimizar rutas</button>
       <button class="btn btn-secondary" onclick="clearRoute()" title="Limpiar">Limpiar</button>
       <div class="clock" id="clock">--:--</div>
     </div>
@@ -63,7 +90,7 @@
   <div class="map-area">
     <div id="map"></div>
     <div class="legend">
-      <div class="legend-item"><div class="ldot" style="background:#46331f"></div>Base</div>
+      <div class="legend-item"><div class="ldot" style="background:#46331f"></div>Delegacion</div>
       <div class="legend-item"><div class="ldot" style="background:#8e8b30"></div>Con pedido (abierto)</div>
       <div class="legend-item"><div class="ldot" style="background:#d4a830"></div>En ruta optimizada</div>
       <div class="legend-item"><div class="ldot" style="background:#c83c32"></div>Cerrado / No visitable</div>
@@ -71,11 +98,11 @@
     </div>
     <div class="route-panel" id="routePanel">
       <div class="route-header">
-        <div class="rt">Ruta del dia</div>
+        <div class="rt">Rutas del dia</div>
         <div class="rm green" id="rDist">— km</div>
         <div class="rm orange" id="rTime">— h</div>
       </div>
-      <div class="route-stops" id="rStops"></div>
+      <div id="rStops"></div>
     </div>
   </div>
 </div>
@@ -106,14 +133,12 @@
         </div>
       </div>
       <div class="msection">
-        <div class="msec-title">Horario de atencion</div>
-        <div class="fg">
-          <div><label>Apertura</label><input type="time" id="cOpen" value="09:00"></div>
-          <div><label>Cierre</label><input type="time" id="cClose" value="18:00"></div>
-        </div>
+        <div class="msec-title">Horario semanal</div>
+        <div id="cScheduleGrid" style="font-size:12px"></div>
       </div>
     </div>
     <div class="mfoot">
+      <button class="btn btn-danger" id="cToggleBtn" onclick="toggleFromModal()" style="margin-right:auto;display:none">Desactivar</button>
       <button class="btn btn-secondary" onclick="closeCModal()">Cancelar</button>
       <button class="btn btn-primary" onclick="saveClient()">Guardar cliente</button>
     </div>
@@ -146,6 +171,80 @@
     <div class="mfoot">
       <button class="btn btn-secondary" onclick="closePModal()">Cancelar</button>
       <button class="btn btn-primary" onclick="saveOrder()">Guardar pedido</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL DELEGACION -->
+<div class="overlay" id="dModal">
+  <div class="modal">
+    <div class="mhead">
+      <div class="mtitle" id="dModalTitle">Nueva delegacion</div>
+      <button class="mclose" onclick="closeDModal()">x</button>
+    </div>
+    <div class="mbody">
+      <input type="hidden" id="dId">
+      <div class="msection">
+        <div class="msec-title">Informacion de la delegacion</div>
+        <div class="ff"><label>Nombre *</label><input id="dName" placeholder="Delegacion Madrid, Delegacion Norte..."></div>
+        <div class="fg">
+          <div><label>Direccion</label><input id="dAddr" placeholder="Calle, numero..."></div>
+          <div><label>Telefono</label><input id="dPhone" placeholder="600 000 000"></div>
+        </div>
+      </div>
+      <div class="msection">
+        <div class="msec-title">Ubicacion (click en el mapa)</div>
+        <div class="fg">
+          <div><label>Latitud *</label><input type="number" id="dX" step="0.000001"></div>
+          <div><label>Longitud *</label><input type="number" id="dY" step="0.000001"></div>
+        </div>
+      </div>
+      <div class="msection">
+        <div class="msec-title">Horario de operacion</div>
+        <div class="fg">
+          <div><label>Apertura</label><input type="time" id="dOpen" value="06:00"></div>
+          <div><label>Cierre</label><input type="time" id="dClose" value="22:00"></div>
+        </div>
+      </div>
+    </div>
+    <div class="mfoot">
+      <button class="btn btn-secondary" onclick="closeDModal()">Cancelar</button>
+      <button class="btn btn-primary" onclick="saveDelegation()">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL VEHICULO -->
+<div class="overlay" id="vModal">
+  <div class="modal">
+    <div class="mhead">
+      <div class="mtitle" id="vModalTitle">Nuevo vehiculo</div>
+      <button class="mclose" onclick="closeVModal()">x</button>
+    </div>
+    <div class="mbody">
+      <input type="hidden" id="vId">
+      <div class="msection">
+        <div class="msec-title">Informacion del vehiculo</div>
+        <div class="fg">
+          <div><label>Nombre *</label><input id="vName" placeholder="Camion 1, Furgoneta azul..."></div>
+          <div><label>Matricula</label><input id="vPlate" placeholder="1234 ABC"></div>
+        </div>
+        <div class="ff"><label>Delegacion *</label><select id="vDelegationSel"></select></div>
+      </div>
+      <div class="msection">
+        <div class="msec-title">Capacidad</div>
+        <div class="fg">
+          <div><label>Peso max (kg)</label><input type="number" id="vMaxWeight" placeholder="Sin limite" step="0.01"></div>
+          <div><label>Volumen max (m3)</label><input type="number" id="vMaxVolume" placeholder="Sin limite" step="0.01"></div>
+        </div>
+        <div class="fg">
+          <div><label>Max items</label><input type="number" id="vMaxItems" placeholder="Sin limite"></div>
+        </div>
+      </div>
+    </div>
+    <div class="mfoot">
+      <button class="btn btn-secondary" onclick="closeVModal()">Cancelar</button>
+      <button class="btn btn-primary" onclick="saveVehicle()">Guardar</button>
     </div>
   </div>
 </div>

@@ -1,30 +1,38 @@
 <?php
 
 require_once __DIR__ . '/../core/Controller.php';
-require_once __DIR__ . '/../models/Client.php';
+require_once __DIR__ . '/../models/Delegation.php';
 
 class SettingController extends Controller
 {
-    private $client;
+    private $delegation;
 
     public function __construct()
     {
-        $this->client = new Client();
+        $this->delegation = new Delegation();
     }
 
-    public function depot()
+    public function delegation()
     {
-        $depot = $this->client->getDepot();
-        if (!$depot) {
-            $this->json(['error' => 'No hay base configurada'], 404);
+        $delegations = $this->delegation->getAll();
+        if (!count($delegations)) {
+            $this->json(['error' => 'No hay delegacion configurada'], 404);
+            return;
         }
-        $this->json($depot);
+        $this->json($delegations[0]);
     }
 
-    public function updateDepot()
+    public function updateDelegation()
     {
         $data = $this->getInput();
-        $this->client->updateDepot($data);
-        $this->json($this->client->getDepot());
+        $delegations = $this->delegation->getAll();
+
+        if (count($delegations)) {
+            $this->delegation->update((int) $delegations[0]['id'], $data);
+            $this->json($this->delegation->getById((int) $delegations[0]['id']));
+        } else {
+            $id = $this->delegation->create($data);
+            $this->json($this->delegation->getById($id));
+        }
     }
 }

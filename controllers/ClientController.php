@@ -2,20 +2,30 @@
 
 require_once __DIR__ . '/../core/Controller.php';
 require_once __DIR__ . '/../models/Client.php';
+require_once __DIR__ . '/../models/ClientSchedule.php';
 require_once __DIR__ . '/../models/Order.php';
 
 class ClientController extends Controller
 {
     private $client;
+    private $schedule;
 
     public function __construct()
     {
-        $this->client = new Client();
+        $this->client   = new Client();
+        $this->schedule = new ClientSchedule();
     }
 
     public function index()
     {
-        $this->json($this->client->getAll());
+        $clients   = $this->client->getAll();
+        $schedules = $this->schedule->getAllGrouped();
+
+        foreach ($clients as &$c) {
+            $c['schedules'] = $schedules[(int) $c['id']] ?? [];
+        }
+
+        $this->json($clients);
     }
 
     public function store()
@@ -44,10 +54,32 @@ class ClientController extends Controller
         $this->json($updated);
     }
 
+    public function toggleActive($id)
+    {
+        $this->client->toggleActive((int) $id);
+        $updated = $this->client->getById((int) $id);
+        $this->json($updated);
+    }
+
     public function destroy($id)
     {
         $this->client->delete((int) $id);
         $this->json(['ok' => true]);
+    }
+
+    /** GET api/clients/{id}/schedules */
+    public function getSchedules($id)
+    {
+        $this->json($this->schedule->getByClient((int) $id));
+    }
+
+    /** PUT api/clients/{id}/schedules */
+    public function saveSchedules($id)
+    {
+        $data = $this->getInput();
+        $schedule = $data['schedules'] ?? [];
+        $this->schedule->replaceForClient((int) $id, $schedule);
+        $this->json($this->schedule->getByClient((int) $id));
     }
 
     public function loadDemo()

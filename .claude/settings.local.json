@@ -2,7 +2,12 @@
   "permissions": {
     "allow": [
       "Bash(\"c:/wamp64/bin/php/php8.3.20/php.exe\" -v)",
-      "Read(//c/wamp64/bin/php/**)"
+      "Read(//c/wamp64/bin/php/**)",
+      "Bash(find 'c:\\\\wamp64\\\\www\\\\Gestor de Rutas' -maxdepth 2 -type f \\\\\\(-name *.env* -o -name *.md -o -name *.txt \\\\\\))",
+      "Bash(python -c \":*)",
+      "Bash(curl -s \"http://localhost/Gestor%20de%20Rutas/api/clients\")",
+      "Bash(curl -s -X PUT \"http://localhost/Gestor%20de%20Rutas/api/clients/2/toggle\")",
+      "Bash(python3 -c \":*)"
     ]
   }
 }

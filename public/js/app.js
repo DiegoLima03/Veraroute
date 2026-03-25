@@ -41,6 +41,8 @@ let searchQuery = '';
 let filterMode = 'active';
 // Colores para rutas de cada vehiculo
 const ROUTE_COLORS = ['#d4a830', '#3498db', '#e74c3c', '#2ecc71', '#9b59b6', '#e67e22', '#1abc9c', '#e84393', '#0984e3', '#6c5ce7'];
+const RUTA_COLORS = ['#e74c3c', '#3498db', '#2ecc71', '#9b59b6', '#e67e22', '#1abc9c', '#e84393', '#0984e3', '#6c5ce7', '#d4a830'];
+let rutas = [];
 
 // Delegacion principal — retrocompatibilidad
 let delegation = { name: 'Delegacion', x: 41.994524, y: -8.739887, address: '' };
@@ -54,6 +56,15 @@ async function loadDelegation() {
 
 async function loadDelegations() {
   try { delegations = await api('delegations'); } catch (e) { delegations = []; }
+}
+
+function getRutaColor(rutaId) {
+  const rIdx = rutas.findIndex(r => r.id == rutaId);
+  return rIdx >= 0 ? RUTA_COLORS[rIdx % RUTA_COLORS.length] : '#85725e';
+}
+
+async function loadRutas() {
+  try { rutas = await api('rutas'); } catch (e) { rutas = []; }
 }
 
 async function loadVehicles() {
@@ -167,7 +178,12 @@ function drawMap() {
     const inRoute = clientVehicle[c.id] !== undefined || currentRoute?.includes(c.id);
     const vIdx = clientVehicle[c.id];
 
-    let color = hasOrd ? (isOpen ? '#8e8b30' : '#c83c32') : '#85725e';
+    let color = '#85725e';
+    if (c.ruta_id) {
+      const rIdx = rutas.findIndex(r => r.id == c.ruta_id);
+      color = rIdx >= 0 ? RUTA_COLORS[rIdx % RUTA_COLORS.length] : '#85725e';
+    }
+    if (hasOrd) color = isOpen ? '#8e8b30' : '#c83c32';
     if (inRoute) color = vIdx !== undefined ? ROUTE_COLORS[vIdx % ROUTE_COLORS.length] : '#d4a830';
 
     let label = i + 1;
@@ -240,8 +256,10 @@ async function loadClients() {
       close: (c.close_time || '18:00').substring(0, 5),
       open2: c.open_time_2 ? c.open_time_2.substring(0, 5) : '',
       close2: c.close_time_2 ? c.close_time_2.substring(0, 5) : '',
-      schedules: c.schedules || {},  // {day_of_week: [{open_time, close_time}, ...]}
+      schedules: c.schedules || {},
       active: c.active !== undefined ? !!parseInt(c.active) : true,
+      ruta_id: c.ruta_id ? parseInt(c.ruta_id) : null,
+      ruta_name: c.ruta_name || '',
     }));
   } catch (e) {
     showToast('Error cargando clientes: ' + e.message);
@@ -283,10 +301,13 @@ function switchTab(t) {
   document.getElementById('vc').style.display = t === 'c' ? 'flex' : 'none';
   document.getElementById('vp').style.display = t === 'p' ? 'flex' : 'none';
   document.getElementById('vf').style.display = t === 'f' ? 'flex' : 'none';
+  document.getElementById('vh').style.display = t === 'h' ? 'flex' : 'none';
   document.getElementById('tab-c').classList.toggle('active', t === 'c');
   document.getElementById('tab-p').classList.toggle('active', t === 'p');
   document.getElementById('tab-f').classList.toggle('active', t === 'f');
+  document.getElementById('tab-h').classList.toggle('active', t === 'h');
   if (t === 'f') renderFleetLists();
+  if (t === 'h') { loadHistory(); loadDashboard(); }
 }
 
 // ── DATE ───────────────────────────────────────────────────
@@ -316,6 +337,14 @@ function setFilterMode(mode) {
 async function toggleClientActive(id) {
   const c = clients.find(x => x.id === id);
   if (!c) return;
+
+  // Si se va a activar y no tiene coordenadas, pedir que las ponga primero
+  if (!c.active && (c.x == null || c.y == null)) {
+    showToast('Este cliente no tiene coordenadas. Edítalo y asigna ubicación antes de activarlo.');
+    openClientModal(id);
+    return;
+  }
+
   try {
     await api('clients/' + id + '/toggle', 'PUT');
     c.active = !c.active;
@@ -410,16 +439,24 @@ function openClientModal(id = null) {
   document.getElementById('cNotes').value = c?.notes || '';
   document.getElementById('cX').value    = c?.x ?? '';
   document.getElementById('cY').value    = c?.y ?? '';
+  // Ruta select
+  const rutaSel = document.getElementById('cRuta');
+  if (rutaSel) {
+    rutaSel.innerHTML = '<option value="">Sin ruta</option>' + rutas.map(r => '<option value="' + r.id + '"' + (c?.ruta_id == r.id ? ' selected' : '') + '>' + r.name + '</option>').join('');
+  }
   // Horario semanal editable
   buildScheduleGrid(c);
 
   const toggleBtn = document.getElementById('cToggleBtn');
+  const deleteBtn = document.getElementById('cDeleteBtn');
   if (c) {
     toggleBtn.style.display = '';
     toggleBtn.textContent = c.active ? 'Desactivar' : 'Activar';
     toggleBtn.className = 'btn ' + (c.active ? 'btn-danger' : 'btn-success');
+    deleteBtn.style.display = '';
   } else {
     toggleBtn.style.display = 'none';
+    deleteBtn.style.display = 'none';
   }
 
   document.getElementById('cModal').classList.add('open');
@@ -436,6 +473,23 @@ async function toggleFromModal() {
     toggleBtn.className = 'btn ' + (c.active ? 'btn-danger' : 'btn-success');
   }
 }
+async function deleteFromModal() {
+  const id = parseInt(document.getElementById('cId').value);
+  if (!id) return;
+  const c = clients.find(x => x.id === id);
+  if (!confirm('¿Eliminar el cliente "' + (c?.name || id) + '"? Esta acción no se puede deshacer.')) return;
+  try {
+    await api('clients/' + id, 'DELETE');
+    showToast('Cliente eliminado');
+    closeCModal();
+    currentRoute = null;
+    await loadClients();
+    refreshAll();
+  } catch (e) {
+    showToast('Error eliminando: ' + e.message);
+  }
+}
+
 function closeCModal() {
   document.getElementById('cModal').classList.remove('open');
   if (mapPreviewMarker) { map.removeLayer(mapPreviewMarker); mapPreviewMarker = null; }
@@ -451,6 +505,7 @@ async function saveClient() {
 
   // Use Monday as fallback for open_time/close_time
   const mon = schedule[0] || [];
+  const rutaVal = document.getElementById('cRuta')?.value;
   const data = {
     name,
     address: document.getElementById('cAddr').value.trim(),
@@ -461,6 +516,7 @@ async function saveClient() {
     close_time: mon[0]?.close_time || '18:00',
     open_time_2: mon[1]?.open_time || '',
     close_time_2: mon[1]?.close_time || '',
+    ruta_id: rutaVal ? parseInt(rutaVal) : null,
   };
 
   const eid = parseInt(document.getElementById('cId').value);
@@ -626,6 +682,7 @@ function renderClientList() {
         '<span class="pill">' + (c.addr || (c.x.toFixed(4) + ', ' + c.y.toFixed(4))) + '</span>' +
         '<span class="pill ' + (isOpen ? 'open' : 'closed') + '">' + (isOpen ? 'ABIERTO' : 'CERRADO') + ' ' + clientHoursText(c, todayDb) + '</span>' +
         (hasOrd ? '<span class="pill has-ord">PEDIDO</span>' : '') +
+        (c.ruta_name ? '<span class="pill" style="border-color:' + getRutaColor(c.ruta_id) + '44;color:' + getRutaColor(c.ruta_id) + ';background:' + getRutaColor(c.ruta_id) + '18">' + c.ruta_name + '</span>' : '') +
         (!c.active ? '<span class="pill closed">INACTIVO</span>' : '') +
       '</div>' +
     '</div>';
@@ -832,6 +889,434 @@ async function saveVehicle() {
   } catch (e) { showToast('Error: ' + e.message); }
 }
 
+// ── ROUTE PANEL RENDERING & EDITING ──────────────────────
+// Valores por defecto, se actualizan desde settings del backend
+let LUNCH_DURATION = 60;
+let LUNCH_EARLIEST = 12 * 60;
+let LUNCH_LATEST = 15.5 * 60;
+
+function renderRoutePanel(result) {
+  let html = '';
+  result.routes.forEach((r, ri) => {
+    const color = ROUTE_COLORS[ri % ROUTE_COLORS.length];
+    const depTime = (r.delegation.open_time || '06:00').substring(0, 5);
+
+    // Calcular hora de regreso como rango (salida temprana y tardia)
+    let returnEta = '';
+    if (r.stops.length && r.stops[r.stops.length - 1].eta) {
+      const totalMin = parseFloat(r.total_time_h) * 60;
+      const depEarlyMin = parseInt(depTime.split(':')[0]) * 60 + parseInt(depTime.split(':')[1] || 0);
+      const retEarly = depEarlyMin + totalMin;
+      const reh = Math.floor(retEarly / 60) % 24;
+      const rem = Math.round(retEarly % 60);
+      const retEarlyStr = String(reh).padStart(2, '0') + ':' + String(rem).padStart(2, '0');
+
+      const depLateStr = r.departure_latest || depTime;
+      const depLateMin = parseInt(depLateStr.split(':')[0]) * 60 + parseInt(depLateStr.split(':')[1] || 0);
+      const retLate = depLateMin + totalMin;
+      const rlh = Math.floor(retLate / 60) % 24;
+      const rlm = Math.round(retLate % 60);
+      const retLateStr = String(rlh).padStart(2, '0') + ':' + String(rlm).padStart(2, '0');
+
+      returnEta = retEarlyStr !== retLateStr ? retEarlyStr + ' - ' + retLateStr : retEarlyStr;
+    }
+
+    html += '<div class="vehicle-route" data-route-idx="' + ri + '">'
+      + '<div class="vr-header" style="border-left:3px solid ' + color + '">'
+      +   '<span class="vr-name">' + r.vehicle.name + (r.vehicle.plate ? ' (' + r.vehicle.plate + ')' : '') + '</span>'
+      +   '<span class="rm green vr-dist">' + parseFloat(r.total_distance_km).toFixed(1) + ' km</span>'
+      +   '<span class="rm orange vr-time">' + parseFloat(r.total_time_h).toFixed(1) + ' h</span>'
+      +   '<span class="pill">' + r.stops.length + ' paradas</span>'
+      + '</div>';
+
+    // Salida desde delegacion con rango de hora
+    const depEarliest = r.departure_earliest || depTime;
+    const depLatest = r.departure_latest || depTime;
+    const hasRange = depEarliest !== depLatest;
+    const depLabel = hasRange ? depEarliest + ' - ' + depLatest : depEarliest;
+
+    html += '<div class="rstop-item depot-item">'
+      + '<span class="depot-icon">&#9873;</span>'
+      + '<span class="stop-name">' + r.delegation.name + '</span>'
+      + '<span class="stop-eta">' + depLabel + '</span>'
+      + '<span class="stop-unload">Salida</span>'
+      + '</div>';
+
+    html += '<div class="route-stops-list" id="sortable-' + ri + '">';
+
+    const lunchPos = r.lunch_after_stop;
+    const lunchEta = r.lunch_eta;
+
+    r.stops.forEach((s, si) => {
+      // Insertar almuerzo antes de esta parada si el backend lo indica
+      if (lunchPos !== null && lunchPos !== undefined && si === lunchPos) {
+        const lunchEnd = lunchEta ? addMinutes(lunchEta, LUNCH_DURATION) : '';
+        html += '<div class="rstop-item lunch-break">'
+          + '<span class="lunch-icon">&#9749;</span>'
+          + '<span class="stop-name">Almuerzo</span>'
+          + '<span class="stop-eta">' + (lunchEta || '') + ' - ' + lunchEnd + '</span>'
+          + '</div>';
+      }
+
+      // Indicador de tiempo de trayecto
+      const travelMin = Math.round(s.travel_min || 0);
+      if (travelMin > 0) {
+        html += '<div class="travel-indicator">&darr; ' + travelMin + ' min</div>';
+      }
+
+      const unloadTxt = Math.round(s.unload_min || 0) + ' min';
+      const itemsTxt = s.items_count ? ' (' + s.items_count + ' uds)' : '';
+      const stopStatus = s.status || 'pending';
+      const STATUS_CLS = { pending: '', completed: ' stop-done', skipped: ' stop-skipped' };
+      const STATUS_ICO = { pending: '&#9675;', completed: '&#9679;', skipped: '&#10005;' };
+      const planId = r.plan_id || 0;
+      html += '<div class="rstop-item' + (STATUS_CLS[stopStatus] || '') + '" data-stop-idx="' + si + '" data-client-id="' + s.client_id + '">'
+        + (planId ? '<span class="stop-status" onclick="event.stopPropagation();toggleStopStatus(' + planId + ',' + (si + 1) + ',\'' + stopStatus + '\')" title="Click: cambiar estado">' + (STATUS_ICO[stopStatus] || '') + '</span>' : '')
+        + '<span class="drag-handle">&#9776;</span>'
+        + '<span class="stop-num" style="background:' + color + '">' + (si + 1) + '</span>'
+        + '<span class="stop-name">' + s.name + '</span>'
+        + '<span class="stop-eta">' + (s.eta || '') + '</span>'
+        + '<span class="stop-unload">' + unloadTxt + itemsTxt + '</span>'
+        + '<button type="button" class="stop-remove" onclick="removeStop(' + ri + ',' + si + ')" title="Quitar parada">&times;</button>'
+        + '</div>';
+    });
+
+    // Almuerzo despues del ultimo stop
+    if (lunchPos !== null && lunchPos !== undefined && lunchPos === r.stops.length) {
+      const lunchEnd = lunchEta ? addMinutes(lunchEta, LUNCH_DURATION) : '';
+      html += '<div class="rstop-item lunch-break">'
+        + '<span class="lunch-icon">&#9749;</span>'
+        + '<span class="stop-name">Almuerzo</span>'
+        + '<span class="stop-eta">' + (lunchEta || '') + ' - ' + lunchEnd + '</span>'
+        + '</div>';
+    }
+
+    html += '</div>';
+
+    // Indicador de regreso
+    const returnMin = Math.round(r.return_travel_min || 0);
+    if (returnMin > 0) {
+      html += '<div class="travel-indicator">&darr; ' + returnMin + ' min</div>';
+    }
+
+    // Regreso a delegacion
+    html += '<div class="rstop-item depot-item">'
+      + '<span class="depot-icon">&#9873;</span>'
+      + '<span class="stop-name">' + r.delegation.name + '</span>'
+      + '<span class="stop-eta">' + returnEta + '</span>'
+      + '<span class="stop-unload">Regreso</span>'
+      + '</div>';
+
+    html += '</div>';
+  });
+
+  if (result.unassigned?.length) {
+    html += '<div style="margin-top:8px;font-size:10px;color:var(--danger)">Sin asignar: '
+      + result.unassigned.map(u => u.name + ' (' + u.reason + ')').join(', ') + '</div>';
+  }
+
+  document.getElementById('rStops').innerHTML = html;
+  document.getElementById('routePanel').classList.add('visible');
+}
+
+function addMinutes(timeStr, mins) {
+  const [h, m] = timeStr.split(':').map(Number);
+  const total = h * 60 + m + mins;
+  return String(Math.floor(total / 60) % 24).padStart(2, '0') + ':' + String(total % 60).padStart(2, '0');
+}
+
+function initSortables() {
+  if (!fleetRoutes) return;
+  fleetRoutes.routes.forEach((r, ri) => {
+    const el = document.getElementById('sortable-' + ri);
+    if (!el) return;
+    new Sortable(el, {
+      group: 'routes',
+      animation: 150,
+      handle: '.drag-handle',
+      ghostClass: 'sortable-ghost',
+      filter: '.lunch-break,.travel-indicator',
+      onEnd: function(evt) { handleStopMove(evt); }
+    });
+  });
+}
+
+function handleStopMove(evt) {
+  const fromIdx = parseInt(evt.from.id.replace('sortable-', ''));
+  const toIdx = parseInt(evt.to.id.replace('sortable-', ''));
+  const oldI = evt.oldIndex;
+  const newI = evt.newIndex;
+
+  // Ajustar indices: descontar elementos no-stop (almuerzo, indicadores de trayecto)
+  const nonStop = '.lunch-break,.travel-indicator';
+  const fromExtra = evt.from.querySelectorAll(nonStop);
+  const toExtra = evt.to.querySelectorAll(nonStop);
+  let adjustOld = 0, adjustNew = 0;
+  fromExtra.forEach(l => { if (Array.from(evt.from.children).indexOf(l) < oldI) adjustOld++; });
+  toExtra.forEach(l => { if (Array.from(evt.to.children).indexOf(l) < newI) adjustNew++; });
+
+  const realOld = oldI - adjustOld;
+  const realNew = newI - adjustNew;
+
+  const stop = fleetRoutes.routes[fromIdx].stops.splice(realOld, 1)[0];
+  fleetRoutes.routes[toIdx].stops.splice(realNew, 0, stop);
+
+  // Eliminar rutas vacias
+  fleetRoutes.routes = fleetRoutes.routes.filter(r => r.stops.length > 0);
+
+  recalcRouteAfterEdit();
+}
+
+function removeStop(routeIdx, stopIdx) {
+  fleetRoutes.routes[routeIdx].stops.splice(stopIdx, 1);
+  fleetRoutes.routes = fleetRoutes.routes.filter(r => r.stops.length > 0);
+  recalcRouteAfterEdit();
+}
+
+let recalcTimer = null;
+async function recalcRouteAfterEdit() {
+  // Debounce 300ms
+  if (recalcTimer) clearTimeout(recalcTimer);
+  recalcTimer = setTimeout(async () => {
+    await doRecalcRoutes();
+  }, 300);
+}
+
+async function doRecalcRoutes() {
+  for (const r of fleetRoutes.routes) {
+    if (!r.stops.length) continue;
+
+    const waypoints = [
+      { x: parseFloat(r.delegation.x), y: parseFloat(r.delegation.y) },
+      ...r.stops.map(s => ({ x: parseFloat(s.x), y: parseFloat(s.y) })),
+      { x: parseFloat(r.delegation.x), y: parseFloat(r.delegation.y) },
+    ];
+
+    try {
+      const coords = waypoints.map(p => p.y + ',' + p.x).join(';');
+      const url = 'https://router.project-osrm.org/route/v1/driving/' + coords + '?overview=full&geometries=geojson';
+      const res = await fetch(url);
+      const data = await res.json();
+      if (data.code !== 'Ok') continue;
+
+      const route = data.routes[0];
+      r.geometry = route.geometry.coordinates.map(c => [c[1], c[0]]);
+      r.total_distance_km = route.distance / 1000;
+
+      const legs = route.legs;
+      const delOpen = r.delegation.open_time || '06:00';
+      const startMin = parseInt(delOpen.split(':')[0]) * 60 + parseInt(delOpen.split(':')[1] || 0);
+
+      // Encontrar posicion optima para almuerzo
+      const lunchResult = findBestLunchPositionJS(r.stops, legs, startMin);
+      r.lunch_after_stop = lunchResult.pos;
+      r.lunch_eta = lunchResult.eta;
+
+      // Recalcular ETAs con almuerzo en posicion optima
+      let t = startMin;
+      r.stops.forEach((s, si) => {
+        if (r.lunch_after_stop !== null && si === r.lunch_after_stop) {
+          t += LUNCH_DURATION;
+        }
+        const legMin = legs[si].duration / 60;
+        s.travel_min = Math.round(legMin);
+        t += legMin;
+        const h = Math.floor(t / 60) % 24;
+        const m = Math.round(t % 60);
+        s.eta = String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
+        t += parseFloat(s.unload_min || 0);
+      });
+
+      // Tiempo de regreso (ultimo leg = vuelta a delegacion)
+      r.return_travel_min = Math.round(legs[legs.length - 1].duration / 60);
+
+      if (r.lunch_after_stop !== null && r.lunch_after_stop === r.stops.length) {
+        const h = Math.floor(t / 60) % 24;
+        const m = Math.round(t % 60);
+        r.lunch_eta = String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
+      }
+
+      const totalUnload = r.stops.reduce((sum, s) => sum + parseFloat(s.unload_min || 0), 0);
+      const lunchH = r.lunch_after_stop !== null ? LUNCH_DURATION / 60 : 0;
+      r.total_time_h = (route.duration / 3600) + (totalUnload / 60) + lunchH;
+    } catch (e) {
+      console.warn('OSRM recalc fallo', e);
+    }
+  }
+
+  // Actualizar totales
+  let totalDist = 0, totalTime = 0;
+  fleetRoutes.routes.forEach(r => {
+    totalDist += parseFloat(r.total_distance_km);
+    totalTime += parseFloat(r.total_time_h);
+  });
+  document.getElementById('rDist').textContent = totalDist.toFixed(1) + ' km';
+  document.getElementById('rTime').textContent = totalTime.toFixed(1) + ' h';
+  document.getElementById('sDist').textContent = totalDist.toFixed(1);
+  document.getElementById('sTime').textContent = totalTime.toFixed(1) + 'h';
+
+  renderRoutePanel(fleetRoutes);
+  initSortables();
+  refreshAll();
+}
+
+/** Encuentra la posicion optima para almuerzo en el frontend */
+function findBestLunchPositionJS(stops, legs, startMin) {
+  if (stops.length < 2) return { pos: null, eta: null };
+
+  // Calcular tiempos sin almuerzo
+  const departures = [];
+  let t = startMin;
+  for (let i = 0; i < stops.length; i++) {
+    t += legs[i].duration / 60;
+    t += parseFloat(stops[i].unload_min || 0);
+    departures.push(t);
+  }
+
+  // Si la ruta acaba antes de las 12:00, no hace falta almuerzo
+  if (departures[departures.length - 1] < LUNCH_EARLIEST) return { pos: null, eta: null };
+
+  let bestPos = null;
+  let bestCost = Infinity;
+  let bestEta = null;
+
+  for (let pos = 0; pos <= stops.length; pos++) {
+    const lunchTime = pos === 0 ? startMin : departures[pos - 1];
+    if (lunchTime < LUNCH_EARLIEST - 30 || lunchTime > LUNCH_LATEST) continue;
+
+    // Simular con almuerzo en esta posicion
+    let tSim = startMin;
+    let tNoLunch = startMin;
+    let valid = true;
+
+    for (let i = 0; i < stops.length; i++) {
+      if (i === pos) tSim += LUNCH_DURATION;
+      tSim += legs[i].duration / 60;
+      tNoLunch += legs[i].duration / 60;
+      tSim += parseFloat(stops[i].unload_min || 0);
+      tNoLunch += parseFloat(stops[i].unload_min || 0);
+    }
+    if (pos === stops.length) tSim += LUNCH_DURATION;
+
+    const cost = tSim - tNoLunch;
+    if (valid && cost < bestCost) {
+      bestCost = cost;
+      bestPos = pos;
+      const lt = pos === 0 ? startMin : departures[pos - 1];
+      const h = Math.floor(lt / 60) % 24;
+      const m = Math.round(lt % 60);
+      bestEta = String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
+    }
+  }
+
+  return { pos: bestPos, eta: bestEta };
+}
+
+// ── EXPORT ROUTES ─────────────────────────────────────────
+function exportRoutesPrint() {
+  if (!fleetRoutes || !fleetRoutes.routes.length) { showToast('No hay rutas para exportar'); return; }
+  const date = getDate();
+  const DAY_ES = ['Domingo','Lunes','Martes','Miercoles','Jueves','Viernes','Sabado'];
+  const d = new Date(date + 'T12:00:00');
+  const dateStr = DAY_ES[d.getDay()] + ' ' + date;
+
+  let html = '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Rutas ' + date + '</title><style>'
+    + 'body{font-family:Arial,sans-serif;font-size:12px;color:#333;margin:20px}'
+    + 'h1{font-size:18px;margin-bottom:4px}'
+    + '.date{color:#666;font-size:13px;margin-bottom:16px}'
+    + '.route{page-break-inside:avoid;margin-bottom:24px;border:1px solid #ddd;border-radius:8px;padding:12px}'
+    + '.route-title{font-size:14px;font-weight:700;margin-bottom:2px}'
+    + '.route-meta{color:#666;font-size:11px;margin-bottom:8px}'
+    + 'table{width:100%;border-collapse:collapse;font-size:11px}'
+    + 'th{text-align:left;background:#f5f5f0;padding:5px 8px;border-bottom:2px solid #ddd;font-size:10px;text-transform:uppercase}'
+    + 'td{padding:5px 8px;border-bottom:1px solid #eee}'
+    + 'tr.lunch{background:#fdf8e8;font-style:italic;color:#a07d10}'
+    + '.footer{margin-top:20px;font-size:10px;color:#999;text-align:center}'
+    + '@media print{.no-print{display:none}body{margin:10px}}'
+    + '</style></head><body>';
+
+  html += '<div class="no-print" style="margin-bottom:12px"><button onclick="window.print()" style="padding:8px 16px;font-size:13px;cursor:pointer">Imprimir / Guardar PDF</button></div>';
+  html += '<h1>VeraRoute - Hojas de ruta</h1><div class="date">' + dateStr + '</div>';
+
+  fleetRoutes.routes.forEach((r, ri) => {
+    const totalUnload = r.stops.reduce((s, st) => s + parseFloat(st.unload_min || 0), 0);
+    html += '<div class="route">';
+    html += '<div class="route-title">' + r.vehicle.name + (r.vehicle.plate ? ' (' + r.vehicle.plate + ')' : '') + '</div>';
+    html += '<div class="route-meta">Delegacion: ' + r.delegation.name
+      + ' | ' + parseFloat(r.total_distance_km).toFixed(1) + ' km'
+      + ' | ' + parseFloat(r.total_time_h).toFixed(1) + ' h'
+      + ' | ' + r.stops.length + ' paradas'
+      + ' | Descarga: ' + Math.round(totalUnload) + ' min</div>';
+    html += '<table><thead><tr><th>#</th><th>Cliente</th><th>Direccion</th><th>Telefono</th><th>ETA</th><th>Descarga</th><th>Firma</th></tr></thead><tbody>';
+
+    const lunchPos = r.lunch_after_stop;
+    r.stops.forEach((s, si) => {
+      if (lunchPos !== null && lunchPos !== undefined && si === lunchPos) {
+        const lunchEnd = r.lunch_eta ? addMinutes(r.lunch_eta, LUNCH_DURATION) : '';
+        html += '<tr class="lunch"><td></td><td colspan="4">Almuerzo ' + (r.lunch_eta || '') + ' - ' + lunchEnd + '</td><td></td><td></td></tr>';
+      }
+      const c = clients.find(x => x.id === s.client_id);
+      html += '<tr><td>' + (si + 1) + '</td>'
+        + '<td><strong>' + s.name + '</strong></td>'
+        + '<td>' + (c?.addr || '') + '</td>'
+        + '<td>' + (c?.phone || '') + '</td>'
+        + '<td><strong>' + (s.eta || '') + '</strong></td>'
+        + '<td>' + Math.round(s.unload_min || 0) + ' min' + (s.items_count ? ' (' + s.items_count + ' uds)' : '') + '</td>'
+        + '<td style="width:80px;border-bottom:1px solid #ccc"></td></tr>';
+    });
+
+    html += '</tbody></table></div>';
+  });
+
+  if (fleetRoutes.unassigned?.length) {
+    html += '<div style="margin-top:12px;color:#c83c32"><strong>Sin asignar:</strong> '
+      + fleetRoutes.unassigned.map(u => u.name + ' (' + u.reason + ')').join(', ') + '</div>';
+  }
+
+  html += '<div class="footer">Generado por VeraRoute el ' + new Date().toLocaleString('es-ES') + '</div>';
+  html += '</body></html>';
+
+  const win = window.open('', '_blank');
+  win.document.write(html);
+  win.document.close();
+}
+
+function exportRoutesCSV() {
+  if (!fleetRoutes || !fleetRoutes.routes.length) { showToast('No hay rutas para exportar'); return; }
+  const date = getDate();
+  const sep = ';';
+  let csv = 'Vehiculo' + sep + 'Matricula' + sep + 'Delegacion' + sep + 'Parada' + sep + 'Cliente' + sep + 'Direccion' + sep + 'Telefono' + sep + 'ETA' + sep + 'Descarga (min)' + sep + 'Items' + sep + 'Lat' + sep + 'Lng\n';
+
+  fleetRoutes.routes.forEach(r => {
+    r.stops.forEach((s, si) => {
+      const c = clients.find(x => x.id === s.client_id);
+      csv += [
+        r.vehicle.name,
+        r.vehicle.plate || '',
+        r.delegation.name,
+        si + 1,
+        '"' + s.name.replace(/"/g, '""') + '"',
+        '"' + (c?.addr || '').replace(/"/g, '""') + '"',
+        c?.phone || '',
+        s.eta || '',
+        Math.round(s.unload_min || 0),
+        s.items_count || 0,
+        s.x,
+        s.y,
+      ].join(sep) + '\n';
+    });
+  });
+
+  const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'rutas_' + date + '.csv';
+  a.click();
+  URL.revokeObjectURL(url);
+  showToast('CSV exportado: rutas_' + date + '.csv');
+}
+
 // ── MULTI-VEHICLE ROUTE OPTIMIZATION ──────────────────────
 async function optimizeFleetRoutes() {
   const date = getDate();
@@ -848,6 +1333,13 @@ async function optimizeFleetRoutes() {
     fleetRoutes = result;
     currentRoute = null;
     routeGeometry = null;
+
+    // Aplicar settings del backend
+    if (result.settings) {
+      LUNCH_DURATION = result.settings.lunch_duration_min || 60;
+      LUNCH_EARLIEST = t2m(result.settings.lunch_earliest || '12:00');
+      LUNCH_LATEST = t2m(result.settings.lunch_latest || '15:30');
+    }
 
     if (!result.routes.length) {
       showToast('Sin pedidos para optimizar en ' + date);
@@ -866,32 +1358,8 @@ async function optimizeFleetRoutes() {
     document.getElementById('sDist').textContent = totalDist.toFixed(1);
     document.getElementById('sTime').textContent = totalTime.toFixed(1) + 'h';
 
-    // Render panel de rutas
-    let html = '';
-    result.routes.forEach((r, ri) => {
-      const color = ROUTE_COLORS[ri % ROUTE_COLORS.length];
-      html += '<div class="vehicle-route">' +
-        '<div class="vr-header" style="border-left:3px solid ' + color + '">' +
-          '<span class="vr-name">' + r.vehicle.name + (r.vehicle.plate ? ' (' + r.vehicle.plate + ')' : '') + '</span>' +
-          '<span class="rm green">' + parseFloat(r.total_distance_km).toFixed(1) + ' km</span>' +
-          '<span class="rm orange">' + parseFloat(r.total_time_h).toFixed(1) + ' h</span>' +
-          '<span class="pill">' + r.stops.length + ' paradas</span>' +
-        '</div>' +
-        '<div class="route-stops">' +
-          '<div class="rstop"><span class="slabel delegation">' + r.delegation.name + '</span></div>';
-      r.stops.forEach((s, si) => {
-        html += '<span class="sarrow">-></span><div class="rstop"><span class="slabel visit">' + (si + 1) + '. ' + s.name + ' <small>' + (s.eta || '') + '</small></span></div>';
-      });
-      html += '<span class="sarrow">-></span><div class="rstop"><span class="slabel delegation">' + r.delegation.name + '</span></div>' +
-        '</div></div>';
-    });
-
-    if (result.unassigned?.length) {
-      html += '<div style="margin-top:8px;font-size:10px;color:var(--danger)">Sin asignar: ' + result.unassigned.map(u => u.name + ' (' + u.reason + ')').join(', ') + '</div>';
-    }
-
-    document.getElementById('rStops').innerHTML = html;
-    document.getElementById('routePanel').classList.add('visible');
+    renderRoutePanel(result);
+    initSortables();
 
     // Obtener geometria OSRM para cada ruta
     for (let ri = 0; ri < result.routes.length; ri++) {
@@ -905,7 +1373,9 @@ async function optimizeFleetRoutes() {
         const osrm = await fetchOSRMRoute(waypoints);
         r.geometry = osrm.geometry;
         r.total_distance_km = osrm.distance;
-        r.total_time_h = osrm.duration + (r.stops.length * parseFloat(r.total_unload_min || 0) / 60);
+        const totalUnload = r.stops.reduce((s, st) => s + parseFloat(st.unload_min || 0), 0);
+        const lunchH = (r.lunch_after_stop !== null && r.lunch_after_stop !== undefined) ? LUNCH_DURATION / 60 : 0;
+        r.total_time_h = osrm.duration + (totalUnload / 60) + lunchH;
       } catch (e) {
         console.warn('OSRM fallo para vehiculo ' + r.vehicle.name, e);
       }
@@ -1051,6 +1521,246 @@ function clearRoute() {
   document.getElementById('sDist').textContent = '—'; document.getElementById('sTime').textContent = '—'; refreshAll();
 }
 
+// ── SETTINGS MODAL ────────────────────────────────────────
+async function openSettingsModal() {
+  try {
+    const s = await api('settings');
+    document.getElementById('sLunchDur').value = s.lunch_duration_min || 60;
+    document.getElementById('sLunchEarly').value = s.lunch_earliest || '12:00';
+    document.getElementById('sLunchLate').value = s.lunch_latest || '15:30';
+    document.getElementById('sBaseUnload').value = s.base_unload_min || 5;
+    document.getElementById('sSpeed').value = s.default_speed_kmh || 50;
+  } catch (e) { /* usa valores por defecto del form */ }
+
+  // Mostrar boton de guardar plantilla si hay rutas
+  document.getElementById('btnSaveTemplate').style.display = fleetRoutes?.routes?.length ? 'block' : 'none';
+  loadTemplates();
+  document.getElementById('settingsModal').classList.add('open');
+}
+function closeSettingsModal() { document.getElementById('settingsModal').classList.remove('open'); }
+
+async function saveSettings() {
+  try {
+    await api('settings', 'PUT', {
+      lunch_duration_min: document.getElementById('sLunchDur').value,
+      lunch_earliest: document.getElementById('sLunchEarly').value,
+      lunch_latest: document.getElementById('sLunchLate').value,
+      base_unload_min: document.getElementById('sBaseUnload').value,
+      default_speed_kmh: document.getElementById('sSpeed').value,
+    });
+    closeSettingsModal();
+    showToast('Configuracion guardada');
+  } catch (e) { showToast('Error: ' + e.message); }
+}
+
+// ── TEMPLATES ─────────────────────────────────────────────
+async function loadTemplates() {
+  try {
+    const templates = await api('templates');
+    const el = document.getElementById('templateList');
+    if (!templates.length) {
+      el.innerHTML = '<div style="padding:6px;color:var(--text-dim);font-size:11px">Sin plantillas guardadas</div>';
+      return;
+    }
+    const DAY_ES = ['Lun','Mar','Mie','Jue','Vie','Sab','Dom'];
+    el.innerHTML = templates.map(t => {
+      const dayLabel = t.day_of_week !== null ? DAY_ES[t.day_of_week] : 'Todos';
+      return '<div class="client-card" style="padding:7px 10px;margin-bottom:4px;cursor:default">'
+        + '<div class="card-top">'
+        +   '<div class="cname">' + t.name + '</div>'
+        +   '<div class="card-actions" style="opacity:1">'
+        +     '<button class="icon-btn" onclick="applyTemplate(' + t.id + ')" title="Cargar">&#9654;</button>'
+        +     '<button class="icon-btn danger" onclick="deleteTemplate(' + t.id + ')" title="Eliminar">&times;</button>'
+        +   '</div>'
+        + '</div>'
+        + '<div class="pills">'
+        +   '<span class="pill">' + dayLabel + '</span>'
+        +   '<span class="pill">' + t.stops.length + ' clientes</span>'
+        +   (t.vehicle_name ? '<span class="pill">' + t.vehicle_name + '</span>' : '')
+        + '</div>'
+      + '</div>';
+    }).join('');
+  } catch (e) { /* silenciar */ }
+}
+
+async function saveCurrentAsTemplate() {
+  if (!fleetRoutes?.routes?.length) return;
+  const name = prompt('Nombre de la plantilla:');
+  if (!name) return;
+
+  // Guardar cada ruta como plantilla separada
+  for (const r of fleetRoutes.routes) {
+    const clientIds = r.stops.map(s => s.client_id);
+    await api('templates', 'POST', {
+      name: name + (fleetRoutes.routes.length > 1 ? ' - ' + r.vehicle.name : ''),
+      vehicle_id: r.vehicle?.id || null,
+      delegation_id: r.delegation?.id || null,
+      client_ids: clientIds,
+    });
+  }
+  showToast('Plantilla guardada');
+  loadTemplates();
+}
+
+async function applyTemplate(templateId) {
+  try {
+    const templates = await api('templates');
+    const t = templates.find(x => x.id === templateId);
+    if (!t) return;
+
+    const date = getDate();
+    // Crear pedidos para los clientes de la plantilla que no tienen pedido
+    const day = orders[date] || {};
+    let created = 0;
+    for (const stop of t.stops) {
+      if (!day[stop.client_id]) {
+        try {
+          await api('orders', 'POST', { client_id: stop.client_id, date, items: [{ item_name: 'Pedido plantilla', quantity: 1 }] });
+          created++;
+        } catch (e) { /* ya existe o error */ }
+      }
+    }
+    if (created) {
+      await loadOrders();
+      refreshAll();
+    }
+    closeSettingsModal();
+    showToast('Plantilla aplicada: ' + created + ' pedidos creados. Optimiza rutas.');
+  } catch (e) { showToast('Error: ' + e.message); }
+}
+
+async function deleteTemplate(id) {
+  if (!confirm('Eliminar plantilla?')) return;
+  await api('templates/' + id, 'DELETE');
+  loadTemplates();
+}
+
+// ── HISTORIAL DE RUTAS ────────────────────────────────────
+async function loadHistory() {
+  const from = document.getElementById('hFrom').value;
+  const to = document.getElementById('hTo').value;
+  const el = document.getElementById('historyList');
+
+  try {
+    const days = await api('routes/history?from=' + from + '&to=' + to);
+    if (!days.length) {
+      el.innerHTML = '<div class="empty">Sin rutas en este periodo</div>';
+      return;
+    }
+    const DAY_ES = ['Dom','Lun','Mar','Mie','Jue','Vie','Sab'];
+    el.innerHTML = days.map(day => {
+      const d = new Date(day.date + 'T12:00:00');
+      const dayName = DAY_ES[d.getDay()];
+      const STATUS_ICON = { draft: '&#9634;', confirmed: '&#10004;', in_progress: '&#9654;', completed: '&#9733;' };
+
+      return '<div class="client-card" style="cursor:default;margin-bottom:6px">'
+        + '<div class="card-top">'
+        +   '<div class="cname">' + dayName + ' ' + day.date + '</div>'
+        +   '<div class="pills" style="margin:0">'
+        +     '<span class="pill">' + day.total_km.toFixed(1) + ' km</span>'
+        +     '<span class="pill">' + day.total_h.toFixed(1) + ' h</span>'
+        +   '</div>'
+        + '</div>'
+        + day.routes.map(r => {
+          const pct = r.stop_count > 0 ? Math.round(r.completed_count / r.stop_count * 100) : 0;
+          const statusIcon = STATUS_ICON[r.status] || '';
+          return '<div style="display:flex;align-items:center;gap:6px;padding:3px 0;font-size:11px;border-top:1px solid var(--border);margin-top:3px">'
+            + '<span style="color:var(--accent)">' + statusIcon + '</span>'
+            + '<span style="font-weight:600;flex:1">' + r.vehicle_name + '</span>'
+            + '<span class="pill">' + r.stop_count + ' paradas</span>'
+            + '<span class="pill">' + parseFloat(r.total_distance_km).toFixed(1) + ' km</span>'
+            + (r.stop_count > 0 ? '<span class="pill' + (pct === 100 ? ' open' : '') + '">' + pct + '%</span>' : '')
+            + '<button class="icon-btn" onclick="loadHistoryRoute(' + r.id + ')" title="Ver en mapa" style="padding:2px 6px;font-size:10px">&#128065;</button>'
+            + '</div>';
+        }).join('')
+      + '</div>';
+    }).join('');
+  } catch (e) { el.innerHTML = '<div class="empty">Error cargando historial</div>'; }
+}
+
+async function loadHistoryRoute(planId) {
+  try {
+    const plan = await api('routes/' + planId);
+    if (!plan || !plan.stops?.length) { showToast('Sin datos'); return; }
+
+    // Mostrar en mapa
+    const del = delegations.find(d => parseInt(d.id) === parseInt(plan.delegation_id));
+    if (!del) return;
+
+    const waypoints = [
+      { x: parseFloat(del.x), y: parseFloat(del.y) },
+      ...plan.stops.map(s => ({ x: parseFloat(s.x), y: parseFloat(s.y) })),
+      { x: parseFloat(del.x), y: parseFloat(del.y) },
+    ];
+    const osrm = await fetchOSRMRoute(waypoints);
+
+    routeLines.forEach(l => map.removeLayer(l));
+    routeLines = [];
+    routeLines.push(L.polyline(osrm.geometry, { color: '#d4a830', weight: 4, opacity: 0.85 }).addTo(map));
+    map.fitBounds(L.polyline(osrm.geometry).getBounds(), { padding: [30, 30] });
+    showToast('Ruta historica: ' + plan.stops.length + ' paradas - ' + parseFloat(plan.total_distance_km).toFixed(1) + ' km');
+  } catch (e) { showToast('Error: ' + e.message); }
+}
+
+// ── DASHBOARD ─────────────────────────────────────────────
+async function loadDashboard() {
+  const from = document.getElementById('hFrom').value;
+  const to = document.getElementById('hTo').value;
+  const el = document.getElementById('dashboardPanel');
+
+  try {
+    const s = await api('stats?from=' + from + '&to=' + to);
+    el.innerHTML = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">'
+      + dashCard('Dias planificados', s.days)
+      + dashCard('Rutas totales', s.total_routes)
+      + dashCard('Km totales', parseFloat(s.total_km).toFixed(1) + ' km')
+      + dashCard('Horas totales', parseFloat(s.total_hours).toFixed(1) + ' h')
+      + dashCard('Media km/ruta', parseFloat(s.avg_km_per_route).toFixed(1) + ' km')
+      + dashCard('Media h/ruta', parseFloat(s.avg_h_per_route).toFixed(1) + ' h')
+      + dashCard('Paradas totales', s.total_stops)
+      + dashCard('Completadas', s.completed_stops + ' (' + (s.total_stops > 0 ? Math.round(s.completed_stops / s.total_stops * 100) : 0) + '%)')
+      + dashCard('Saltadas', s.skipped_stops || 0)
+      + dashCard('Coste estimado', parseFloat(s.total_cost).toFixed(2) + ' EUR')
+    + '</div>';
+  } catch (e) { el.innerHTML = '<div style="padding:10px;color:var(--text-dim)">Sin datos</div>'; }
+}
+
+function dashCard(label, value) {
+  return '<div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:8px 10px">'
+    + '<div style="font-size:16px;font-weight:700;color:var(--text-bright)">' + value + '</div>'
+    + '<div style="font-size:9px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px">' + label + '</div>'
+  + '</div>';
+}
+
+// ── ESTADO DE RUTA (confirmar/marcar paradas) ─────────────
+async function confirmRoutes() {
+  if (!fleetRoutes?.routes?.length) return;
+  for (const r of fleetRoutes.routes) {
+    if (r.plan_id) {
+      await api('routes/' + r.plan_id + '/status', 'PUT', { status: 'confirmed' });
+    }
+  }
+  showToast('Rutas confirmadas');
+}
+
+async function toggleStopStatus(planId, stopOrder, currentStatus) {
+  const next = currentStatus === 'pending' ? 'completed' : currentStatus === 'completed' ? 'skipped' : 'pending';
+  try {
+    await api('routes/' + planId + '/stop/' + stopOrder + '/status', 'PUT', { status: next });
+    // Actualizar el estado local en la parada
+    if (fleetRoutes) {
+      for (const r of fleetRoutes.routes) {
+        if (r.plan_id === planId) {
+          const stop = r.stops.find((s, i) => (i + 1) === stopOrder);
+          if (stop) stop.status = next;
+        }
+      }
+      renderRoutePanel(fleetRoutes);
+      initSortables();
+    }
+  } catch (e) { showToast('Error: ' + e.message); }
+}
+
 // ── CLOCK ──────────────────────────────────────────────────
 function tickClock() {
   const n = new Date();
@@ -1068,7 +1778,14 @@ window.addEventListener('DOMContentLoaded', async () => {
   setToday();
   tickClock();
   setInterval(tickClock, 60000);
-  await Promise.all([loadDelegation(), loadDelegations(), loadVehicles()]);
+
+  // Inicializar fechas del historial (ultimos 30 dias)
+  const today = todayStr();
+  document.getElementById('hTo').value = today;
+  const d30 = new Date(); d30.setDate(d30.getDate() - 30);
+  document.getElementById('hFrom').value = d30.toISOString().slice(0, 10);
+
+  await Promise.all([loadDelegation(), loadDelegations(), loadVehicles(), loadRutas()]);
   map.setView([delegation.x, delegation.y], 12);
   await loadClients();
   await loadOrders();

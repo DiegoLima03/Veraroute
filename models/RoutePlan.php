@@ -55,7 +55,7 @@ class RoutePlan extends Model
         return $plan;
     }
 
-    public function calculateUnloadTime(int $orderId): float
+    public function calculateUnloadTime(int $orderId, float $baseMin = 5.0): float
     {
         $items = $this->query(
             'SELECT oi.quantity,
@@ -66,7 +66,7 @@ class RoutePlan extends Model
             [$orderId]
         )->fetchAll();
 
-        $time = 5.0; // base: parking, saludo, papeles
+        $time = $baseMin;
         foreach ($items as $item) {
             $time += (float) $item['quantity'] * (float) $item['unit_time'];
         }
@@ -148,8 +148,116 @@ class RoutePlan extends Model
         }
     }
 
+    public function updateStops(int $planId, array $stops, float $distKm, float $timeH, float $unloadMin): void
+    {
+        $db = $this->db();
+        $db->beginTransaction();
+        try {
+            $this->query('DELETE FROM route_stops WHERE route_plan_id = ?', [$planId]);
+            $this->query(
+                'UPDATE route_plans SET total_distance_km = ?, total_time_h = ?, total_unload_min = ? WHERE id = ?',
+                [$distKm, $timeH, $unloadMin, $planId]
+            );
+            foreach ($stops as $i => $stop) {
+                $this->query(
+                    'INSERT INTO route_stops (route_plan_id, stop_order, client_id, order_id, estimated_arrival, estimated_unload_min)
+                     VALUES (?, ?, ?, ?, ?, ?)',
+                    [$planId, $i + 1, $stop['client_id'], $stop['order_id'] ?? null, $stop['eta'] ?? null, $stop['unload_min'] ?? 0]
+                );
+            }
+            $db->commit();
+        } catch (\Exception $e) {
+            $db->rollBack();
+            throw $e;
+        }
+    }
+
     public function deleteByDate(string $date)
     {
         $this->query('DELETE FROM route_plans WHERE plan_date = ?', [$date]);
+    }
+
+    /** Historial de rutas agrupado por fecha */
+    public function getHistory(string $from, string $to): array
+    {
+        $rows = $this->query(
+            'SELECT rp.id, rp.plan_date, rp.status, rp.total_distance_km, rp.total_time_h, rp.total_unload_min,
+                    v.name AS vehicle_name, v.plate,
+                    d.name AS delegation_name,
+                    (SELECT COUNT(*) FROM route_stops WHERE route_plan_id = rp.id) AS stop_count,
+                    (SELECT COUNT(*) FROM route_stops WHERE route_plan_id = rp.id AND status = "completed") AS completed_count
+             FROM route_plans rp
+             JOIN vehicles v ON rp.vehicle_id = v.id
+             JOIN delegations d ON rp.delegation_id = d.id
+             WHERE rp.plan_date BETWEEN ? AND ?
+             ORDER BY rp.plan_date DESC, v.name',
+            [$from, $to]
+        )->fetchAll();
+
+        // Agrupar por fecha
+        $grouped = [];
+        foreach ($rows as $r) {
+            $date = $r['plan_date'];
+            if (!isset($grouped[$date])) {
+                $grouped[$date] = ['date' => $date, 'routes' => [], 'total_km' => 0, 'total_h' => 0];
+            }
+            $grouped[$date]['routes'][] = $r;
+            $grouped[$date]['total_km'] += (float) $r['total_distance_km'];
+            $grouped[$date]['total_h']  += (float) $r['total_time_h'];
+        }
+
+        return array_values($grouped);
+    }
+
+    /** Actualizar status de una parada */
+    public function updateStopStatus(int $planId, int $stopOrder, string $status): void
+    {
+        $this->query(
+            'UPDATE route_stops SET status = ? WHERE route_plan_id = ? AND stop_order = ?',
+            [$status, $planId, $stopOrder]
+        );
+    }
+
+    /** Actualizar status de un plan */
+    public function updatePlanStatus(int $planId, string $status): void
+    {
+        $this->query('UPDATE route_plans SET status = ? WHERE id = ?', [$status, $planId]);
+    }
+
+    /** Dashboard: estadisticas agregadas */
+    public function getStats(string $from, string $to): array
+    {
+        $row = $this->query(
+            'SELECT COUNT(DISTINCT plan_date) AS days,
+                    COUNT(*) AS total_routes,
+                    COALESCE(SUM(total_distance_km), 0) AS total_km,
+                    COALESCE(SUM(total_time_h), 0) AS total_hours,
+                    COALESCE(AVG(total_distance_km), 0) AS avg_km_per_route,
+                    COALESCE(AVG(total_time_h), 0) AS avg_h_per_route
+             FROM route_plans
+             WHERE plan_date BETWEEN ? AND ?',
+            [$from, $to]
+        )->fetch();
+
+        $stopStats = $this->query(
+            'SELECT COUNT(*) AS total_stops,
+                    SUM(CASE WHEN rs.status = "completed" THEN 1 ELSE 0 END) AS completed_stops,
+                    SUM(CASE WHEN rs.status = "skipped" THEN 1 ELSE 0 END) AS skipped_stops
+             FROM route_stops rs
+             JOIN route_plans rp ON rs.route_plan_id = rp.id
+             WHERE rp.plan_date BETWEEN ? AND ?',
+            [$from, $to]
+        )->fetch();
+
+        // Coste estimado (cost_per_km de vehiculos)
+        $costRow = $this->query(
+            'SELECT COALESCE(SUM(rp.total_distance_km * COALESCE(v.cost_per_km, 0)), 0) AS total_cost
+             FROM route_plans rp
+             JOIN vehicles v ON rp.vehicle_id = v.id
+             WHERE rp.plan_date BETWEEN ? AND ?',
+            [$from, $to]
+        )->fetch();
+
+        return array_merge($row, $stopStats, ['total_cost' => (float) $costRow['total_cost']]);
     }
 }

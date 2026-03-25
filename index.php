@@ -73,7 +73,29 @@ $router->delete('api/products/(\d+)', 'ProductController@destroy');
 
 // API — Rutas (optimizacion multi-vehiculo)
 $router->post('api/routes/optimize', 'RouteController@optimize');
+$router->get('api/routes/history', 'RouteController@history');
+$router->put('api/routes/(\d+)/stop/(\d+)/status', 'RouteController@updateStopStatus');
+$router->put('api/routes/(\d+)/status', 'RouteController@updatePlanStatus');
+$router->put('api/routes/(\d+)', 'RouteController@update');
 $router->get('api/routes', 'RouteController@index');
 $router->get('api/routes/(\d+)', 'RouteController@show');
+
+// API — Settings globales
+$router->get('api/settings', 'SettingController@getSettings');
+$router->put('api/settings', 'SettingController@updateSettings');
+
+// API — Dashboard stats
+$router->get('api/stats', 'RouteController@stats');
+
+// API — Rutas comerciales (asignación de clientes)
+$router->get('api/rutas', 'RutaController@index');
+$router->post('api/rutas', 'RutaController@store');
+$router->put('api/rutas/(\d+)', 'RutaController@update');
+$router->delete('api/rutas/(\d+)', 'RutaController@destroy');
+
+// API — Plantillas de ruta
+$router->get('api/templates', 'TemplateController@index');
+$router->post('api/templates', 'TemplateController@store');
+$router->delete('api/templates/(\d+)', 'TemplateController@destroy');
 
 $router->dispatch($uri, $_SERVER['REQUEST_METHOD']);

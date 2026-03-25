@@ -27,6 +27,7 @@
       <button class="tab active" id="tab-c" onclick="switchTab('c')">Clientes <span class="tab-badge green" id="bc">0</span></button>
       <button class="tab" id="tab-p" onclick="switchTab('p')">Pedidos <span class="tab-badge orange" id="bp">0</span></button>
       <button class="tab" id="tab-f" onclick="switchTab('f')">Flota</button>
+      <button class="tab" id="tab-h" onclick="switchTab('h')">Historial</button>
     </div>
 
     <!-- CLIENTES -->
@@ -34,7 +35,6 @@
       <div class="panel-header">
         <div class="panel-title">Cartera de clientes</div>
         <div style="display:flex;gap:6px">
-          <button class="btn btn-secondary" onclick="loadDemo()">Demo</button>
           <button class="btn btn-primary" onclick="openClientModal()">+ Nuevo</button>
         </div>
       </div>
@@ -80,9 +80,29 @@
       <div class="scroll-list fleet-list" id="vehicleList"></div>
     </div>
 
+    <!-- HISTORIAL -->
+    <div id="vh" style="display:none;flex-direction:column;flex:1;overflow:hidden">
+      <div class="panel-header">
+        <div class="panel-title">Historial de rutas</div>
+      </div>
+      <div class="date-bar" style="gap:6px;flex-wrap:wrap">
+        <input type="date" id="hFrom" style="flex:1;min-width:110px;padding:4px 6px;font-size:11px">
+        <span style="font-size:10px;color:var(--text-dim)">a</span>
+        <input type="date" id="hTo" style="flex:1;min-width:110px;padding:4px 6px;font-size:11px">
+        <button class="btn btn-secondary btn-sm" onclick="loadHistory()">Buscar</button>
+      </div>
+      <div class="scroll-list" id="historyList"></div>
+      <div class="panel-header" style="border-top:1px solid var(--border)">
+        <div class="panel-title">Dashboard</div>
+        <button class="btn btn-secondary btn-sm" onclick="loadDashboard()">Actualizar</button>
+      </div>
+      <div id="dashboardPanel" style="padding:10px;font-size:11px;overflow-y:auto;flex:0.5"></div>
+    </div>
+
     <div class="optimize-bar">
       <button class="btn btn-primary" onclick="optimizeFleetRoutes()">Optimizar rutas</button>
       <button class="btn btn-secondary" onclick="clearRoute()" title="Limpiar">Limpiar</button>
+      <button class="icon-btn" onclick="openSettingsModal()" title="Configuracion">&#9881;</button>
       <div class="clock" id="clock">--:--</div>
     </div>
   </div>
@@ -101,6 +121,9 @@
         <div class="rt">Rutas del dia</div>
         <div class="rm green" id="rDist">— km</div>
         <div class="rm orange" id="rTime">— h</div>
+        <button class="btn-export" onclick="exportRoutesPrint()" title="Imprimir / PDF">&#128438;</button>
+        <button class="btn-export" onclick="exportRoutesCSV()" title="Exportar CSV">&#128462;</button>
+        <button class="btn-export" onclick="confirmRoutes()" title="Confirmar rutas" id="btnConfirm">&#10004;</button>
       </div>
       <div id="rStops"></div>
     </div>
@@ -124,6 +147,7 @@
           <div><label>Telefono</label><input id="cPhone" placeholder="600 000 000"></div>
         </div>
         <div class="ff"><label>Notas internas</label><textarea id="cNotes" placeholder="Instrucciones de entrega, acceso, contacto..."></textarea></div>
+        <div class="ff"><label>Ruta</label><select id="cRuta"><option value="">Sin ruta</option></select></div>
       </div>
       <div class="msection">
         <div class="msec-title">Ubicacion (click en el mapa o introduce coordenadas)</div>
@@ -138,6 +162,7 @@
       </div>
     </div>
     <div class="mfoot">
+      <button class="btn btn-danger" id="cDeleteBtn" onclick="deleteFromModal()" style="display:none">Eliminar</button>
       <button class="btn btn-danger" id="cToggleBtn" onclick="toggleFromModal()" style="margin-right:auto;display:none">Desactivar</button>
       <button class="btn btn-secondary" onclick="closeCModal()">Cancelar</button>
       <button class="btn btn-primary" onclick="saveClient()">Guardar cliente</button>
@@ -249,9 +274,49 @@
   </div>
 </div>
 
+<!-- MODAL SETTINGS -->
+<div class="overlay" id="settingsModal">
+  <div class="modal">
+    <div class="mhead">
+      <div class="mtitle">Configuracion</div>
+      <button class="mclose" onclick="closeSettingsModal()">x</button>
+    </div>
+    <div class="mbody">
+      <div class="msection">
+        <div class="msec-title">Almuerzo</div>
+        <div class="fg">
+          <div><label>Duracion (min)</label><input type="number" id="sLunchDur" value="60" min="0" max="120"></div>
+          <div><label>Hora minima</label><input type="time" id="sLunchEarly" value="12:00"></div>
+        </div>
+        <div class="fg">
+          <div><label>Hora maxima</label><input type="time" id="sLunchLate" value="15:30"></div>
+          <div></div>
+        </div>
+      </div>
+      <div class="msection">
+        <div class="msec-title">Tiempos</div>
+        <div class="fg">
+          <div><label>Tiempo base descarga (min)</label><input type="number" id="sBaseUnload" value="5" min="0" step="0.5"></div>
+          <div><label>Velocidad media fallback (km/h)</label><input type="number" id="sSpeed" value="50" min="10" max="120"></div>
+        </div>
+      </div>
+      <div class="msection">
+        <div class="msec-title">Plantillas guardadas</div>
+        <div id="templateList" style="max-height:150px;overflow-y:auto"></div>
+        <button class="add-item" onclick="saveCurrentAsTemplate()" id="btnSaveTemplate" style="display:none">+ Guardar ruta actual como plantilla</button>
+      </div>
+    </div>
+    <div class="mfoot">
+      <button class="btn btn-secondary" onclick="closeSettingsModal()">Cancelar</button>
+      <button class="btn btn-primary" onclick="saveSettings()">Guardar</button>
+    </div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js"></script>
 <script src="public/js/app.js"></script>
 </body>
 </html>

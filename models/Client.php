@@ -6,7 +6,9 @@ class Client extends Model
 {
     public function getAll()
     {
-        return $this->query('SELECT * FROM clients ORDER BY active DESC, name')->fetchAll();
+        return $this->query(
+            'SELECT c.*, r.name as ruta_name FROM clients c LEFT JOIN rutas r ON c.ruta_id = r.id ORDER BY c.active DESC, c.name'
+        )->fetchAll();
     }
 
     public function toggleActive(int $id)
@@ -22,8 +24,8 @@ class Client extends Model
     public function create(array $data)
     {
         $this->query(
-            'INSERT INTO clients (name, address, phone, notes, x, y, open_time, close_time, open_time_2, close_time_2)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            'INSERT INTO clients (name, address, phone, notes, x, y, open_time, close_time, open_time_2, close_time_2, ruta_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
             [
                 $data['name'],
                 $data['address'] ?? '',
@@ -35,6 +37,7 @@ class Client extends Model
                 $data['close_time'] ?? '18:00',
                 $data['open_time_2'] ?: null,
                 $data['close_time_2'] ?: null,
+                $data['ruta_id'] ?: null,
             ]
         );
         return (int) $this->db()->lastInsertId();
@@ -43,7 +46,7 @@ class Client extends Model
     public function update(int $id, array $data)
     {
         $this->query(
-            'UPDATE clients SET name = ?, address = ?, phone = ?, notes = ?, x = ?, y = ?, open_time = ?, close_time = ?, open_time_2 = ?, close_time_2 = ?
+            'UPDATE clients SET name = ?, address = ?, phone = ?, notes = ?, x = ?, y = ?, open_time = ?, close_time = ?, open_time_2 = ?, close_time_2 = ?, ruta_id = ?
              WHERE id = ?',
             [
                 $data['name'],
@@ -56,6 +59,7 @@ class Client extends Model
                 $data['close_time'] ?? '18:00',
                 $data['open_time_2'] ?: null,
                 $data['close_time_2'] ?: null,
+                $data['ruta_id'] ?: null,
                 $id,
             ]
         );

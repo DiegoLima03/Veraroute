@@ -32,9 +32,14 @@ class ClientController extends Controller
     {
         $data = $this->getInput();
 
-        if (empty($data['name']) || !isset($data['x']) || !isset($data['y'])) {
-            $this->json(['error' => 'Nombre y coordenadas son obligatorios'], 400);
+        if (empty($data['name'])) {
+            $this->json(['error' => 'Nombre es obligatorio'], 400);
+            return;
         }
+
+        // x e y pueden ser null (cliente sin coordenadas)
+        $data['x'] = isset($data['x']) && $data['x'] !== '' && $data['x'] !== null ? $data['x'] : null;
+        $data['y'] = isset($data['y']) && $data['y'] !== '' && $data['y'] !== null ? $data['y'] : null;
 
         $id = $this->client->create($data);
         $created = $this->client->getById($id);
@@ -45,9 +50,13 @@ class ClientController extends Controller
     {
         $data = $this->getInput();
 
-        if (empty($data['name']) || !isset($data['x']) || !isset($data['y'])) {
-            $this->json(['error' => 'Nombre y coordenadas son obligatorios'], 400);
+        if (empty($data['name'])) {
+            $this->json(['error' => 'Nombre es obligatorio'], 400);
+            return;
         }
+
+        $data['x'] = isset($data['x']) && $data['x'] !== '' && $data['x'] !== null ? $data['x'] : null;
+        $data['y'] = isset($data['y']) && $data['y'] !== '' && $data['y'] !== null ? $data['y'] : null;
 
         $this->client->update((int) $id, $data);
         $updated = $this->client->getById((int) $id);
@@ -56,6 +65,18 @@ class ClientController extends Controller
 
     public function toggleActive($id)
     {
+        $client = $this->client->getById((int) $id);
+        if (!$client) {
+            $this->json(['error' => 'Cliente no encontrado'], 404);
+            return;
+        }
+
+        // No permitir activar sin coordenadas
+        if (!$client['active'] && ($client['x'] === null || $client['y'] === null)) {
+            $this->json(['error' => 'No se puede activar un cliente sin coordenadas. Edítalo primero.'], 400);
+            return;
+        }
+
         $this->client->toggleActive((int) $id);
         $updated = $this->client->getById((int) $id);
         $this->json($updated);

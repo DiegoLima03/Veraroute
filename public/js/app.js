@@ -79,6 +79,7 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
 }).addTo(map);
 
 let mapMarkers = [];
+let clientMarkerMap = {};
 let mapRouteLine = null;
 let mapPreviewMarker = null;
 
@@ -133,10 +134,19 @@ function activeClients() {
   return clients.filter(c => c.active);
 }
 
+function focusClientOnMap(id) {
+  const marker = clientMarkerMap[id];
+  if (marker) {
+    map.setView(marker.getLatLng(), 15, { animate: true });
+    marker.openTooltip();
+  }
+}
+
 function drawMap() {
   // Limpiar marcadores anteriores
   mapMarkers.forEach(m => map.removeLayer(m));
   mapMarkers = [];
+  clientMarkerMap = {};
   routeLines.forEach(l => map.removeLayer(l));
   routeLines = [];
   if (mapRouteLine) { map.removeLayer(mapRouteLine); mapRouteLine = null; }
@@ -200,6 +210,7 @@ function drawMap() {
       .addTo(map);
     marker.on('click', () => openClientModal(c.id));
     mapMarkers.push(marker);
+    clientMarkerMap[c.id] = marker;
   });
 
   // Lineas de ruta multi-vehiculo
@@ -673,7 +684,7 @@ function renderClientList() {
     const ord = day[c.id];
     const numCls = inRoute ? 'route' : (hasOrd ? 'order' : '');
     const inactiveCls = !c.active ? ' inactive' : '';
-    return '<div class="client-card' + (hasOrd ? ' has-order' : '') + (inRoute ? ' in-route' : '') + inactiveCls + '" onclick="openClientModal(' + c.id + ')">' +
+    return '<div class="client-card' + (hasOrd ? ' has-order' : '') + (inRoute ? ' in-route' : '') + inactiveCls + '" onclick="focusClientOnMap(' + c.id + '); openClientModal(' + c.id + ')">' +
       '<div class="card-top">' +
         '<div class="cnum ' + numCls + '">' + (inRoute ? ri : (i + 1)) + '</div>' +
         '<div class="cname">' + c.name + '</div>' +

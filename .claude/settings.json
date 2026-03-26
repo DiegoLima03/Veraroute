@@ -1,0 +1,49 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl -s http://localhost/Gestor%20de%20Rutas/api/settings)",
+      "Bash(curl -s \"http://localhost/Gestor%20de%20Rutas/api/stats?from=2025-01-01&to=2026-12-31\")",
+      "Bash(curl -s \"http://localhost/Gestor%20de%20Rutas/api/routes/history?from=2025-01-01&to=2026-12-31\")",
+      "Bash(curl -s \"http://localhost/Gestor%20de%20Rutas/api/templates\")",
+      "Bash(curl -s -X PUT \"http://localhost/Gestor%20de%20Rutas/api/routes/27/stop/1/status\" -H \"Content-Type: application/json\" -d '{\"\"status\"\":\"\"completed\"\"}')",
+      "Bash(curl -s -X PUT \"http://localhost/Gestor%20de%20Rutas/api/routes/27/stop/1/status\" -H \"Content-Type: application/json\" -d '{\"\"status\"\":\"\"pending\"\"}')",
+      "Bash(/c/wamp64/bin/mysql/mysql8.4.7/bin/mysql.exe -u root -P 3308 -e \"DESCRIBE route_plans\" gestorrutas)",
+      "Bash(/c/wamp64/bin/mysql/mysql8.4.7/bin/mysql.exe -u root -P 3308 -e \"DESCRIBE route_stops\" gestorrutas)",
+      "Bash(php -r \":*)",
+      "Bash(/c/wamp64/bin/php/php8.2.0/php.exe -r \":*)",
+      "Bash(/c/wamp64/bin/php/php8.2.29/php.exe -r \":*)",
+      "Bash(curl -s \"http://localhost/Gestor%20de%20Rutas/api/rutas\")",
+      "Bash(ls /c/wamp64/bin/php/php*/php.exe)",
+      "Bash(ls /c/wamp64/bin/php/*/php.exe)",
+      "Bash(/c/wamp64/bin/php/php8.4.15/php.exe -r \":*)",
+      "Bash(/c/wamp64/bin/php/php8.4.15/php.exe analisis_rutas.php)",
+      "Bash(/c/wamp64/bin/mysql/mysql8.4.7/bin/mysql.exe -u root -e \"ALTER TABLE clients DROP COLUMN is_depot;\" gestorrutas)",
+      "Bash(/c/wamp64/bin/mysql/mysql8.4.7/bin/mysql.exe -u root -e \"DESCRIBE clients;\" gestorrutas)",
+      "Bash(/c/wamp64/bin/mysql/mysql8.4.7/bin/mysql.exe -u root -e \"SELECT COUNT\\(*\\) as total FROM clients;\" gestorrutas)",
+      "Bash(/c/wamp64/bin/mysql/mysql8.4.7/bin/mysql.exe -u root -e \":*)",
+      "Bash(/c/wamp64/bin/mysql/mysql8.4.7/bin/mysql.exe -u root -e \"DROP DATABASE temp_contactos;\")",
+      "Bash(/c/wamp64/bin/mysql/mysql8.4.7/bin/mysql.exe -u root -e \"SELECT COUNT\\(*\\) as total FROM gestorrutas.clients;\")",
+      "Bash(/c/wamp64/bin/mysql/mysql8.4.7/bin/mysql.exe -u root --default-character-set=utf8mb4 -e \":*)",
+      "Bash(\"/c/wamp64/www/Gestor de:*)",
+      "Bash(python3 -c \":*)",
+      "Bash(python -c \":*)",
+      "Bash(/c/wamp64/bin/mysql/mysql8.4.7/bin/mysql.exe -u root --default-character-set=utf8mb4 --batch --raw -e \":*)",
+      "Bash(/c/wamp64/bin/mysql/mysql8.4.7/bin/mysql.exe -u root -e \"SELECT COUNT\\(*\\) as activos_con_coords FROM clients WHERE active=1 AND x IS NOT NULL;\" gestorrutas)",
+      "Bash(rm tmp_clients.json)",
+      "Bash(rm tmp_data.json)",
+      "Bash(/c/wamp64/bin/mysql/mysql8.4.7/bin/mysql.exe -u root -e \"DROP DATABASE IF EXISTS temp_contactos;\")",
+      "Bash(mv tmp2.json tmp_data.json)",
+      "Bash(pip list:*)",
+      "Bash(pip install:*)",
+      "Bash(python scripts/informe_rutas.py)",
+      "Bash(python -c \"import pymysql; c = pymysql.connect\\(host=''127.0.0.1'', port=3306, user=''root'', password='''', database=''gestorrutas''\\); cur=c.cursor\\(\\); cur.execute\\(''SELECT COUNT\\(*\\) FROM clients''\\); print\\(cur.fetchone\\(\\)\\); c.close\\(\\)\")",
+      "Bash(/c/wamp64/bin/mysql/mysql8.4.7/bin/mysql.exe -u root -e \"SELECT user, host, plugin FROM mysql.user WHERE user=''root'';\")",
+      "Bash(mv output/tmp.json output/clients_export.json)",
+      "Bash(python -c \"import json; d=json.load\\(open\\(''output/clients_export.json'',''r'',encoding=''utf-8''\\)\\); print\\(len\\(d\\),''clients''\\)\")",
+      "Bash(sort -t' ' -k2 -n)"
+    ],
+    "additionalDirectories": [
+      "c:\\wamp64\\www"
+    ]
+  }
+}

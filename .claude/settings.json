@@ -40,7 +40,10 @@
       "Bash(/c/wamp64/bin/mysql/mysql8.4.7/bin/mysql.exe -u root -e \"SELECT user, host, plugin FROM mysql.user WHERE user=''root'';\")",
       "Bash(mv output/tmp.json output/clients_export.json)",
       "Bash(python -c \"import json; d=json.load\\(open\\(''output/clients_export.json'',''r'',encoding=''utf-8''\\)\\); print\\(len\\(d\\),''clients''\\)\")",
-      "Bash(sort -t' ' -k2 -n)"
+      "Bash(sort -t' ' -k2 -n)",
+      "Bash(grep -r \"json_encode\\\\|json_decode\\\\|POST\\\\|GET\" /c/wamp64/www/\"Gestor de Rutas\"/controllers/*.php)",
+      "Bash(grep -r \"delegations\\\\|depots\" /c/wamp64/www/\"Gestor de Rutas\"/sql/*.sql)",
+      "Bash(python -u scripts/informe_rutas.py)"
     ],
     "additionalDirectories": [
       "c:\\wamp64\\www"

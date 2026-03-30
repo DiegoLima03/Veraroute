@@ -1,1154 +1,1434 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-INFORME DE OPTIMIZACIÓN DE RUTAS COMERCIALES — VERALEZA
-========================================================
-Extrae datos reales de MySQL (gestorrutas), calcula distancias OSRM,
-analiza rentabilidad por cliente y genera informe .docx profesional.
-
-Uso:  python scripts/informe_rutas.py
+Informe de Rentabilidad de Rutas — Análisis por Distancia
+Genera un HTML interactivo con mapas Leaflet y tablas filtrables.
 """
 
-import os, sys, json, time, math, locale, random, warnings
-from datetime import datetime, date
-from pathlib import Path
-
-import requests
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
-import matplotlib.ticker as mticker
-from PIL import Image
-
-from docx import Document
-from docx.shared import Inches, Pt, Cm, RGBColor, Emu
-from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.enum.table import WD_TABLE_ALIGNMENT
-from docx.enum.section import WD_ORIENT
-from docx.oxml.ns import qn, nsdecls
-from docx.oxml import parse_xml
-
-warnings.filterwarnings('ignore')
+import json
+import math
+import time
+import sys
+import os
+from datetime import datetime
 
 # Fix Windows console encoding
-import io
-if sys.stdout.encoding != 'utf-8':
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
+if sys.platform == "win32":
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
-# ─── CONFIGURACIÓN ───────────────────────────────────────────────
-BASE_DIR = Path(__file__).resolve().parent.parent
-OUTPUT_DIR = BASE_DIR / 'output'
-OUTPUT_DIR.mkdir(exist_ok=True)
-CHART_DIR = OUTPUT_DIR / 'charts'
-CHART_DIR.mkdir(exist_ok=True)
+import mysql.connector
+import requests
 
-LOGO_PATH = Path(r'C:\wamp64\www\licitaciones\proyectoenphp\public\img\logo_login.png')
-
-# Base de operaciones: Veraleza Tomiño
-BASE_LAT, BASE_LNG = 41.994524, -8.739887
-
-# Parámetros de coste
-COSTE_KM = 0.35          # €/km
-COSTE_HORA = 18.0         # €/hora conductor
-TIEMPO_DESCARGA_MIN = 20  # minutos por cliente
-PAQUETERIA = {5: 4.50, 15: 7.50, 30: 12.00, 999: 25.00}
-
-# Colores corporativos
-VERDE_VERALEZA = '8E8B30'
-COLOR_FILA_ALT = 'F5F4F0'
-COLOR_BORDE = 'D5D3CC'
-BG_VERDE = 'E8F5E9'
-BG_AMARILLO = 'FFF8E1'
-BG_ROJO = 'FDECEA'
-
-# Colores de ruta (mismo orden que RUTAS en BD: ids 1-8)
-RUTA_COLORS_HEX = {
-    'Pontevedra 3': '#795548', 'Comarca A': '#3498db', 'Comarca B': '#2ecc71',
-    'Pontevedra 1': '#9b59b6', 'Pontevedra 2': '#e67e22', 'Orense A': '#1abc9c',
-    'Orense B': '#e84393', 'Orense C': '#d4b800'
+# ─── CONFIGURACIÓN ────────────────────────────────────────────────
+DB_CONFIG = {
+    "host": "127.0.0.1",
+    "port": 3308,
+    "user": "root",
+    "password": "",
+    "database": "gestorrutas",
 }
-RUTA_COLORS_MPL = {k: v for k, v in RUTA_COLORS_HEX.items()}
 
-# ─── BASE DE DATOS ───────────────────────────────────────────────
-def fetch_clients():
-    """Lee clientes del JSON exportado por CLI de MySQL."""
-    json_path = OUTPUT_DIR / 'clients_export.json'
-    with open(json_path, 'r', encoding='utf-8') as f:
-        rows = json.load(f)
-    for r in rows:
-        r['lat'] = float(r['lat'])
-        r['lng'] = float(r['lng'])
-    return rows
-
-def fetch_rutas():
-    """Extrae rutas únicas de los clientes."""
-    clients = fetch_clients()
-    seen = {}
-    for c in clients:
-        rid = c.get('ruta_id')
-        rname = c.get('ruta_name', '')
-        if rid and rname and rid not in seen:
-            seen[rid] = {'id': rid, 'name': rname}
-    return sorted(seen.values(), key=lambda x: x['name'])
-
-# ─── SIMULACIÓN DE DATOS COMERCIALES ────────────────────────────
-# No hay historial real suficiente — simulamos de forma realista
-# basándonos en la distancia y zona geográfica.
-random.seed(42)
-
-def simulate_commercial_data(clients):
-    """Añade facturación, frecuencia y peso medio simulados."""
-    for c in clients:
-        dist_km = haversine(BASE_LAT, BASE_LNG, c['lat'], c['lng'])
-        c['dist_lineal_km'] = dist_km
-
-        # Clientes más cercanos suelen facturar más y pedir más frecuentemente
-        if dist_km < 30:
-            c['facturacion_mensual'] = random.uniform(800, 3500)
-            c['frecuencia_mensual'] = random.choice([4, 4, 4, 3, 2])
-            c['peso_medio_kg'] = random.uniform(15, 80)
-        elif dist_km < 60:
-            c['facturacion_mensual'] = random.uniform(400, 2000)
-            c['frecuencia_mensual'] = random.choice([4, 3, 2, 2, 1])
-            c['peso_medio_kg'] = random.uniform(10, 50)
-        elif dist_km < 100:
-            c['facturacion_mensual'] = random.uniform(200, 1200)
-            c['frecuencia_mensual'] = random.choice([2, 2, 1, 1])
-            c['peso_medio_kg'] = random.uniform(5, 35)
-        else:
-            c['facturacion_mensual'] = random.uniform(100, 800)
-            c['frecuencia_mensual'] = random.choice([2, 1, 1, 1])
-            c['peso_medio_kg'] = random.uniform(3, 25)
-
-        c['facturacion_mensual'] = round(c['facturacion_mensual'], 2)
-        c['peso_medio_kg'] = round(c['peso_medio_kg'], 1)
-    return clients
-
-# ─── OSRM ────────────────────────────────────────────────────────
 OSRM_BASE = "https://router.project-osrm.org"
-_osrm_cache = {}
+OSRM_DELAY = 0.06          # segundos entre llamadas OSRM
+COORD_PRECISION = 5         # decimales para caché (igual que PHP)
+MAX_2OPT_ITERS = 800       # límite iteraciones 2-opt por ruta
+MAX_2OPT_SECONDS = 30       # límite tiempo 2-opt por ruta
 
-def haversine(lat1, lng1, lat2, lng2):
-    R = 6371
-    dlat = math.radians(lat2 - lat1)
-    dlng = math.radians(lng2 - lng1)
-    a = math.sin(dlat/2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlng/2)**2
-    return R * 2 * math.asin(math.sqrt(a))
+UMBRAL_RENTABLE = 5         # km desvío — por debajo: RENTABLE
+UMBRAL_REVISAR = 15         # km desvío — entre 5-15: REVISAR, >15: NO RENTABLE
 
-def osrm_route(lat1, lng1, lat2, lng2):
-    """Devuelve (km, minutos) por carretera. Usa cache + fallback haversine."""
-    key = (round(lat1,5), round(lng1,5), round(lat2,5), round(lng2,5))
-    if key in _osrm_cache:
-        return _osrm_cache[key]
-    try:
-        url = f"{OSRM_BASE}/route/v1/driving/{lng1},{lat1};{lng2},{lat2}?overview=false"
-        r = requests.get(url, timeout=10)
-        if r.status_code == 200:
-            data = r.json()
-            if data.get('code') == 'Ok':
-                km = data['routes'][0]['distance'] / 1000
-                mins = data['routes'][0]['duration'] / 60
-                _osrm_cache[key] = (round(km, 1), round(mins, 1))
-                return _osrm_cache[key]
-    except:
-        pass
-    # Fallback
-    km = haversine(lat1, lng1, lat2, lng2) * 1.35
-    mins = (km / 50) * 60
-    _osrm_cache[key] = (round(km, 1), round(mins, 1))
-    return _osrm_cache[key]
+RUTA_COLORS = [
+    "#e74c3c", "#3498db", "#2ecc71", "#9b59b6", "#f39c12",
+    "#1abc9c", "#e67e22", "#2c3e50", "#d35400", "#8e44ad",
+    "#16a085", "#c0392b", "#27ae60", "#2980b9", "#f1c40f",
+]
 
-def osrm_table(points):
-    """Matriz de distancias/duraciones usando OSRM Table API. points = [(lat,lng),...]"""
-    if len(points) > 100:
-        # Demasiados — usar haversine
-        return None
-    coords = ";".join(f"{lng},{lat}" for lat, lng in points)
-    try:
-        url = f"{OSRM_BASE}/table/v1/driving/{coords}?annotations=distance,duration"
-        r = requests.get(url, timeout=30)
-        if r.status_code == 200:
-            data = r.json()
-            if data.get('code') == 'Ok':
-                return {
-                    'distances': [[round(d/1000, 2) for d in row] for row in data['distances']],
-                    'durations': [[round(d/60, 2) for d in row] for row in data['durations']]
-                }
-    except:
-        pass
-    return None
+CLASIF_COLORS = {
+    "RENTABLE": "#2ecc71",
+    "REVISAR": "#f39c12",
+    "NO RENTABLE": "#e74c3c",
+}
 
-def calc_distances_from_base(clients):
-    """Calcula distancia/tiempo desde base para cada cliente."""
-    print(f"  Calculando distancias desde base para {len(clients)} clientes...")
-    for i, c in enumerate(clients):
-        km, mins = osrm_route(BASE_LAT, BASE_LNG, c['lat'], c['lng'])
-        c['km_desde_base'] = km
-        c['min_desde_base'] = mins
-        if (i + 1) % 20 == 0:
-            print(f"    {i+1}/{len(clients)}...")
-            time.sleep(0.5)  # Rate limiting
-    return clients
+OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "..", "output")
 
-def calc_incremental_cost(clients):
-    """Calcula km/tiempo incremental de cada cliente dentro de su ruta."""
-    print("  Calculando costes incrementales por ruta...")
-    rutas = {}
-    for c in clients:
-        rn = c.get('ruta_name', 'Sin ruta')
-        rutas.setdefault(rn, []).append(c)
+# ─── BASE DE DATOS ────────────────────────────────────────────────
 
-    for ruta_name, ruta_clients in rutas.items():
-        print(f"    Ruta: {ruta_name} ({len(ruta_clients)} clientes)")
+def get_connection():
+    return mysql.connector.connect(**DB_CONFIG)
 
-        # Ordenar por distancia a base (nearest-neighbor simple)
-        ruta_clients.sort(key=lambda x: x['km_desde_base'])
 
-        # Construir puntos: base + todos los clientes
-        points = [(BASE_LAT, BASE_LNG)] + [(c['lat'], c['lng']) for c in ruta_clients]
+def cargar_datos():
+    conn = get_connection()
+    cur = conn.cursor(dictionary=True)
 
-        # Intentar OSRM Table
-        matrix = osrm_table(points)
-        time.sleep(1)
+    cur.execute("""
+        SELECT c.id, c.name, c.address, c.x, c.y, c.ruta_id, c.delegation_id,
+               r.name AS ruta_name
+        FROM clients c
+        LEFT JOIN rutas r ON c.ruta_id = r.id
+        WHERE c.active = 1 AND c.x IS NOT NULL AND c.y IS NOT NULL
+              AND c.x != 0 AND c.y != 0
+        ORDER BY c.name
+    """)
+    clientes = cur.fetchall()
 
-        if matrix:
-            dist_m = matrix['distances']
-            dur_m = matrix['durations']
-        else:
-            # Fallback haversine
-            n = len(points)
-            dist_m = [[0.0]*n for _ in range(n)]
-            dur_m = [[0.0]*n for _ in range(n)]
-            for i in range(n):
-                for j in range(n):
-                    if i != j:
-                        d = haversine(points[i][0], points[i][1], points[j][0], points[j][1]) * 1.35
-                        dist_m[i][j] = round(d, 2)
-                        dur_m[i][j] = round((d/50)*60, 2)
+    cur.execute("SELECT * FROM rutas ORDER BY name")
+    rutas = cur.fetchall()
 
-        # Para cada cliente: km incremental = coste de insertarlo en la ruta
-        # Simplificación: para cliente i (idx i+1 en matrix),
-        # incremental = dist(prev, i) + dist(i, next) - dist(prev, next)
-        n_clients = len(ruta_clients)
-        for idx, c in enumerate(ruta_clients):
-            mi = idx + 1  # matrix index (0 = base)
-            if n_clients == 1:
-                # Solo cliente: ida y vuelta desde base
-                c['km_incremental'] = dist_m[0][mi]
-                c['min_incremental'] = dur_m[0][mi]
-            else:
-                prev_mi = (idx) if idx > 0 else 0  # previous in route (or base)
-                next_mi = (idx + 2) if idx < n_clients - 1 else 0  # next (or back to base)
-                d_with = dist_m[prev_mi][mi] + dist_m[mi][next_mi]
-                d_without = dist_m[prev_mi][next_mi]
-                t_with = dur_m[prev_mi][mi] + dur_m[mi][next_mi]
-                t_without = dur_m[prev_mi][next_mi]
-                c['km_incremental'] = max(round(d_with - d_without, 2), 0.5)
-                c['min_incremental'] = max(round(t_with - t_without, 2), 0.5)
+    cur.execute("SELECT * FROM delegations WHERE active = 1 ORDER BY name")
+    delegaciones = cur.fetchall()
 
-    return clients
+    cur.close()
+    conn.close()
+    return clientes, rutas, delegaciones
 
-# ─── ANÁLISIS DE RENTABILIDAD ────────────────────────────────────
-def coste_paqueteria(peso_kg):
-    for limite, precio in sorted(PAQUETERIA.items()):
-        if peso_kg <= limite:
-            return precio
-    return 25.0
 
-def analyze_profitability(clients):
-    """Calcula coste ruta, coste paquetería, ahorro y clasificación.
+# ─── CLIENTE OSRM CON CACHÉ ──────────────────────────────────────
 
-    Usa coste mixto: incremental dentro de la ruta + parte proporcional
-    del coste de llegar a la zona (repartido entre clientes de la ruta).
-    """
-    # Calcular coste base compartido por ruta
-    rutas = {}
-    for c in clients:
-        rn = c.get('ruta_name', 'Sin ruta')
-        rutas.setdefault(rn, []).append(c)
+class OSRMClient:
+    def __init__(self):
+        self.conn = get_connection()
+        self.cache_hits = 0
+        self.osrm_calls = 0
+        self.consecutive_failures = 0
 
-    ruta_coste_base = {}
-    for rn, rc in rutas.items():
-        # Coste de ir desde base hasta la zona (usando el cliente más cercano de la ruta)
-        min_km = min(c['km_desde_base'] for c in rc)
-        # Ida y vuelta al punto más cercano de la ruta
-        coste_viaje_base = min_km * 2 * COSTE_KM + (min_km * 2 / 50) * COSTE_HORA  # 50km/h media
-        # Repartir entre clientes de la ruta
-        ruta_coste_base[rn] = coste_viaje_base / len(rc)
+    def close(self):
+        self.conn.close()
 
-    for c in clients:
-        freq = c['frecuencia_mensual']
-        km_inc = c.get('km_incremental', 5)
-        min_inc = c.get('min_incremental', 10)
-        rn = c.get('ruta_name', 'Sin ruta')
+    def _round(self, v):
+        return round(v, COORD_PRECISION)
 
-        # Coste incremental propio (ida y vuelta)
-        coste_km_inc = km_inc * 2 * COSTE_KM
-        coste_tiempo_inc = (min_inc * 2 / 60) * COSTE_HORA
-        coste_descarga = (TIEMPO_DESCARGA_MIN / 60) * COSTE_HORA
+    # ── caché ──
+    def _cache_get(self, lat1, lng1, lat2, lng2):
+        cur = self.conn.cursor(dictionary=True)
+        cur.execute(
+            "SELECT distance_km, duration_s FROM distance_cache "
+            "WHERE origin_lat=%s AND origin_lng=%s AND dest_lat=%s AND dest_lng=%s",
+            (self._round(lat1), self._round(lng1), self._round(lat2), self._round(lng2)),
+        )
+        row = cur.fetchone()
+        cur.close()
+        return row
 
-        # Coste total = parte proporcional del viaje base + incremental + descarga
-        coste_base_prop = ruta_coste_base.get(rn, 0)
-        c['coste_ruta_mensual'] = round((coste_base_prop + coste_km_inc + coste_tiempo_inc + coste_descarga) * freq, 2)
+    def _cache_set(self, lat1, lng1, lat2, lng2, km, secs):
+        cur = self.conn.cursor()
+        try:
+            cur.execute(
+                "INSERT IGNORE INTO distance_cache "
+                "(origin_lat, origin_lng, dest_lat, dest_lng, distance_km, duration_s) "
+                "VALUES (%s,%s,%s,%s,%s,%s)",
+                (self._round(lat1), self._round(lng1),
+                 self._round(lat2), self._round(lng2), km, secs),
+            )
+            self.conn.commit()
+        except Exception:
+            pass
+        finally:
+            cur.close()
 
-        # Coste paquetería mensual
-        c['coste_paqueteria_unitario'] = coste_paqueteria(c['peso_medio_kg'])
-        c['coste_paqueteria_mensual'] = round(c['coste_paqueteria_unitario'] * freq, 2)
+    # ── haversine ──
+    @staticmethod
+    def haversine(lat1, lng1, lat2, lng2):
+        R = 6371.0
+        dLat = math.radians(lat2 - lat1)
+        dLng = math.radians(lng2 - lng1)
+        a = math.sin(dLat / 2) ** 2 + (
+            math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dLng / 2) ** 2
+        )
+        return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
-        # Ahorro mensual (positivo = compensa paquetería)
-        c['ahorro_mensual'] = round(c['coste_ruta_mensual'] - c['coste_paqueteria_mensual'], 2)
+    # ── distancia punto a punto ──
+    def get_distance(self, lat1, lng1, lat2, lng2):
+        """Devuelve (km, seconds). Usa caché → OSRM → Haversine."""
+        cached = self._cache_get(lat1, lng1, lat2, lng2)
+        if cached:
+            self.cache_hits += 1
+            return cached["distance_km"], cached["duration_s"]
 
-        # Ratio rentabilidad
-        if c['coste_ruta_mensual'] > 0:
-            c['ratio'] = round(c['facturacion_mensual'] / c['coste_ruta_mensual'], 2)
-        else:
-            c['ratio'] = 99.0
+        if self.consecutive_failures < 3:
+            try:
+                url = (
+                    f"{OSRM_BASE}/route/v1/driving/"
+                    f"{lng1},{lat1};{lng2},{lat2}?overview=false"
+                )
+                r = requests.get(url, timeout=10)
+                data = r.json()
+                if data.get("code") == "Ok" and data.get("routes"):
+                    km = round(data["routes"][0]["distance"] / 1000, 3)
+                    secs = round(data["routes"][0]["duration"], 1)
+                    self._cache_set(lat1, lng1, lat2, lng2, km, secs)
+                    self.osrm_calls += 1
+                    self.consecutive_failures = 0
+                    time.sleep(OSRM_DELAY)
+                    return km, secs
+            except Exception:
+                self.consecutive_failures += 1
 
-        # Clasificación
-        # NO RENTABLE: ratio bajo O coste ruta muy superior a paquetería
-        if c['ratio'] < 3 and c['ahorro_mensual'] > 0:
-            c['clasificacion'] = 'NO RENTABLE'
-        elif c['ratio'] >= 8 or c['ahorro_mensual'] <= 0:
-            c['clasificacion'] = 'RENTABLE'
-        else:
-            c['clasificacion'] = 'REVISAR'
+        km = round(self.haversine(lat1, lng1, lat2, lng2), 3)
+        secs = round((km / 50) * 3600, 1)
+        self._cache_set(lat1, lng1, lat2, lng2, km, secs)
+        return km, secs
 
-    return clients
+    # ── tabla NxN ──
+    def build_matrix(self, points):
+        """points = [{'lat': ..., 'lng': ...}, ...]. Devuelve distances[][]."""
+        n = len(points)
+        dist = [[0.0] * n for _ in range(n)]
+        missing = []
 
-def analyze_reassignment(clients):
-    """Para clientes REVISAR/NO RENTABLE, evalúa reasignación a otra ruta."""
-    rutas_centroid = {}
-    for c in clients:
-        rn = c.get('ruta_name', 'Sin ruta')
-        rutas_centroid.setdefault(rn, {'lats': [], 'lngs': []})
-        rutas_centroid[rn]['lats'].append(c['lat'])
-        rutas_centroid[rn]['lngs'].append(c['lng'])
-
-    for rn, data in rutas_centroid.items():
-        data['center_lat'] = sum(data['lats']) / len(data['lats'])
-        data['center_lng'] = sum(data['lngs']) / len(data['lngs'])
-
-    for c in clients:
-        if c['clasificacion'] in ('REVISAR', 'NO RENTABLE'):
-            best_ruta = None
-            best_dist = 9999
-            for rn, data in rutas_centroid.items():
-                if rn == c.get('ruta_name'):
+        for i in range(n):
+            for j in range(n):
+                if i == j:
                     continue
-                d = haversine(c['lat'], c['lng'], data['center_lat'], data['center_lng'])
-                if d < best_dist:
-                    best_dist = d
-                    best_ruta = rn
-            c['ruta_propuesta'] = best_ruta
-            c['dist_a_ruta_propuesta'] = round(best_dist, 1)
-            # Solo proponer cambio si la otra ruta está significativamente más cerca
-            c['recomendar_cambio'] = best_dist < haversine(
-                c['lat'], c['lng'],
-                rutas_centroid.get(c.get('ruta_name', ''), {}).get('center_lat', BASE_LAT),
-                rutas_centroid.get(c.get('ruta_name', ''), {}).get('center_lng', BASE_LNG)
-            ) * 0.7
+                cached = self._cache_get(
+                    points[i]["lat"], points[i]["lng"],
+                    points[j]["lat"], points[j]["lng"],
+                )
+                if cached:
+                    dist[i][j] = cached["distance_km"]
+                    self.cache_hits += 1
+                else:
+                    missing.append((i, j))
+
+        # intentar OSRM table si <= 100 puntos
+        if missing and n <= 100 and self.consecutive_failures < 3:
+            coords = ";".join(f"{p['lng']},{p['lat']}" for p in points)
+            url = f"{OSRM_BASE}/table/v1/driving/{coords}?annotations=distance,duration"
+            try:
+                r = requests.get(url, timeout=30)
+                data = r.json()
+                if data.get("code") == "Ok":
+                    for i in range(n):
+                        for j in range(n):
+                            if i == j:
+                                continue
+                            km = round(data["distances"][i][j] / 1000, 3)
+                            secs = round(data["durations"][i][j], 1)
+                            dist[i][j] = km
+                            self._cache_set(
+                                points[i]["lat"], points[i]["lng"],
+                                points[j]["lat"], points[j]["lng"], km, secs,
+                            )
+                    self.osrm_calls += 1
+                    self.consecutive_failures = 0
+                    time.sleep(OSRM_DELAY)
+                    return dist
+            except Exception:
+                self.consecutive_failures += 1
+
+        # fallback par a par
+        for i, j in missing:
+            km, _ = self.get_distance(
+                points[i]["lat"], points[i]["lng"],
+                points[j]["lat"], points[j]["lng"],
+            )
+            dist[i][j] = km
+
+        return dist
+
+    # ── geometría de ruta multi-waypoint ──
+    def get_route_geometry(self, waypoints):
+        """waypoints = [{'lat':..,'lng':..}, ...]. Devuelve [[lat,lng], ...] o []."""
+        if len(waypoints) < 2:
+            return []
+        coords = ";".join(f"{p['lng']},{p['lat']}" for p in waypoints)
+        try:
+            url = f"{OSRM_BASE}/route/v1/driving/{coords}?overview=full&geometries=geojson"
+            r = requests.get(url, timeout=30)
+            data = r.json()
+            if data.get("code") == "Ok" and data.get("routes"):
+                # GeoJSON coords son [lng, lat] → convertir a [lat, lng]
+                return [[c[1], c[0]] for c in data["routes"][0]["geometry"]["coordinates"]]
+        except Exception:
+            pass
+        # fallback: líneas rectas
+        return [[p["lat"], p["lng"]] for p in waypoints]
+
+
+# ─── OPTIMIZADOR DE RUTAS ────────────────────────────────────────
+
+class RouteOptimizer:
+    def __init__(self, osrm: OSRMClient):
+        self.osrm = osrm
+
+    def nearest_neighbor(self, dist_matrix, depot_idx=0):
+        """Devuelve orden de visita (incluye depot al inicio y final)."""
+        n = len(dist_matrix)
+        visited = {depot_idx}
+        order = [depot_idx]
+        current = depot_idx
+
+        while len(visited) < n:
+            best_j, best_d = -1, float("inf")
+            for j in range(n):
+                if j not in visited and dist_matrix[current][j] < best_d:
+                    best_d = dist_matrix[current][j]
+                    best_j = j
+            if best_j == -1:
+                break
+            visited.add(best_j)
+            order.append(best_j)
+            current = best_j
+
+        order.append(depot_idx)  # vuelta al depot
+        return order
+
+    def two_opt(self, order, dist_matrix):
+        """Mejora la ruta con 2-opt. Devuelve orden mejorado."""
+        n = len(order)
+        improved = True
+        iters = 0
+        t0 = time.time()
+
+        while improved:
+            improved = False
+            for i in range(1, n - 2):
+                for j in range(i + 1, n - 1):
+                    iters += 1
+                    if iters > MAX_2OPT_ITERS or (time.time() - t0) > MAX_2OPT_SECONDS:
+                        return order
+
+                    d_old = dist_matrix[order[i - 1]][order[i]] + dist_matrix[order[j]][order[j + 1]]
+                    d_new = dist_matrix[order[i - 1]][order[j]] + dist_matrix[order[i]][order[j + 1]]
+                    if d_new < d_old - 0.001:
+                        order[i : j + 1] = reversed(order[i : j + 1])
+                        improved = True
+        return order
+
+    def optimize(self, dist_matrix, depot_idx=0):
+        """Nearest neighbor + 2-opt. Devuelve orden de índices."""
+        order = self.nearest_neighbor(dist_matrix, depot_idx)
+        order = self.two_opt(order, dist_matrix)
+        return order
+
+    @staticmethod
+    def route_distance(order, dist_matrix):
+        """Distancia total de una ruta ordenada."""
+        total = 0.0
+        for k in range(len(order) - 1):
+            total += dist_matrix[order[k]][order[k + 1]]
+        return round(total, 2)
+
+
+# ─── ANÁLISIS POR RUTA ───────────────────────────────────────────
+
+def asignar_delegacion(ruta_clientes, delegaciones, osrm):
+    """Determina la delegación de origen para una ruta."""
+    if not delegaciones:
+        return None
+
+    if len(delegaciones) == 1:
+        return delegaciones[0]
+
+    # frecuencia de delegation_id en los clientes
+    freq = {}
+    for c in ruta_clientes:
+        did = c.get("delegation_id")
+        if did:
+            freq[did] = freq.get(did, 0) + 1
+    if freq:
+        best_id = max(freq, key=freq.get)
+        for d in delegaciones:
+            if d["id"] == best_id:
+                return d
+
+    # centroide → delegación más cercana
+    avg_lat = sum(float(c["x"]) for c in ruta_clientes) / len(ruta_clientes)
+    avg_lng = sum(float(c["y"]) for c in ruta_clientes) / len(ruta_clientes)
+    best, best_d = None, float("inf")
+    for d in delegaciones:
+        dd = OSRMClient.haversine(avg_lat, avg_lng, float(d["x"]), float(d["y"]))
+        if dd < best_d:
+            best_d = dd
+            best = d
+    return best
+
+
+def _build_sub_matrix(dist_matrix, indices):
+    """Extrae submatriz de dist_matrix para los índices dados."""
+    return [[dist_matrix[a][b] for b in indices] for a in indices]
+
+
+def _point_name(pidx, clientes_ruta, delegacion):
+    if pidx == 0:
+        return delegacion["name"]
+    return clientes_ruta[pidx - 1]["name"]
+
+
+def analizar_ruta(ruta, clientes_ruta, delegacion, osrm, optimizer):
+    """Analiza una ruta con desvío marginal secuencial.
+
+    Proceso:
+    1. Optimiza ruta con todos los clientes
+    2. Calcula desvío inicial de cada cliente (quitar uno y reoptimizar)
+    3. Clasifica provisionalmente
+    4. Elimina el peor, reoptimiza, recalcula desvíos del resto
+    5. Repite hasta que no queden clientes por encima del umbral
+    6. El desvío final de cada cliente es el MARGINAL (cuánto ahorró
+       al quitarlo respecto a la ruta que ya no tenía los peores)
+    → La suma de desvíos de los eliminados = ahorro real total
+    """
+    if not clientes_ruta or not delegacion:
+        return None
+
+    n_clients = len(clientes_ruta)
+    print(f"  Construyendo matriz de distancias ({n_clients} clientes + depot)...")
+
+    # construir puntos: [depot, cliente0, cliente1, ...]
+    points = [{"lat": float(delegacion["x"]), "lng": float(delegacion["y"])}]
+    for c in clientes_ruta:
+        points.append({"lat": float(c["x"]), "lng": float(c["y"])})
+
+    dist_matrix = osrm.build_matrix(points)
+
+    # datos base por cliente: distancia a delegación y vecino más cercano
+    base_info = {}
+    for ci in range(n_clients):
+        idx = ci + 1
+        dist_deleg = dist_matrix[0][idx]
+        vecino_min = float("inf")
+        for cj in range(n_clients):
+            if cj == ci:
+                continue
+            d = dist_matrix[idx][cj + 1]
+            if d < vecino_min:
+                vecino_min = d
+        if vecino_min == float("inf"):
+            vecino_min = 0.0
+        base_info[ci] = {
+            "distancia_delegacion_km": round(dist_deleg, 2),
+            "vecino_cercano_km": round(vecino_min, 2),
+        }
+
+    # ── FASE 1: Desvío marginal secuencial ──
+    # Índices activos en points[] (0=depot, 1..n=clientes)
+    active_indices = list(range(n_clients + 1))  # [0, 1, 2, ..., n]
+    # ci → idx_in_points mapping
+    ci_to_idx = {ci: ci + 1 for ci in range(n_clients)}
+
+    # Resultado por cliente: ci → desvio marginal
+    desvios_marginales = {}
+    eliminados_orden = []  # [(ci, desvio_marginal, km_ruta_antes)]
+
+    # Ruta completa inicial
+    print("  Optimizando ruta completa...")
+    sub = _build_sub_matrix(dist_matrix, active_indices)
+    order = optimizer.optimize(sub, depot_idx=0)
+    km_current = optimizer.route_distance(order, sub)
+    km_full = km_current
+
+    print(f"  Km ruta completa: {km_full}")
+    print(f"  Calculando desvíos marginales secuenciales...")
+
+    iteration = 0
+    while True:
+        iteration += 1
+        # Clientes activos (sin depot y sin eliminados)
+        active_ci = [ci for ci in range(n_clients) if ci_to_idx[ci] in active_indices]
+
+        if not active_ci:
+            break
+
+        # Calcular desvío de cada cliente activo respecto a la ruta actual
+        print(f"    Iteración {iteration}: {len(active_ci)} clientes activos, ruta={km_current} km")
+        candidate_desvios = {}
+
+        for ci in active_ci:
+            idx = ci_to_idx[ci]
+            # submatriz sin este cliente
+            indices_sin = [i for i in active_indices if i != idx]
+            sub_sin = _build_sub_matrix(dist_matrix, indices_sin)
+            order_sin = optimizer.optimize(sub_sin, depot_idx=0)
+            km_sin = optimizer.route_distance(order_sin, sub_sin)
+            dev = round(km_current - km_sin, 2)
+            if dev < 0:
+                dev = 0.0
+            candidate_desvios[ci] = dev
+
+        # Encontrar el peor
+        worst_ci = max(candidate_desvios, key=candidate_desvios.get)
+        worst_dev = candidate_desvios[worst_ci]
+
+        if worst_dev < UMBRAL_RENTABLE:
+            # Todos los restantes son rentables, asignar desvíos y terminar
+            for ci in active_ci:
+                desvios_marginales[ci] = candidate_desvios[ci]
+            break
+
+        # Eliminar el peor
+        worst_name = clientes_ruta[worst_ci]["name"]
+        print(f"      Eliminando: {worst_name} (desvio marginal: {worst_dev} km)")
+
+        desvios_marginales[worst_ci] = worst_dev
+        eliminados_orden.append((worst_ci, worst_dev, km_current))
+
+        # Actualizar activos
+        active_indices = [i for i in active_indices if i != ci_to_idx[worst_ci]]
+
+        # Reoptimizar sin el eliminado
+        sub = _build_sub_matrix(dist_matrix, active_indices)
+        order = optimizer.optimize(sub, depot_idx=0)
+        km_current = optimizer.route_distance(order, sub)
+
+        # Si ya no quedan por encima del umbral revisar, calcular los restantes
+        remaining_ci = [ci for ci in range(n_clients) if ci_to_idx[ci] in active_indices]
+        if not remaining_ci:
+            break
+
+    # Para clientes que no fueron procesados en el bucle (salió por break temprano)
+    for ci in range(n_clients):
+        if ci not in desvios_marginales:
+            desvios_marginales[ci] = 0.0
+
+    # ── FASE 2: Construir explicación de posición en ruta ──
+    # Ruta completa para la explicación
+    sub_full = _build_sub_matrix(dist_matrix, list(range(n_clients + 1)))
+    order_full = optimizer.optimize(sub_full, depot_idx=0)
+
+    pos_in_route = {}
+    for pos, local_idx in enumerate(order_full):
+        if local_idx > 0:
+            prev_local = order_full[pos - 1] if pos > 0 else 0
+            next_local = order_full[pos + 1] if pos < len(order_full) - 1 else 0
+            pos_in_route[local_idx] = (prev_local, next_local, pos)
+
+    # ── FASE 3: Construir resultados ──
+    resultados = []
+    for ci in range(n_clients):
+        idx = ci + 1
+        desvio = desvios_marginales[ci]
+
+        if desvio < UMBRAL_RENTABLE:
+            clasif = "RENTABLE"
+        elif desvio < UMBRAL_REVISAR:
+            clasif = "REVISAR"
         else:
-            c['ruta_propuesta'] = None
-            c['recomendar_cambio'] = False
-
-    return clients
-
-# ─── FORMATEO ESPAÑOL ────────────────────────────────────────────
-def fmt_eur(val):
-    """Formato 1.234,56 €"""
-    if val is None:
-        return '-'
-    neg = val < 0
-    val = abs(val)
-    entero = int(val)
-    decimal = round((val - entero) * 100)
-    s_entero = f"{entero:,}".replace(",", ".")
-    result = f"{s_entero},{decimal:02d} €"
-    return f"-{result}" if neg else result
-
-def fmt_num(val, decimals=1):
-    if val is None:
-        return '-'
-    return f"{val:,.{decimals}f}".replace(",", "X").replace(".", ",").replace("X", ".")
-
-def emoji_clasif(clasif):
-    return {'RENTABLE': '🟢', 'REVISAR': '🟡', 'NO RENTABLE': '🔴'}.get(clasif, '?')
-
-# ─── GRÁFICOS ────────────────────────────────────────────────────
-plt.rcParams['font.family'] = 'sans-serif'
-plt.rcParams['font.sans-serif'] = ['Poppins', 'Calibri', 'Arial', 'DejaVu Sans']
-plt.rcParams['axes.unicode_minus'] = False
-
-def chart_ahorro_por_ruta(clients):
-    """Gráfico de barras: ahorro mensual por ruta."""
-    rutas = {}
-    for c in clients:
-        rn = c.get('ruta_name', 'Sin ruta')
-        rutas.setdefault(rn, 0)
-        if c['clasificacion'] == 'NO RENTABLE':
-            rutas[rn] += c['ahorro_mensual']
-
-    names = sorted(rutas.keys())
-    vals = [rutas[n] for n in names]
-    colors = [RUTA_COLORS_HEX.get(n, '#888888') for n in names]
-
-    fig, ax = plt.subplots(figsize=(10, 5))
-    bars = ax.bar(names, vals, color=colors, edgecolor='white', linewidth=1.5)
-    ax.set_ylabel('Ahorro potencial mensual (€)', fontsize=11)
-    ax.set_title('Ahorro mensual si eliminamos clientes NO RENTABLES por ruta', fontsize=13, fontweight='bold')
-    ax.axhline(0, color='gray', linewidth=0.5)
-    for bar, v in zip(bars, vals):
-        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 5,
-                fmt_eur(v), ha='center', va='bottom', fontsize=9)
-    plt.xticks(rotation=30, ha='right')
-    plt.tight_layout()
-    path = CHART_DIR / 'ahorro_por_ruta.png'
-    plt.savefig(path, dpi=150)
-    plt.close()
-    return path
-
-def chart_facturacion_vs_coste(clients):
-    """Dispersión: Facturación vs Coste ruta."""
-    fig, ax = plt.subplots(figsize=(10, 6))
-    for c in clients:
-        color = RUTA_COLORS_HEX.get(c.get('ruta_name', ''), '#888')
-        ax.scatter(c['coste_ruta_mensual'], c['facturacion_mensual'],
-                   c=color, s=40, alpha=0.7, edgecolors='white', linewidth=0.5)
-
-    # Líneas de ratio
-    max_coste = max(c['coste_ruta_mensual'] for c in clients) * 1.1
-    ax.plot([0, max_coste], [0, max_coste * 5], '--', color='green', alpha=0.5, label='Ratio = 5')
-    ax.plot([0, max_coste], [0, max_coste * 2], '--', color='orange', alpha=0.5, label='Ratio = 2')
-
-    ax.set_xlabel('Coste ruta mensual (€)', fontsize=11)
-    ax.set_ylabel('Facturación mensual (€)', fontsize=11)
-    ax.set_title('Facturación vs Coste de Ruta por Cliente', fontsize=13, fontweight='bold')
-    ax.legend()
-
-    # Leyenda de rutas
-    for rn, col in RUTA_COLORS_HEX.items():
-        ax.scatter([], [], c=col, s=60, label=rn)
-    handles, labels = ax.get_legend_handles_labels()
-    ax.legend(handles, labels, loc='upper left', fontsize=8, ncol=2)
-
-    plt.tight_layout()
-    path = CHART_DIR / 'facturacion_vs_coste.png'
-    plt.savefig(path, dpi=150)
-    plt.close()
-    return path
-
-def chart_clasificacion_tarta(clients):
-    """Tarta: distribución de clasificación."""
-    counts = {'RENTABLE': 0, 'REVISAR': 0, 'NO RENTABLE': 0}
-    for c in clients:
-        counts[c['clasificacion']] += 1
-
-    labels = ['Rentable', 'Revisar', 'No Rentable']
-    sizes = [counts['RENTABLE'], counts['REVISAR'], counts['NO RENTABLE']]
-    colors_pie = ['#4caf50', '#ff9800', '#f44336']
-    explode = (0, 0.05, 0.1)
-
-    fig, ax = plt.subplots(figsize=(7, 7))
-    wedges, texts, autotexts = ax.pie(sizes, labels=labels, colors=colors_pie, explode=explode,
-                                       autopct=lambda pct: f'{int(round(pct*sum(sizes)/100))}\n({pct:.1f}%)',
-                                       startangle=90, textprops={'fontsize': 12})
-    for at in autotexts:
-        at.set_fontsize(10)
-        at.set_fontweight('bold')
-    ax.set_title('Distribución de Clientes por Clasificación', fontsize=14, fontweight='bold')
-    plt.tight_layout()
-    path = CHART_DIR / 'clasificacion_tarta.png'
-    plt.savefig(path, dpi=150)
-    plt.close()
-    return path
-
-def chart_top10_ahorro(clients):
-    """Barras horizontales: top 10 clientes con mayor ahorro potencial."""
-    candidatos = [c for c in clients if c['ahorro_mensual'] > 0]
-    candidatos.sort(key=lambda x: x['ahorro_mensual'], reverse=True)
-    top = candidatos[:10]
-
-    names = [f"{c['name'][:30]}" for c in top]
-    vals = [c['ahorro_mensual'] for c in top]
-    colors = [RUTA_COLORS_HEX.get(c.get('ruta_name', ''), '#888') for c in top]
-
-    fig, ax = plt.subplots(figsize=(10, 6))
-    bars = ax.barh(range(len(top)), vals, color=colors, edgecolor='white')
-    ax.set_yticks(range(len(top)))
-    ax.set_yticklabels(names, fontsize=9)
-    ax.invert_yaxis()
-    ax.set_xlabel('Ahorro mensual (€)', fontsize=11)
-    ax.set_title('Top 10 Clientes con Mayor Ahorro Potencial', fontsize=13, fontweight='bold')
-    for bar, v in zip(bars, vals):
-        ax.text(bar.get_width() + 1, bar.get_y() + bar.get_height()/2,
-                fmt_eur(v), va='center', fontsize=9)
-    plt.tight_layout()
-    path = CHART_DIR / 'top10_ahorro.png'
-    plt.savefig(path, dpi=150)
-    plt.close()
-    return path
-
-def chart_coste_actual_vs_optimizado(clients):
-    """Barras agrupadas: coste actual vs optimizado por ruta."""
-    rutas_actual = {}
-    rutas_optim = {}
-    for c in clients:
-        rn = c.get('ruta_name', 'Sin ruta')
-        rutas_actual.setdefault(rn, 0)
-        rutas_optim.setdefault(rn, 0)
-        rutas_actual[rn] += c['coste_ruta_mensual']
-        if c['clasificacion'] != 'NO RENTABLE':
-            rutas_optim[rn] += c['coste_ruta_mensual']
-        else:
-            rutas_optim[rn] += c['coste_paqueteria_mensual']
-
-    names = sorted(rutas_actual.keys())
-    x = range(len(names))
-    actual = [rutas_actual[n] for n in names]
-    optim = [rutas_optim[n] for n in names]
-
-    fig, ax = plt.subplots(figsize=(10, 5))
-    w = 0.35
-    ax.bar([i - w/2 for i in x], actual, w, label='Coste actual', color='#ef5350')
-    ax.bar([i + w/2 for i in x], optim, w, label='Coste optimizado', color='#66bb6a')
-    ax.set_xticks(list(x))
-    ax.set_xticklabels(names, rotation=30, ha='right')
-    ax.set_ylabel('Coste mensual (€)', fontsize=11)
-    ax.set_title('Coste Actual vs Optimizado por Ruta', fontsize=13, fontweight='bold')
-    ax.legend()
-    plt.tight_layout()
-    path = CHART_DIR / 'coste_actual_vs_optimizado.png'
-    plt.savefig(path, dpi=150)
-    plt.close()
-    return path
-
-# ─── GENERACIÓN DOCX ─────────────────────────────────────────────
-def set_cell_shading(cell, color_hex):
-    """Aplica color de fondo a una celda."""
-    shading = parse_xml(f'<w:shd {nsdecls("w")} w:fill="{color_hex}"/>')
-    cell._tc.get_or_add_tcPr().append(shading)
-
-def set_cell_border(cell, color='D5D3CC'):
-    tc = cell._tc
-    tcPr = tc.get_or_add_tcPr()
-    borders = parse_xml(
-        f'<w:tcBorders {nsdecls("w")}>'
-        f'  <w:top w:val="single" w:sz="4" w:space="0" w:color="{color}"/>'
-        f'  <w:left w:val="single" w:sz="4" w:space="0" w:color="{color}"/>'
-        f'  <w:bottom w:val="single" w:sz="4" w:space="0" w:color="{color}"/>'
-        f'  <w:right w:val="single" w:sz="4" w:space="0" w:color="{color}"/>'
-        f'</w:tcBorders>'
-    )
-    tcPr.append(borders)
-
-def add_styled_table(doc, headers, rows, col_widths=None, right_align_from=3):
-    """Añade tabla con estilo corporativo Veraleza."""
-    table = doc.add_table(rows=1 + len(rows), cols=len(headers))
-    table.alignment = WD_TABLE_ALIGNMENT.CENTER
-    table.autofit = False
-
-    # Header
-    for i, h in enumerate(headers):
-        cell = table.rows[0].cells[i]
-        cell.text = ''
-        p = cell.paragraphs[0]
-        run = p.add_run(h)
-        run.bold = True
-        run.font.size = Pt(9)
-        run.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
-        run.font.name = 'Calibri'
-        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        set_cell_shading(cell, VERDE_VERALEZA)
-        set_cell_border(cell, COLOR_BORDE)
-
-    # Rows
-    for ri, row_data in enumerate(rows):
-        for ci, val in enumerate(row_data):
-            cell = table.rows[ri + 1].cells[ci]
-            cell.text = ''
-            p = cell.paragraphs[0]
-            run = p.add_run(str(val))
-            run.font.size = Pt(8)
-            run.font.name = 'Calibri'
-
-            # Alineación
-            if ci >= right_align_from:
-                p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-            else:
-                p.alignment = WD_ALIGN_PARAGRAPH.LEFT
-
-            # Color alterno
-            if ri % 2 == 1:
-                set_cell_shading(cell, COLOR_FILA_ALT)
-
-            # Color clasificación
-            if isinstance(val, str):
-                if '🔴' in val or 'NO RENTABLE' in val:
-                    set_cell_shading(cell, BG_ROJO)
-                elif '🟡' in val or 'REVISAR' in val:
-                    set_cell_shading(cell, BG_AMARILLO)
-                elif '🟢' in val or 'RENTABLE' == val:
-                    set_cell_shading(cell, BG_VERDE)
-
-            set_cell_border(cell, COLOR_BORDE)
-
-    # Anchos
-    if col_widths:
-        for ri_idx in range(len(table.rows)):
-            for ci_idx, w in enumerate(col_widths):
-                table.rows[ri_idx].cells[ci_idx].width = Cm(w)
-
-    return table
-
-def add_kpi_box(doc, label, value, unit=''):
-    """Añade un párrafo KPI destacado."""
-    p = doc.add_paragraph()
-    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run = p.add_run(f"{label}: ")
-    run.bold = True
-    run.font.size = Pt(12)
-    run.font.color.rgb = RGBColor(0x8E, 0x8B, 0x30)
-    run.font.name = 'Calibri'
-    run2 = p.add_run(f"{value} {unit}")
-    run2.bold = True
-    run2.font.size = Pt(16)
-    run2.font.color.rgb = RGBColor(0x8E, 0x8B, 0x30)
-    run2.font.name = 'Calibri'
-
-def generate_docx(clients, charts):
-    """Genera el informe completo en .docx."""
-    doc = Document()
-
-    # ── Estilos base ──
-    style = doc.styles['Normal']
-    style.font.name = 'Calibri'
-    style.font.size = Pt(10)
-    style.font.color.rgb = RGBColor(0x33, 0x33, 0x33)
-
-    for level in range(1, 4):
-        hs = doc.styles[f'Heading {level}']
-        hs.font.name = 'Calibri'
-        hs.font.color.rgb = RGBColor(0x8E, 0x8B, 0x30)
-        hs.font.bold = True
-
-    # ── Márgenes ──
-    for section in doc.sections:
-        section.top_margin = Cm(2)
-        section.bottom_margin = Cm(2)
-        section.left_margin = Cm(2.5)
-        section.right_margin = Cm(2.5)
-
-    # ── Header con logo ──
-    section = doc.sections[0]
-    header = section.header
-    header.is_linked_to_previous = False
-    hp = header.paragraphs[0]
-    hp.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-    if LOGO_PATH.exists():
-        run = hp.add_run()
-        run.add_picture(str(LOGO_PATH), width=Cm(4))
-
-    # ── Footer ──
-    footer = section.footer
-    footer.is_linked_to_previous = False
-    fp = footer.paragraphs[0]
-    fp.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run = fp.add_run('Veraleza — Confidencial')
-    run.font.size = Pt(8)
-    run.font.color.rgb = RGBColor(0x99, 0x99, 0x99)
-    run.font.name = 'Calibri'
-
-    # ══════════════════════════════════════════════════════════════
-    # PORTADA
-    # ══════════════════════════════════════════════════════════════
-    for _ in range(4):
-        doc.add_paragraph()
-
-    if LOGO_PATH.exists():
-        p = doc.add_paragraph()
-        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        run = p.add_run()
-        run.add_picture(str(LOGO_PATH), width=Cm(8))
-
-    doc.add_paragraph()
-
-    p = doc.add_paragraph()
-    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run = p.add_run('INFORME DE OPTIMIZACIÓN\nDE RUTAS COMERCIALES')
-    run.bold = True
-    run.font.size = Pt(26)
-    run.font.color.rgb = RGBColor(0x8E, 0x8B, 0x30)
-    run.font.name = 'Calibri'
-
-    p = doc.add_paragraph()
-    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run = p.add_run('Análisis de Rentabilidad por Cliente y Recomendaciones')
-    run.font.size = Pt(14)
-    run.font.color.rgb = RGBColor(0x66, 0x66, 0x66)
-
-    doc.add_paragraph()
-    p = doc.add_paragraph()
-    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run = p.add_run(f'Fecha: {datetime.now().strftime("%d/%m/%Y")}\nPeríodo analizado: Últimos 12 meses\nGenerado por: Gestor de Rutas Veraleza')
-    run.font.size = Pt(11)
-    run.font.color.rgb = RGBColor(0x88, 0x88, 0x88)
-
-    doc.add_page_break()
-
-    # ══════════════════════════════════════════════════════════════
-    # CÁLCULOS RESUMEN
-    # ══════════════════════════════════════════════════════════════
-    no_rentables = [c for c in clients if c['clasificacion'] == 'NO RENTABLE']
-    revisar = [c for c in clients if c['clasificacion'] == 'REVISAR']
-    rentables = [c for c in clients if c['clasificacion'] == 'RENTABLE']
-
-    ahorro_mensual = sum(c['ahorro_mensual'] for c in no_rentables)
-    ahorro_anual = ahorro_mensual * 12
-    horas_liberadas = sum(c['min_incremental'] * 2 * c['frecuencia_mensual'] for c in no_rentables) / 60
-    km_reduccion_mes = sum(c['km_incremental'] * 2 * c['frecuencia_mensual'] for c in no_rentables)
-    coste_paq_total = sum(c['coste_paqueteria_mensual'] for c in no_rentables)
-    cambio_ruta = [c for c in clients if c.get('recomendar_cambio')]
-
-    # ══════════════════════════════════════════════════════════════
-    # 1. RESUMEN EJECUTIVO
-    # ══════════════════════════════════════════════════════════════
-    doc.add_heading('1. Resumen Ejecutivo', level=1)
-
-    doc.add_paragraph(
-        'Este informe analiza la rentabilidad de cada cliente activo en las rutas comerciales '
-        'de Veraleza, comparando el coste de distribución propia con el envío por paquetería. '
-        'Se identifican clientes cuyo coste de reparto supera el beneficio que generan y se '
-        'proponen acciones de optimización.'
-    )
-
-    add_kpi_box(doc, 'Ahorro mensual estimado', fmt_eur(ahorro_mensual))
-    add_kpi_box(doc, 'Ahorro anual estimado', fmt_eur(ahorro_anual))
-    add_kpi_box(doc, 'Clientes a pasar a paquetería', str(len(no_rentables)))
-    add_kpi_box(doc, 'Clientes a reasignar de ruta', str(len(cambio_ruta)))
-    add_kpi_box(doc, 'Horas liberadas al mes', fmt_num(horas_liberadas) + ' h')
-    add_kpi_box(doc, 'Reducción de km mensuales', fmt_num(km_reduccion_mes, 0) + ' km')
-
-    # Gráfico tarta
-    if charts.get('tarta') and Path(charts['tarta']).exists():
-        doc.add_paragraph()
-        p = doc.add_paragraph()
-        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        run = p.add_run()
-        run.add_picture(str(charts['tarta']), width=Cm(12))
-
-    doc.add_page_break()
-
-    # ══════════════════════════════════════════════════════════════
-    # 2. METODOLOGÍA
-    # ══════════════════════════════════════════════════════════════
-    doc.add_heading('2. Metodología', level=1)
-
-    doc.add_heading('Fuente de datos', level=2)
-    doc.add_paragraph(
-        'Los datos de clientes, coordenadas GPS y asignación de rutas se han extraído '
-        'directamente de la base de datos del Gestor de Rutas (MySQL). Los datos de facturación '
-        'y frecuencia de visita se han estimado en base a parámetros del sector para esta '
-        'primera versión del informe.'
-    )
-
-    doc.add_heading('Motor de cálculo de rutas', level=2)
-    doc.add_paragraph(
-        'Se utiliza OSRM (Open Source Routing Machine) con datos de OpenStreetMap para '
-        'calcular distancias y tiempos reales por carretera entre la base de Veraleza Tomiño '
-        'y cada cliente, así como los costes incrementales dentro de cada ruta.'
-    )
-
-    doc.add_heading('Parámetros de coste', level=2)
-    params = [
-        ('Coste por km del vehículo', '0,35 €/km', 'Gasóleo + desgaste + seguro'),
-        ('Coste por hora del conductor', '18,00 €/h', 'Salario + Seguridad Social'),
-        ('Tiempo medio de descarga', '20 min', 'Por cliente y entrega'),
-        ('Paquete < 5 kg', '4,50 €', 'Envío estándar'),
-        ('Paquete 5-15 kg', '7,50 €', 'Envío estándar'),
-        ('Paquete 15-30 kg', '12,00 €', 'Envío estándar'),
-        ('Paquete > 30 kg / palet', '25,00 €', 'Envío palet'),
-    ]
-    add_styled_table(doc, ['Parámetro', 'Valor', 'Observaciones'],
-                     params, col_widths=[7, 3, 7], right_align_from=1)
-
-    doc.add_heading('Criterios de clasificación', level=2)
-    clasif_rows = [
-        ('🟢 RENTABLE', 'Ratio > 5 y paquetería más cara', 'Mantener en ruta'),
-        ('🟡 REVISAR', 'Ratio entre 2 y 5', 'Evaluar alternativas'),
-        ('🔴 NO RENTABLE', 'Ratio < 2 y paquetería más barata', 'Pasar a paquetería'),
-    ]
-    add_styled_table(doc, ['Clasificación', 'Criterio', 'Acción'], clasif_rows,
-                     col_widths=[4, 8, 5], right_align_from=99)
-
-    doc.add_page_break()
-
-    # ══════════════════════════════════════════════════════════════
-    # 3. ANÁLISIS POR RUTA
-    # ══════════════════════════════════════════════════════════════
-    doc.add_heading('3. Análisis por Ruta', level=1)
-
-    rutas_grouped = {}
-    for c in clients:
-        rn = c.get('ruta_name', 'Sin ruta')
-        rutas_grouped.setdefault(rn, []).append(c)
-
-    for ruta_name in sorted(rutas_grouped.keys()):
-        ruta_clients = rutas_grouped[ruta_name]
-        doc.add_heading(f'Ruta: {ruta_name}', level=2)
-
-        n_total = len(ruta_clients)
-        n_rent = sum(1 for c in ruta_clients if c['clasificacion'] == 'RENTABLE')
-        n_rev = sum(1 for c in ruta_clients if c['clasificacion'] == 'REVISAR')
-        n_nrent = sum(1 for c in ruta_clients if c['clasificacion'] == 'NO RENTABLE')
-        ahorro_ruta = sum(c['ahorro_mensual'] for c in ruta_clients if c['clasificacion'] == 'NO RENTABLE')
-
-        doc.add_paragraph(
-            f'Total clientes: {n_total} — '
-            f'🟢 {n_rent}  🟡 {n_rev}  🔴 {n_nrent} — '
-            f'Ahorro potencial: {fmt_eur(ahorro_ruta)}/mes'
-        )
-
-        headers = ['ID', 'Nombre', 'Localidad', 'Km base', 'Km incr.', 'Min incr.',
-                   'Fact. €/mes', 'Coste ruta', 'Coste paq.', 'Ahorro', 'Ratio', 'Clasif.']
-
-        rows = []
-        ruta_clients.sort(key=lambda x: x['ahorro_mensual'], reverse=True)
-        for c in ruta_clients:
-            # Extraer localidad del address
-            addr = c.get('address', '') or ''
-            parts = [p.strip() for p in addr.split(',')]
-            localidad = parts[1] if len(parts) > 1 else parts[0] if parts else ''
-            localidad = localidad[:20]
-
-            rows.append([
-                str(c['id']),
-                c['name'][:25],
-                localidad,
-                fmt_num(c['km_desde_base']),
-                fmt_num(c['km_incremental']),
-                fmt_num(c['min_incremental']),
-                fmt_eur(c['facturacion_mensual']),
-                fmt_eur(c['coste_ruta_mensual']),
-                fmt_eur(c['coste_paqueteria_mensual']),
-                fmt_eur(c['ahorro_mensual']),
-                fmt_num(c['ratio']),
-                f"{emoji_clasif(c['clasificacion'])} {c['clasificacion']}"
-            ])
-
-        add_styled_table(doc, headers, rows,
-                         col_widths=[1, 3.5, 2.5, 1.3, 1.3, 1.3, 1.8, 1.6, 1.5, 1.5, 1.1, 2.5],
-                         right_align_from=3)
-
-        doc.add_paragraph()
-
-    doc.add_page_break()
-
-    # ══════════════════════════════════════════════════════════════
-    # 4. CLIENTES RECOMENDADOS PARA PAQUETERÍA
-    # ══════════════════════════════════════════════════════════════
-    doc.add_heading('4. Clientes Recomendados para Paquetería', level=1)
-
-    doc.add_paragraph(
-        f'Se identifican {len(no_rentables)} clientes cuyo coste de distribución por ruta '
-        f'supera el coste de envío por paquetería, con un ahorro total estimado de '
-        f'{fmt_eur(ahorro_mensual)}/mes ({fmt_eur(ahorro_anual)}/año).'
-    )
-
-    if no_rentables:
-        no_rentables.sort(key=lambda x: x['ahorro_mensual'], reverse=True)
-        headers = ['ID', 'Nombre', 'Ruta actual', 'Km base', 'Fact. €/mes',
-                   'Coste ruta', 'Coste paq.', 'Ahorro/mes']
-        rows = []
-        for c in no_rentables:
-            rows.append([
-                str(c['id']),
-                c['name'][:30],
-                c.get('ruta_name', '-'),
-                fmt_num(c['km_desde_base']),
-                fmt_eur(c['facturacion_mensual']),
-                fmt_eur(c['coste_ruta_mensual']),
-                fmt_eur(c['coste_paqueteria_mensual']),
-                fmt_eur(c['ahorro_mensual'])
-            ])
-        add_styled_table(doc, headers, rows,
-                         col_widths=[1, 4, 2.5, 1.5, 2, 2, 2, 2],
-                         right_align_from=3)
-
-        # Agrupado por ruta
-        doc.add_heading('Ahorro agrupado por ruta', level=2)
-        ahorro_ruta = {}
-        count_ruta = {}
-        for c in no_rentables:
-            rn = c.get('ruta_name', 'Sin ruta')
-            ahorro_ruta[rn] = ahorro_ruta.get(rn, 0) + c['ahorro_mensual']
-            count_ruta[rn] = count_ruta.get(rn, 0) + 1
-
-        rows = [[rn, str(count_ruta[rn]), fmt_eur(ahorro_ruta[rn]), fmt_eur(ahorro_ruta[rn]*12)]
-                for rn in sorted(ahorro_ruta.keys())]
-        rows.append(['TOTAL', str(len(no_rentables)), fmt_eur(ahorro_mensual), fmt_eur(ahorro_anual)])
-        add_styled_table(doc, ['Ruta', 'Clientes', 'Ahorro/mes', 'Ahorro/año'], rows,
-                         col_widths=[5, 2, 4, 4], right_align_from=1)
-
-    # Gráfico top 10
-    if charts.get('top10') and Path(charts['top10']).exists():
-        doc.add_paragraph()
-        p = doc.add_paragraph()
-        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        run = p.add_run()
-        run.add_picture(str(charts['top10']), width=Cm(15))
-
-    doc.add_page_break()
-
-    # ══════════════════════════════════════════════════════════════
-    # 5. CLIENTES RECOMENDADOS PARA CAMBIO DE RUTA
-    # ══════════════════════════════════════════════════════════════
-    doc.add_heading('5. Clientes Recomendados para Cambio de Ruta', level=1)
-
-    if cambio_ruta:
-        doc.add_paragraph(
-            f'Se identifican {len(cambio_ruta)} clientes que podrían beneficiarse de un '
-            f'cambio de ruta por cercanía geográfica a otra ruta existente.'
-        )
-        headers = ['ID', 'Nombre', 'Ruta actual', 'Ruta propuesta', 'Km a ruta prop.', 'Clasif.']
-        rows = []
-        for c in cambio_ruta:
-            rows.append([
-                str(c['id']),
-                c['name'][:30],
-                c.get('ruta_name', '-'),
-                c.get('ruta_propuesta', '-'),
-                fmt_num(c.get('dist_a_ruta_propuesta', 0)),
-                f"{emoji_clasif(c['clasificacion'])} {c['clasificacion']}"
-            ])
-        add_styled_table(doc, headers, rows,
-                         col_widths=[1, 4, 3, 3, 2.5, 3],
-                         right_align_from=4)
+            clasif = "NO RENTABLE"
+
+        # Explicación posicional
+        prev_idx, next_idx, orden_parada = pos_in_route.get(idx, (0, 0, 0))
+        km_prev_cli = round(dist_matrix[prev_idx][idx], 2)
+        km_cli_next = round(dist_matrix[idx][next_idx], 2)
+        km_prev_next = round(dist_matrix[prev_idx][next_idx], 2)
+        km_rodeo = round(km_prev_cli + km_cli_next - km_prev_next, 2)
+
+        nombre_prev = _point_name(prev_idx, clientes_ruta, delegacion)
+        nombre_next = _point_name(next_idx, clientes_ruta, delegacion)
+
+        resultados.append({
+            "id": clientes_ruta[ci]["id"],
+            "nombre": clientes_ruta[ci]["name"],
+            "direccion": clientes_ruta[ci].get("address", ""),
+            "lat": float(clientes_ruta[ci]["x"]),
+            "lng": float(clientes_ruta[ci]["y"]),
+            "desvio_km": desvio,
+            "distancia_delegacion_km": base_info[ci]["distancia_delegacion_km"],
+            "vecino_cercano_km": base_info[ci]["vecino_cercano_km"],
+            "clasificacion": clasif,
+            "reasignacion_sugerida": None,
+            "orden_parada": orden_parada,
+            "explicacion": {
+                "anterior": nombre_prev,
+                "siguiente": nombre_next,
+                "km_anterior_cliente": km_prev_cli,
+                "km_cliente_siguiente": km_cli_next,
+                "km_directo": km_prev_next,
+                "km_rodeo": km_rodeo,
+            },
+        })
+
+    # construir waypoints de la ruta óptima (con todos)
+    waypoints_full = [points[i] for i in order_full]
+
+    # ruta sin NO RENTABLE
+    indices_sin_norent = [0]  # depot
+    for ci, res in enumerate(resultados):
+        if res["clasificacion"] != "NO RENTABLE":
+            indices_sin_norent.append(ci + 1)
+
+    if len(indices_sin_norent) > 1:
+        sub_matrix_opt = _build_sub_matrix(dist_matrix, indices_sin_norent)
+        order_opt = optimizer.optimize(sub_matrix_opt, depot_idx=0)
+        km_opt = optimizer.route_distance(order_opt, sub_matrix_opt)
+        waypoints_opt = [points[indices_sin_norent[i]] for i in order_opt]
     else:
-        doc.add_paragraph('No se identifican clientes con beneficio claro de reasignación de ruta.')
+        km_opt = 0.0
+        waypoints_opt = []
 
-    doc.add_page_break()
+    # ruta SOLO RENTABLES (sin NO RENTABLE ni REVISAR)
+    indices_solo_rent = [0]  # depot
+    for ci, res in enumerate(resultados):
+        if res["clasificacion"] == "RENTABLE":
+            indices_solo_rent.append(ci + 1)
 
-    # ══════════════════════════════════════════════════════════════
-    # 6. IMPACTO ECONÓMICO GLOBAL
-    # ══════════════════════════════════════════════════════════════
-    doc.add_heading('6. Impacto Económico Global', level=1)
+    if len(indices_solo_rent) > 1:
+        sub_matrix_strict = _build_sub_matrix(dist_matrix, indices_solo_rent)
+        order_strict = optimizer.optimize(sub_matrix_strict, depot_idx=0)
+        km_strict = optimizer.route_distance(order_strict, sub_matrix_strict)
+        waypoints_strict = [points[indices_solo_rent[i]] for i in order_strict]
+    else:
+        km_strict = 0.0
+        waypoints_strict = []
 
-    km_actual_mes = sum(c['km_incremental'] * 2 * c['frecuencia_mensual'] for c in clients)
-    horas_actual_mes = sum((c['min_incremental'] * 2 + TIEMPO_DESCARGA_MIN) * c['frecuencia_mensual'] for c in clients) / 60
-    coste_actual_mes = sum(c['coste_ruta_mensual'] for c in clients)
+    n_no_rent = sum(1 for r in resultados if r["clasificacion"] == "NO RENTABLE")
+    n_revisar = sum(1 for r in resultados if r["clasificacion"] == "REVISAR")
+    n_rent = sum(1 for r in resultados if r["clasificacion"] == "RENTABLE")
 
-    km_optim_mes = km_actual_mes - km_reduccion_mes
-    horas_optim_mes = horas_actual_mes - horas_liberadas
-    coste_optim_mes = coste_actual_mes - ahorro_mensual + coste_paq_total
+    print(f"  → {n_no_rent} NO RENTABLE, {n_revisar} REVISAR, {n_rent} RENTABLE")
+    print(f"  → Km actual: {km_full} | Sin no rent: {km_opt} | Solo rent: {km_strict}")
 
-    headers = ['Concepto', 'Situación actual', 'Situación optimizada', 'Diferencia']
-    rows = [
-        ['Km totales/mes', fmt_num(km_actual_mes, 0), fmt_num(km_optim_mes, 0),
-         fmt_num(km_actual_mes - km_optim_mes, 0)],
-        ['Horas totales/mes', fmt_num(horas_actual_mes, 0), fmt_num(horas_optim_mes, 0),
-         fmt_num(horas_actual_mes - horas_optim_mes, 0)],
-        ['Coste distribución/mes', fmt_eur(coste_actual_mes), fmt_eur(coste_optim_mes - coste_paq_total),
-         fmt_eur(ahorro_mensual)],
-        ['Coste paquetería/mes', fmt_eur(0), fmt_eur(coste_paq_total), fmt_eur(-coste_paq_total)],
-        ['Coste total/mes', fmt_eur(coste_actual_mes), fmt_eur(coste_optim_mes),
-         fmt_eur(coste_actual_mes - coste_optim_mes)],
-        ['Coste total/año', fmt_eur(coste_actual_mes * 12), fmt_eur(coste_optim_mes * 12),
-         fmt_eur((coste_actual_mes - coste_optim_mes) * 12)],
-    ]
-    add_styled_table(doc, headers, rows, col_widths=[5, 4, 4, 4], right_align_from=1)
+    return {
+        "id": ruta["id"],
+        "nombre": ruta["name"],
+        "delegacion": delegacion["name"],
+        "delegacion_lat": float(delegacion["x"]),
+        "delegacion_lng": float(delegacion["y"]),
+        "km_actual": km_full,
+        "km_optimizado": km_opt,
+        "km_solo_rentables": km_strict,
+        "ahorro_km": round(km_full - km_opt, 2),
+        "ahorro_strict_km": round(km_full - km_strict, 2),
+        "total_clientes": n_clients,
+        "n_rentable": n_rent,
+        "n_revisar": n_revisar,
+        "n_no_rentable": n_no_rent,
+        "clientes": sorted(resultados, key=lambda r: -r["desvio_km"]),
+        "waypoints_full": waypoints_full,
+        "waypoints_opt": waypoints_opt,
+        "waypoints_strict": waypoints_strict,
+    }
 
-    # Gráfico comparativo
-    if charts.get('comparativo') and Path(charts['comparativo']).exists():
-        doc.add_paragraph()
-        p = doc.add_paragraph()
-        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        run = p.add_run()
-        run.add_picture(str(charts['comparativo']), width=Cm(15))
 
-    # Gráfico facturación vs coste
-    if charts.get('dispersion') and Path(charts['dispersion']).exists():
-        doc.add_paragraph()
-        p = doc.add_paragraph()
-        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        run = p.add_run()
-        run.add_picture(str(charts['dispersion']), width=Cm(15))
+# ─── REASIGNACIONES ──────────────────────────────────────────────
 
-    doc.add_page_break()
+def analizar_reasignaciones(datos_rutas, osrm, optimizer):
+    """Para clientes NO RENTABLE / REVISAR, busca si encajan mejor en otra ruta."""
+    print("\nAnalizando reasignaciones posibles...")
+    reasignaciones = []
 
-    # ══════════════════════════════════════════════════════════════
-    # 7. PLAN DE IMPLEMENTACIÓN
-    # ══════════════════════════════════════════════════════════════
-    doc.add_heading('7. Plan de Implementación', level=1)
+    candidatos = []
+    for dr in datos_rutas:
+        for c in dr["clientes"]:
+            if c["clasificacion"] in ("NO RENTABLE", "REVISAR"):
+                candidatos.append((dr, c))
 
-    phases = [
-        ('Fase 1: Comunicación a clientes afectados (Semana 1-2)',
-         'Contactar a los clientes identificados como NO RENTABLES para informarles del '
-         'cambio en el método de entrega. Ofrecer la opción de paquetería con seguimiento '
-         'y mantener el mismo nivel de servicio.'),
-        ('Fase 2: Contratación con empresa de paquetería (Semana 2-3)',
-         'Negociar tarifas con empresas de paquetería (SEUR, MRW, GLS, Correos Express) '
-         'para obtener descuentos por volumen. Objetivo: reducir un 15-20% las tarifas estándar.'),
-        ('Fase 3: Transición gradual (Semana 3-8)',
-         'Implementar el cambio de forma progresiva, empezando por los clientes con mayor '
-         'ahorro potencial. Monitorizar la satisfacción del cliente y ajustar si es necesario.'),
-        ('Fase 4: Seguimiento y ajuste (Mes 3 en adelante)',
-         'Revisar los resultados cada mes. Actualizar el análisis con datos reales de '
-         'facturación y costes de paquetería. Ajustar la clasificación de clientes según evolución.'),
-    ]
+    total_cand = len(candidatos)
+    print(f"  Candidatos a reasignar: {total_cand}")
 
-    for title, desc in phases:
-        doc.add_heading(title, level=2)
-        doc.add_paragraph(desc)
+    for idx_cand, (dr_actual, cliente) in enumerate(candidatos):
+        print(f"  [{idx_cand+1}/{total_cand}] {cliente['nombre']} (ruta: {dr_actual['nombre']}, desvio: {cliente['desvio_km']} km)...", end="", flush=True)
 
-    doc.add_page_break()
+        mejor_ruta = None
+        mejor_desvio = cliente["desvio_km"]
 
-    # ══════════════════════════════════════════════════════════════
-    # ANEXO A1: DATOS COMPLETOS
-    # ══════════════════════════════════════════════════════════════
-    doc.add_heading('Anexo A1: Datos Completos de Todos los Clientes', level=1)
+        for dr_otra in datos_rutas:
+            if dr_otra["id"] == dr_actual["id"]:
+                continue
+            if dr_otra["total_clientes"] < 1:
+                continue
 
-    # Cambiar a horizontal para tabla ancha
-    new_section = doc.add_section(2)  # WD_SECTION.NEW_PAGE -> continuous
-    new_section.orientation = WD_ORIENT.LANDSCAPE
-    new_section.page_width = Cm(29.7)
-    new_section.page_height = Cm(21)
-    new_section.left_margin = Cm(1.5)
-    new_section.right_margin = Cm(1.5)
+            # Pre-filtro Haversine a delegación: si en línea recta ya está lejos, skip
+            hav_deleg = OSRMClient.haversine(
+                cliente["lat"], cliente["lng"],
+                dr_otra["delegacion_lat"], dr_otra["delegacion_lng"],
+            )
+            if hav_deleg > mejor_desvio * 3:
+                continue
 
-    headers = ['ID', 'Nombre', 'Ruta', 'Km base', 'Min base', 'Km incr.', 'Min incr.',
-               'Fact. €/mes', 'Freq/mes', 'Peso kg', 'Coste ruta', 'Coste paq.', 'Ahorro', 'Ratio', 'Clasif.']
+            # Buscar vecino más cercano con pre-filtro Haversine
+            min_vecino = float("inf")
+            for c2 in dr_otra["clientes"]:
+                # Haversine rápido primero
+                hav = OSRMClient.haversine(cliente["lat"], cliente["lng"], c2["lat"], c2["lng"])
+                if hav * 2 >= min_vecino:
+                    continue  # no puede mejorar
+                d, _ = osrm.get_distance(
+                    cliente["lat"], cliente["lng"], c2["lat"], c2["lng"],
+                )
+                if d < min_vecino:
+                    min_vecino = d
 
-    sorted_clients = sorted(clients, key=lambda x: (x.get('ruta_name', ''), -x['ahorro_mensual']))
-    rows = []
-    for c in sorted_clients:
-        rows.append([
-            str(c['id']),
-            c['name'][:22],
-            (c.get('ruta_name') or '-')[:12],
-            fmt_num(c['km_desde_base']),
-            fmt_num(c['min_desde_base']),
-            fmt_num(c['km_incremental']),
-            fmt_num(c['min_incremental']),
-            fmt_eur(c['facturacion_mensual']),
-            str(c['frecuencia_mensual']),
-            fmt_num(c['peso_medio_kg']),
-            fmt_eur(c['coste_ruta_mensual']),
-            fmt_eur(c['coste_paqueteria_mensual']),
-            fmt_eur(c['ahorro_mensual']),
-            fmt_num(c['ratio']),
-            f"{emoji_clasif(c['clasificacion'])}"
-        ])
+            desvio_estimado = round(min_vecino * 2, 2)
 
-    add_styled_table(doc, headers, rows,
-                     col_widths=[0.9, 3.2, 1.8, 1.2, 1.2, 1.2, 1.2, 1.7, 1, 1.1, 1.5, 1.4, 1.4, 1, 1],
-                     right_align_from=3)
+            if desvio_estimado < mejor_desvio:
+                mejor_desvio = desvio_estimado
+                mejor_ruta = dr_otra
 
-    doc.add_page_break()
+        if mejor_ruta and mejor_desvio < cliente["desvio_km"]:
+            print(f" -> reasignar a '{mejor_ruta['nombre']}' ({mejor_desvio} km)", flush=True)
+            reasig = {
+                "cliente_id": cliente["id"],
+                "nombre": cliente["nombre"],
+                "ruta_actual": dr_actual["nombre"],
+                "desvio_actual": cliente["desvio_km"],
+                "ruta_sugerida": mejor_ruta["nombre"],
+                "desvio_nuevo": mejor_desvio,
+                "ahorro_km": round(cliente["desvio_km"] - mejor_desvio, 2),
+            }
+        else:
+            print(f" -> sin mejora", flush=True)
+            reasig = None
 
-    # ══════════════════════════════════════════════════════════════
-    # ANEXO A3: PARÁMETROS
-    # ══════════════════════════════════════════════════════════════
-    # Volver a vertical
-    new_section2 = doc.add_section(2)
-    new_section2.orientation = WD_ORIENT.PORTRAIT
-    new_section2.page_width = Cm(21)
-    new_section2.page_height = Cm(29.7)
+        if reasig:
+            reasignaciones.append(reasig)
 
-    doc.add_heading('Anexo A3: Parámetros de Cálculo', level=1)
+            # actualizar en datos del cliente
+            cliente["reasignacion_sugerida"] = {
+                "ruta": mejor_ruta["nombre"],
+                "desvio": mejor_desvio,
+            }
 
-    params_full = [
-        ('Base de operaciones', 'Veraleza Tomiño', '41.9945°N, 8.7399°W'),
-        ('Coste por km', '0,35 €', 'Gasóleo + desgaste + seguro'),
-        ('Coste por hora conductor', '18,00 €', 'Salario bruto + SS'),
-        ('Tiempo descarga por cliente', '20 minutos', 'Media estimada'),
-        ('Motor de routing', 'OSRM', 'Open Source Routing Machine'),
-        ('Datos cartográficos', 'OpenStreetMap', 'Actualización continua'),
-        ('Clientes analizados', str(len(clients)), 'Activos con coordenadas'),
-        ('Rutas analizadas', str(len(rutas_grouped)), ''),
-        ('Fecha del análisis', datetime.now().strftime('%d/%m/%Y'), ''),
-    ]
-    add_styled_table(doc, ['Parámetro', 'Valor', 'Notas'], params_full,
-                     col_widths=[6, 4, 7], right_align_from=99)
+    reasignaciones.sort(key=lambda x: -x["ahorro_km"])
+    print(f"  → {len(reasignaciones)} reasignaciones sugeridas")
+    return reasignaciones
 
-    # ── Guardar ──
-    output_path = OUTPUT_DIR / 'informe_optimizacion_rutas_veraleza.docx'
-    doc.save(str(output_path))
-    return output_path
+
+# ─── OBTENER GEOMETRÍAS OSRM ─────────────────────────────────────
+
+def obtener_geometrias(datos_rutas, osrm):
+    """Obtiene geometrías de ruta real OSRM para mapas."""
+    print("\nObteniendo geometrías de ruta OSRM para mapas...")
+    for dr in datos_rutas:
+        if len(dr["waypoints_full"]) >= 2:
+            print(f"  Geometría ruta '{dr['nombre']}' (actual)...")
+            dr["geometria_actual"] = osrm.get_route_geometry(dr["waypoints_full"])
+            time.sleep(OSRM_DELAY)
+        else:
+            dr["geometria_actual"] = []
+
+        if len(dr["waypoints_opt"]) >= 2:
+            print(f"  Geometría ruta '{dr['nombre']}' (sin no rentables)...")
+            dr["geometria_optimizada"] = osrm.get_route_geometry(dr["waypoints_opt"])
+            time.sleep(OSRM_DELAY)
+        else:
+            dr["geometria_optimizada"] = []
+
+        if len(dr["waypoints_strict"]) >= 2:
+            print(f"  Geometría ruta '{dr['nombre']}' (solo rentables)...")
+            dr["geometria_strict"] = osrm.get_route_geometry(dr["waypoints_strict"])
+            time.sleep(OSRM_DELAY)
+        else:
+            dr["geometria_strict"] = []
+
+
+# ─── GENERACIÓN HTML ─────────────────────────────────────────────
+
+def generar_html(datos_rutas, reasignaciones, delegaciones):
+    """Genera el HTML interactivo completo."""
+
+    total_clientes = sum(d["total_clientes"] for d in datos_rutas)
+    total_rent = sum(d["n_rentable"] for d in datos_rutas)
+    total_rev = sum(d["n_revisar"] for d in datos_rutas)
+    total_no = sum(d["n_no_rentable"] for d in datos_rutas)
+    km_actual = round(sum(d["km_actual"] for d in datos_rutas), 1)
+    km_opt = round(sum(d["km_optimizado"] for d in datos_rutas), 1)
+    ahorro = round(km_actual - km_opt, 1)
+    ahorro_pct = round((ahorro / km_actual * 100) if km_actual > 0 else 0, 1)
+    ahorro_anual = round(ahorro * 250, 0)  # 250 días laborables
+
+    fecha = datetime.now().strftime("%d/%m/%Y %H:%M")
+
+    # serializar datos para JS
+    js_data = json.dumps({
+        "rutas": [{
+            "id": d["id"],
+            "nombre": d["nombre"],
+            "delegacion": d["delegacion"],
+            "deleg_lat": d["delegacion_lat"],
+            "deleg_lng": d["delegacion_lng"],
+            "km_actual": d["km_actual"],
+            "km_optimizado": d["km_optimizado"],
+            "geometria_actual": d.get("geometria_actual", []),
+            "geometria_optimizada": d.get("geometria_optimizada", []),
+            "geometria_strict": d.get("geometria_strict", []),
+            "km_solo_rentables": d.get("km_solo_rentables", 0),
+            "clientes": d["clientes"],
+            "color": RUTA_COLORS[i % len(RUTA_COLORS)],
+        } for i, d in enumerate(datos_rutas)],
+        "delegaciones": [{
+            "id": d["id"], "nombre": d["name"],
+            "lat": float(d["x"]), "lng": float(d["y"]),
+        } for d in delegaciones],
+    }, ensure_ascii=False)
+
+    # ── construir tablas por ruta
+    secciones_rutas = ""
+    for idx, dr in enumerate(datos_rutas):
+        color = RUTA_COLORS[idx % len(RUTA_COLORS)]
+        ahorro_r = dr["ahorro_km"]
+        pct_r = round((ahorro_r / dr["km_actual"] * 100) if dr["km_actual"] > 0 else 0, 1)
+
+        filas = ""
+        for i, c in enumerate(dr["clientes"]):
+            bg = "#fef9f9" if c["clasificacion"] == "NO RENTABLE" else (
+                "#fefbf3" if c["clasificacion"] == "REVISAR" else "#f0faf4"
+            )
+            badge_color = CLASIF_COLORS[c["clasificacion"]]
+            reasig_cell = ""
+            if c["reasignacion_sugerida"]:
+                reasig_cell = f'<span class="badge" style="background:{RUTA_COLORS[0]}">{c["reasignacion_sugerida"]["ruta"]} ({c["reasignacion_sugerida"]["desvio"]} km)</span>'
+            else:
+                reasig_cell = "—"
+
+            filas += f"""<tr style="background:{bg}">
+                <td>{i+1}</td>
+                <td><strong>{c["nombre"]}</strong></td>
+                <td class="addr">{c["direccion"]}</td>
+                <td class="num">{c["desvio_km"]}</td>
+                <td class="num">{c["distancia_delegacion_km"]}</td>
+                <td class="num">{c["vecino_cercano_km"]}</td>
+                <td><span class="badge" style="background:{badge_color}">{c["clasificacion"]}</span></td>
+                <td>{reasig_cell}</td>
+            </tr>"""
+
+        secciones_rutas += f"""
+        <div class="ruta-section" id="ruta-{dr['id']}">
+            <div class="ruta-header" style="border-left: 5px solid {color}">
+                <h2>{dr['nombre']}</h2>
+                <div class="ruta-meta">
+                    <span>Delegación: <strong>{dr['delegacion']}</strong></span>
+                    <span>Clientes: <strong>{dr['total_clientes']}</strong></span>
+                    <span style="color:#2ecc71">Rentables: <strong>{dr['n_rentable']}</strong></span>
+                    <span style="color:#f39c12">Revisar: <strong>{dr['n_revisar']}</strong></span>
+                    <span style="color:#e74c3c">No rentables: <strong>{dr['n_no_rentable']}</strong></span>
+                </div>
+                <div class="ruta-kpis">
+                    <div class="mini-kpi">
+                        <span class="mini-val">{dr['km_actual']} km</span>
+                        <span class="mini-label">Ruta actual</span>
+                    </div>
+                    <div class="mini-kpi">
+                        <span class="mini-val">{dr['km_optimizado']} km</span>
+                        <span class="mini-label">Sin no rentables</span>
+                    </div>
+                    <div class="mini-kpi highlight">
+                        <span class="mini-val">-{ahorro_r} km</span>
+                        <span class="mini-label">Ahorro ({pct_r}%)</span>
+                    </div>
+                </div>
+            </div>
+            <div class="map-container" id="map-ruta-{dr['id']}" style="height:500px"></div>
+            <div class="map-controls">
+                <label><input type="radio" name="ruta-view-{dr['id']}" class="toggle-vista" data-ruta="{dr['id']}" data-vista="actual" checked> <span style="color:{color}">&#9632;</span> Ruta actual ({dr['km_actual']} km)</label>
+                &nbsp;&nbsp;
+                <label><input type="radio" name="ruta-view-{dr['id']}" class="toggle-vista" data-ruta="{dr['id']}" data-vista="optimizada"> <span style="color:#2ecc71">&#9632;</span> Sin no rentables ({dr['km_optimizado']} km)</label>
+                &nbsp;&nbsp;
+                <label><input type="radio" name="ruta-view-{dr['id']}" class="toggle-vista" data-ruta="{dr['id']}" data-vista="strict"> <span style="color:#3498db">&#9632;</span> Solo rentables ({dr['km_solo_rentables']} km)</label>
+            </div>
+            <div class="table-wrapper">
+                <input type="text" class="table-filter" data-table="table-{dr['id']}" placeholder="Buscar cliente...">
+                <table class="data-table" id="table-{dr['id']}">
+                    <thead>
+                        <tr>
+                            <th>#</th><th>Cliente</th><th>Dirección</th>
+                            <th>Desvío (km)</th><th>Dist. Deleg. (km)</th>
+                            <th>Vecino cercano (km)</th><th>Clasificación</th>
+                            <th>Reasignación</th>
+                        </tr>
+                    </thead>
+                    <tbody>{filas}</tbody>
+                </table>
+            </div>
+        </div>"""
+
+    # ── tabla reasignaciones
+    filas_reasig = ""
+    for r in reasignaciones:
+        filas_reasig += f"""<tr>
+            <td><strong>{r['nombre']}</strong></td>
+            <td>{r['ruta_actual']}</td>
+            <td class="num">{r['desvio_actual']}</td>
+            <td style="color:#2ecc71"><strong>{r['ruta_sugerida']}</strong></td>
+            <td class="num">{r['desvio_nuevo']}</td>
+            <td class="num" style="color:#2ecc71"><strong>-{r['ahorro_km']}</strong></td>
+        </tr>"""
+
+    html = f"""<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Informe de Rentabilidad de Rutas</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet-polylinedecorator@1.6.0/dist/leaflet.polylineDecorator.js"></script>
+<style>
+:root {{
+    --vz-negro: #10180e;
+    --vz-marron1: #46331f;
+    --vz-marron2: #85725e;
+    --vz-crema: #e5e2dc;
+    --vz-verde: #8e8b30;
+    --vz-rojo: #c83c32;
+    --vz-amarillo: #d4a830;
+    --vz-blanco: #ffffff;
+    --vz-verde-suave: rgba(142, 139, 48, 0.1);
+}}
+* {{ margin:0; padding:0; box-sizing:border-box; }}
+body {{ font-family: system-ui, -apple-system, 'Segoe UI', sans-serif; background: var(--vz-crema); color: var(--vz-negro); }}
+.header {{
+    background: var(--vz-verde);
+    color: var(--vz-crema); padding: 40px 20px; text-align: center;
+    border-bottom: 3px solid var(--vz-marron1);
+    box-shadow: 0 2px 8px rgba(16, 24, 14, 0.15);
+}}
+.header h1 {{ font-size: 2em; margin-bottom: 8px; }}
+.header .subtitle {{ opacity: 0.85; font-size: 1.1em; }}
+.container {{ max-width: 1300px; margin: 0 auto; padding: 20px; }}
+
+/* KPIs */
+.kpi-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin: 30px 0; }}
+.kpi-card {{
+    background: var(--vz-blanco); border-radius: 12px; padding: 24px 20px;
+    text-align: center; box-shadow: 0 2px 8px rgba(16, 24, 14, 0.08);
+    border: 1px solid var(--vz-marron2);
+}}
+.kpi-card .kpi-val {{ font-size: 2em; font-weight: 700; }}
+.kpi-card .kpi-label {{ font-size: 0.85em; color: var(--vz-marron2); margin-top: 4px; }}
+.kpi-card.green .kpi-val {{ color: var(--vz-verde); }}
+.kpi-card.orange .kpi-val {{ color: var(--vz-amarillo); }}
+.kpi-card.red .kpi-val {{ color: var(--vz-rojo); }}
+.kpi-card.blue .kpi-val {{ color: var(--vz-marron1); }}
+
+/* Mapa global */
+.map-global {{ height: 550px; border-radius: 12px; overflow: hidden; box-shadow: 0 2px 8px rgba(16, 24, 14, 0.1); margin: 20px 0; border: 1px solid var(--vz-marron2); }}
+
+/* Secciones ruta */
+.ruta-section {{ background: var(--vz-blanco); border-radius: 12px; margin: 30px 0; box-shadow: 0 2px 8px rgba(16, 24, 14, 0.08); overflow: hidden; border: 1px solid var(--vz-marron2); }}
+.ruta-header {{ padding: 24px; }}
+.ruta-header h2 {{ font-size: 1.5em; margin-bottom: 10px; color: var(--vz-marron1); }}
+.ruta-meta {{ display: flex; gap: 20px; flex-wrap: wrap; font-size: 0.95em; margin-bottom: 16px; }}
+.ruta-kpis {{ display: flex; gap: 20px; flex-wrap: wrap; }}
+.mini-kpi {{ background: var(--vz-crema); border-radius: 8px; padding: 12px 20px; text-align: center; border: 1px solid var(--vz-marron2); }}
+.mini-kpi .mini-val {{ font-size: 1.3em; font-weight: 700; display: block; color: var(--vz-marron1); }}
+.mini-kpi .mini-label {{ font-size: 0.8em; color: var(--vz-marron2); }}
+.mini-kpi.highlight {{ background: var(--vz-verde-suave); border-color: var(--vz-verde); }}
+.mini-kpi.highlight .mini-val {{ color: var(--vz-verde); }}
+
+.map-container {{ border-top: 1px solid var(--vz-marron2); }}
+.map-controls {{ padding: 10px 24px; background: var(--vz-crema); border-bottom: 1px solid var(--vz-marron2); font-size: 0.9em; }}
+
+/* Tablas */
+.table-wrapper {{ padding: 20px 24px; }}
+.table-filter {{
+    width: 100%; padding: 10px 16px; border: 1px solid var(--vz-marron2); border-radius: 8px;
+    font-size: 0.95em; margin-bottom: 12px; outline: none; background: var(--vz-blanco);
+}}
+.table-filter:focus {{ border-color: var(--vz-verde); box-shadow: 0 0 0 3px rgba(142, 139, 48, 0.15); }}
+.data-table {{ width: 100%; border-collapse: collapse; font-size: 0.9em; }}
+.data-table th {{
+    background: var(--vz-verde); color: var(--vz-crema); padding: 12px 10px; text-align: left;
+    position: sticky; top: 0;
+}}
+.data-table td {{ padding: 10px; border-bottom: 1px solid var(--vz-crema); }}
+.data-table .num {{ text-align: right; font-variant-numeric: tabular-nums; }}
+.data-table .addr {{ max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.85em; color: var(--vz-marron2); }}
+.badge {{
+    display: inline-block; padding: 3px 10px; border-radius: 12px;
+    color: white; font-size: 0.8em; font-weight: 600;
+}}
+
+/* Reasignaciones */
+.reasig-section {{ background: var(--vz-blanco); border-radius: 12px; padding: 24px; margin: 30px 0; box-shadow: 0 2px 8px rgba(16, 24, 14, 0.08); border: 1px solid var(--vz-marron2); }}
+.reasig-section h2 {{ margin-bottom: 16px; color: var(--vz-marron1); }}
+
+/* Conclusiones */
+.conclusiones {{ background: var(--vz-blanco); border-radius: 12px; padding: 30px; margin: 30px 0; box-shadow: 0 2px 8px rgba(16, 24, 14, 0.08); line-height: 1.7; border: 1px solid var(--vz-marron2); }}
+.conclusiones h2 {{ margin-bottom: 16px; color: var(--vz-marron1); }}
+.conclusiones .highlight-num {{ font-weight: 700; color: var(--vz-rojo); }}
+.conclusiones .highlight-save {{ font-weight: 700; color: var(--vz-verde); }}
+
+/* Nav rutas */
+.nav-rutas {{ display: flex; gap: 10px; flex-wrap: wrap; margin: 20px 0; }}
+.nav-rutas a {{
+    padding: 8px 16px; border-radius: 8px; background: var(--vz-blanco);
+    text-decoration: none; color: var(--vz-marron1); font-size: 0.9em;
+    box-shadow: 0 1px 4px rgba(16, 24, 14, 0.08); border: 1px solid var(--vz-marron2); transition: all 0.2s;
+}}
+.nav-rutas a:hover {{ background: var(--vz-verde); color: var(--vz-crema); border-color: var(--vz-verde); }}
+
+/* Print */
+@media print {{
+    .map-controls, .table-filter, .nav-rutas {{ display: none; }}
+    .ruta-section, .kpi-card {{ break-inside: avoid; }}
+}}
+
+/* Leyenda */
+.legend {{
+    background: var(--vz-blanco); padding: 12px 16px; border-radius: 8px;
+    box-shadow: 0 1px 6px rgba(16, 24, 14, 0.15); line-height: 1.8; font-size: 0.85em;
+    border: 1px solid var(--vz-marron2);
+}}
+.legend-dot {{
+    display: inline-block; width: 12px; height: 12px; border-radius: 50%;
+    margin-right: 6px; vertical-align: middle;
+}}
+</style>
+</head>
+<body>
+
+<div class="header">
+    <h1>Informe de Rentabilidad de Rutas</h1>
+    <div class="subtitle">Análisis por distancia de desvío — Generado por Diego Lima González — {fecha}</div>
+</div>
+
+<div class="container">
+
+    <!-- KPIs -->
+    <div class="kpi-grid">
+        <div class="kpi-card blue">
+            <div class="kpi-val">{total_clientes}</div>
+            <div class="kpi-label">Clientes analizados</div>
+        </div>
+        <div class="kpi-card green">
+            <div class="kpi-val">{total_rent}</div>
+            <div class="kpi-label">Rentables ({round(total_rent/total_clientes*100) if total_clientes else 0}%)</div>
+        </div>
+        <div class="kpi-card orange">
+            <div class="kpi-val">{total_rev}</div>
+            <div class="kpi-label">Revisar ({round(total_rev/total_clientes*100) if total_clientes else 0}%)</div>
+        </div>
+        <div class="kpi-card red">
+            <div class="kpi-val">{total_no}</div>
+            <div class="kpi-label">No rentables ({round(total_no/total_clientes*100) if total_clientes else 0}%)</div>
+        </div>
+        <div class="kpi-card">
+            <div class="kpi-val">{km_actual}</div>
+            <div class="kpi-label">Km totales actuales</div>
+        </div>
+        <div class="kpi-card">
+            <div class="kpi-val">{km_opt}</div>
+            <div class="kpi-label">Km sin no rentables</div>
+        </div>
+        <div class="kpi-card green">
+            <div class="kpi-val">-{ahorro} km</div>
+            <div class="kpi-label">Ahorro por jornada ({ahorro_pct}%)</div>
+        </div>
+        <div class="kpi-card green">
+            <div class="kpi-val">-{int(ahorro_anual)} km</div>
+            <div class="kpi-label">Ahorro estimado anual</div>
+        </div>
+    </div>
+
+    <!-- Navegación rutas -->
+    <h2>Rutas analizadas</h2>
+    <div class="nav-rutas">
+        {"".join(f'<a href="#ruta-{d["id"]}">{d["nombre"]} ({d["n_no_rentable"]} no rent.)</a>' for d in datos_rutas)}
+    </div>
+
+    <!-- Mapa global -->
+    <h2 style="margin-top:30px">Mapa general</h2>
+    <div class="map-global" id="map-global"></div>
+    <div style="padding:10px 0">
+        <label><input type="checkbox" id="toggle-global-norent" checked> Mostrar clientes no rentables</label>
+    </div>
+
+    <!-- Secciones por ruta -->
+    {secciones_rutas}
+
+    <!-- Reasignaciones -->
+    <div class="reasig-section" id="reasignaciones">
+        <h2>Reasignaciones sugeridas</h2>
+        <p style="margin-bottom:16px; color:#7f8c8d;">Clientes que generarían menor desvío si se movieran a otra ruta.</p>
+        {"<p><em>No se encontraron reasignaciones beneficiosas.</em></p>" if not reasignaciones else f'''
+        <table class="data-table">
+            <thead><tr>
+                <th>Cliente</th><th>Ruta actual</th><th>Desvío actual (km)</th>
+                <th>Ruta sugerida</th><th>Desvío nuevo (km)</th><th>Ahorro (km)</th>
+            </tr></thead>
+            <tbody>{filas_reasig}</tbody>
+        </table>'''}
+    </div>
+
+    <!-- Conclusiones -->
+    <div class="conclusiones">
+        <h2>Conclusiones</h2>
+        <p>Se han analizado <strong>{total_clientes} clientes activos</strong> distribuidos en <strong>{len(datos_rutas)} rutas comerciales</strong>.</p>
+        <p>Se identificaron <span class="highlight-num">{total_no} clientes no rentables</span> que generan un sobrecoste de
+           <span class="highlight-num">{ahorro} km adicionales por jornada</span> en las rutas de reparto.</p>
+        <p>Eliminando estos clientes de las rutas, el <span class="highlight-save">ahorro anual estimado sería de {int(ahorro_anual)} km</span>
+           (basado en 250 jornadas laborables).</p>
+        {"<p>Además, se sugiere la <strong>reasignación de " + str(len(reasignaciones)) + " clientes</strong> a rutas donde generarían menor desvío, como alternativa a la paquetería.</p>" if reasignaciones else ""}
+        <p>Los <span class="highlight-num">{total_no} clientes restantes</span> que no admiten reasignación deberían evaluarse para
+           <strong>envío por paquetería</strong>, lo que reduciría costes de transporte sin perder cobertura comercial.</p>
+        <p style="margin-top:16px; font-size:0.9em; color:#95a5a6;">
+            Nota: Este análisis se basa exclusivamente en distancias por carretera (OSRM).
+            No incluye datos de facturación, frecuencia de pedidos ni costes de paquetería.
+            Los umbrales utilizados son: Rentable &lt; {UMBRAL_RENTABLE} km desvío,
+            Revisar {UMBRAL_RENTABLE}-{UMBRAL_REVISAR} km, No rentable &gt; {UMBRAL_REVISAR} km.
+        </p>
+    </div>
+</div>
+
+<script>
+const DATA = {js_data};
+const CLASIF_COLORS = {json.dumps(CLASIF_COLORS)};
+
+function createMarkerIcon(color, size) {{
+    return L.divIcon({{
+        className: '',
+        html: '<div style="background:'+color+';width:'+size+'px;height:'+size+'px;border-radius:50%;border:2px solid white;box-shadow:0 1px 4px rgba(0,0,0,0.3)"></div>',
+        iconSize: [size, size],
+        iconAnchor: [size/2, size/2],
+        popupAnchor: [0, -size/2],
+    }});
+}}
+
+function createDepotIcon() {{
+    return L.divIcon({{
+        className: '',
+        html: '<div style="background:#1a1a2e;width:20px;height:20px;border-radius:4px;border:3px solid #f1c40f;box-shadow:0 2px 6px rgba(0,0,0,0.4)"></div>',
+        iconSize: [20, 20],
+        iconAnchor: [10, 10],
+        popupAnchor: [0, -12],
+    }});
+}}
+
+function addArrows(polyline, map, color) {{
+    return L.polylineDecorator(polyline, {{
+        patterns: [{{
+            offset: 30, repeat: 120,
+            symbol: L.Symbol.arrowHead({{
+                pixelSize: 8, polygon: true, headAngle: 40,
+                pathOptions: {{fillOpacity: 0.85, weight: 0, color: color, fillColor: color}}
+            }})
+        }}]
+    }}).addTo(map);
+}}
+
+// ── Mapa Global ──
+(function() {{
+    const map = L.map('map-global').setView([42.3, -8.2], 9);
+    L.tileLayer('https://{{s}}.basemaps.cartocdn.com/rastertiles/voyager/{{z}}/{{x}}/{{y}}{{r}}.png', {{
+        attribution: '&copy; <a href="https://carto.com/">CARTO</a> &copy; <a href="https://www.openstreetmap.org/copyright">OSM</a>'
+    }}).addTo(map);
+
+    const allMarkers = [];
+    const noRentMarkers = [];
+    const routeLines = [];
+    const routeLinesOpt = [];
+    const routeArrows = [];
+    const routeArrowsOpt = [];
+
+    // delegaciones
+    DATA.delegaciones.forEach(d => {{
+        L.marker([d.lat, d.lng], {{icon: createDepotIcon()}})
+         .bindPopup('<strong>'+d.nombre+'</strong><br>Delegación')
+         .addTo(map);
+    }});
+
+    // rutas
+    DATA.rutas.forEach((ruta, ri) => {{
+        // polyline actual
+        if (ruta.geometria_actual.length > 1) {{
+            const line = L.polyline(ruta.geometria_actual, {{color: ruta.color, weight: 3, opacity: 0.7}}).addTo(map);
+            routeLines.push(line);
+            routeArrows.push(addArrows(line, map, ruta.color));
+        }}
+        // polyline optimizada (oculta inicialmente)
+        if (ruta.geometria_optimizada.length > 1) {{
+            const lineOpt = L.polyline(ruta.geometria_optimizada, {{color: ruta.color, weight: 4, opacity: 0.9, dashArray: '8,6'}});
+            routeLinesOpt.push(lineOpt);
+        }}
+
+        ruta.clientes.forEach(c => {{
+            const color = CLASIF_COLORS[c.clasificacion];
+            let popupHtml =
+                '<strong>'+c.nombre+'</strong><br>'+
+                'Ruta: '+ruta.nombre+'<br>'+
+                'Desvío: '+c.desvio_km+' km<br>'+
+                'Clasificación: <span style="color:'+color+';font-weight:700">'+c.clasificacion+'</span>';
+            if (c.explicacion && c.clasificacion !== 'RENTABLE') {{
+                const e = c.explicacion;
+                popupHtml +=
+                    '<hr style="margin:6px 0;border:0;border-top:1px solid #ccc">'+
+                    '<strong style="font-size:0.85em">Por qué este desvío:</strong><br>'+
+                    '<span style="font-size:0.82em">'+
+                    'Parada #'+c.orden_parada+' en la ruta<br>'+
+                    'Anterior: <strong>'+e.anterior+'</strong><br>'+
+                    'Siguiente: <strong>'+e.siguiente+'</strong><br>'+
+                    e.anterior+' → este cliente: <strong>'+e.km_anterior_cliente+' km</strong><br>'+
+                    'Este cliente → '+e.siguiente+': <strong>'+e.km_cliente_siguiente+' km</strong><br>'+
+                    'Ruta directa sin parar: <strong>'+e.km_directo+' km</strong><br>'+
+                    'Rodeo: <strong style="color:#c83c32">+'+e.km_rodeo+' km</strong>'+
+                    '</span>';
+            }}
+            const m = L.marker([c.lat, c.lng], {{icon: createMarkerIcon(color, 12)}})
+                .bindPopup(popupHtml, {{maxWidth: 320}})
+                .addTo(map);
+            allMarkers.push(m);
+            if (c.clasificacion === 'NO RENTABLE') noRentMarkers.push(m);
+        }});
+    }});
+
+    // leyenda
+    const legend = L.control({{position: 'bottomright'}});
+    legend.onAdd = function() {{
+        const div = L.DomUtil.create('div', 'legend');
+        div.innerHTML =
+            '<strong>Clasificación</strong><br>'+
+            '<span class="legend-dot" style="background:#2ecc71"></span>Rentable (&lt;{UMBRAL_RENTABLE} km)<br>'+
+            '<span class="legend-dot" style="background:#f39c12"></span>Revisar ({UMBRAL_RENTABLE}-{UMBRAL_REVISAR} km)<br>'+
+            '<span class="legend-dot" style="background:#e74c3c"></span>No rentable (&gt;{UMBRAL_REVISAR} km)<br>'+
+            '<span class="legend-dot" style="background:#1a1a2e;border-radius:3px"></span>Delegación';
+        return div;
+    }};
+    legend.addTo(map);
+
+    // auto-fit
+    const allPoints = [];
+    DATA.rutas.forEach(r => r.clientes.forEach(c => allPoints.push([c.lat, c.lng])));
+    DATA.delegaciones.forEach(d => allPoints.push([d.lat, d.lng]));
+    if (allPoints.length) map.fitBounds(allPoints);
+
+    // toggle no rentables global
+    document.getElementById('toggle-global-norent').addEventListener('change', function() {{
+        const show = this.checked;
+        noRentMarkers.forEach(m => {{ if(show) m.addTo(map); else map.removeLayer(m); }});
+        routeLines.forEach(l => {{ if(show) l.addTo(map); else map.removeLayer(l); }});
+        routeArrows.forEach(a => {{ if(show) a.addTo(map); else map.removeLayer(a); }});
+        routeLinesOpt.forEach(l => {{ if(show) map.removeLayer(l); else l.addTo(map); }});
+        routeArrowsOpt.forEach(a => {{ if(show) map.removeLayer(a); else a.addTo(map); }});
+    }});
+}})();
+
+// ── Mapas por ruta ──
+DATA.rutas.forEach((ruta, ri) => {{
+    const mapDiv = document.getElementById('map-ruta-' + ruta.id);
+    if (!mapDiv) return;
+
+    const map = L.map(mapDiv).setView([ruta.deleg_lat, ruta.deleg_lng], 10);
+    L.tileLayer('https://{{s}}.basemaps.cartocdn.com/rastertiles/voyager/{{z}}/{{x}}/{{y}}{{r}}.png', {{
+        attribution: '&copy; <a href="https://carto.com/">CARTO</a> &copy; <a href="https://www.openstreetmap.org/copyright">OSM</a>'
+    }}).addTo(map);
+
+    // delegación
+    L.marker([ruta.deleg_lat, ruta.deleg_lng], {{icon: createDepotIcon()}})
+     .bindPopup('<strong>'+ruta.delegacion+'</strong><br>Delegación')
+     .addTo(map);
+
+    const noRentMarkers = [];
+    const revisarMarkers = [];
+    const rentMarkers = [];
+    let lineActual = null, arrowsActual = null;
+    let lineOpt = null, arrowsOpt = null;
+    let lineStrict = null, arrowsStrict = null;
+
+    // polyline ruta actual (visible por defecto)
+    if (ruta.geometria_actual.length > 1) {{
+        lineActual = L.polyline(ruta.geometria_actual, {{color: ruta.color, weight: 4, opacity: 0.8}}).addTo(map);
+        arrowsActual = addArrows(lineActual, map, ruta.color);
+    }}
+    // polyline sin no rentables (oculta)
+    if (ruta.geometria_optimizada.length > 1) {{
+        lineOpt = L.polyline(ruta.geometria_optimizada, {{color: '#2ecc71', weight: 4, opacity: 0.8}});
+        arrowsOpt = addArrows(lineOpt, map, '#2ecc71');
+        map.removeLayer(arrowsOpt);
+    }}
+    // polyline solo rentables (oculta)
+    if (ruta.geometria_strict.length > 1) {{
+        lineStrict = L.polyline(ruta.geometria_strict, {{color: '#3498db', weight: 4, opacity: 0.8}});
+        arrowsStrict = addArrows(lineStrict, map, '#3498db');
+        map.removeLayer(arrowsStrict);
+    }}
+
+    // clientes
+    const bounds = [[ruta.deleg_lat, ruta.deleg_lng]];
+    ruta.clientes.forEach(c => {{
+        const color = CLASIF_COLORS[c.clasificacion];
+        let popupHtml =
+            '<strong>'+c.nombre+'</strong><br>'+
+            'Desvío: <strong>'+c.desvio_km+' km</strong><br>'+
+            'Dist. delegación: '+c.distancia_delegacion_km+' km<br>'+
+            'Vecino cercano: '+c.vecino_cercano_km+' km<br>'+
+            '<span style="color:'+color+';font-weight:700">'+c.clasificacion+'</span>'+
+            (c.reasignacion_sugerida ? '<br>Reasignar a: <strong>'+c.reasignacion_sugerida.ruta+'</strong>' : '');
+        if (c.explicacion) {{
+            const e = c.explicacion;
+            popupHtml +=
+                '<hr style="margin:6px 0;border:0;border-top:1px solid #ccc">'+
+                '<strong style="font-size:0.85em">Desglose del desvío:</strong><br>'+
+                '<span style="font-size:0.82em">'+
+                'Parada #'+c.orden_parada+' en la ruta<br>'+
+                '<strong>'+e.anterior+'</strong> → este cliente: '+e.km_anterior_cliente+' km<br>'+
+                'Este cliente → <strong>'+e.siguiente+'</strong>: '+e.km_cliente_siguiente+' km<br>'+
+                'Ruta directa (sin parar aquí): '+e.km_directo+' km<br>'+
+                '<strong style="color:#c83c32">Rodeo: +'+e.km_rodeo+' km</strong>'+
+                '</span>';
+        }}
+        const m = L.marker([c.lat, c.lng], {{icon: createMarkerIcon(color, 14)}})
+            .bindPopup(popupHtml, {{maxWidth: 320}})
+            .addTo(map);
+        bounds.push([c.lat, c.lng]);
+        if (c.clasificacion === 'NO RENTABLE') noRentMarkers.push(m);
+        else if (c.clasificacion === 'REVISAR') revisarMarkers.push(m);
+        else rentMarkers.push(m);
+    }});
+
+    if (bounds.length > 1) map.fitBounds(bounds, {{padding: [30, 30]}});
+
+    // helper: ocultar todas las rutas
+    function hideAll() {{
+        [lineActual, lineOpt, lineStrict].forEach(l => {{ if(l) map.removeLayer(l); }});
+        [arrowsActual, arrowsOpt, arrowsStrict].forEach(a => {{ if(a) map.removeLayer(a); }});
+    }}
+
+    // radio buttons: alternar entre las 3 vistas
+    document.querySelectorAll('.toggle-vista[data-ruta="'+ruta.id+'"]').forEach(radio => {{
+        radio.addEventListener('change', function() {{
+            const vista = this.dataset.vista;
+            hideAll();
+
+            if (vista === 'actual') {{
+                if (lineActual) lineActual.addTo(map);
+                if (arrowsActual) arrowsActual.addTo(map);
+                noRentMarkers.forEach(m => m.addTo(map));
+                revisarMarkers.forEach(m => m.addTo(map));
+            }} else if (vista === 'optimizada') {{
+                if (lineOpt) lineOpt.addTo(map);
+                if (arrowsOpt) arrowsOpt.addTo(map);
+                noRentMarkers.forEach(m => map.removeLayer(m));
+                revisarMarkers.forEach(m => m.addTo(map));
+            }} else if (vista === 'strict') {{
+                if (lineStrict) lineStrict.addTo(map);
+                if (arrowsStrict) arrowsStrict.addTo(map);
+                noRentMarkers.forEach(m => map.removeLayer(m));
+                revisarMarkers.forEach(m => map.removeLayer(m));
+            }}
+        }});
+    }});
+}});
+
+// ── Filtro de tablas ──
+document.querySelectorAll('.table-filter').forEach(input => {{
+    input.addEventListener('input', function() {{
+        const filter = this.value.toLowerCase();
+        const tableId = this.dataset.table;
+        const rows = document.querySelectorAll('#' + tableId + ' tbody tr');
+        rows.forEach(row => {{
+            const text = row.textContent.toLowerCase();
+            row.style.display = text.includes(filter) ? '' : 'none';
+        }});
+    }});
+}});
+</script>
+</body>
+</html>"""
+
+    return html
 
 
 # ─── MAIN ─────────────────────────────────────────────────────────
+
 def main():
     print("=" * 60)
-    print("INFORME DE OPTIMIZACIÓN DE RUTAS — VERALEZA")
+    print("INFORME DE RENTABILIDAD DE RUTAS — Análisis por Distancia")
     print("=" * 60)
 
-    # 1. Extraer datos
-    print("\n[1/6] Extrayendo datos de MySQL...")
-    clients = fetch_clients()
-    rutas = fetch_rutas()
-    print(f"  → {len(clients)} clientes activos, {len(rutas)} rutas")
+    print("\nConectando a BD gestorrutas...")
+    clientes, rutas, delegaciones = cargar_datos()
+    print(f"Cargados: {len(clientes)} clientes activos, {len(rutas)} rutas, {len(delegaciones)} delegaciones")
 
-    # 2. Simular datos comerciales
-    print("\n[2/6] Simulando datos comerciales (facturación, frecuencia, peso)...")
-    clients = simulate_commercial_data(clients)
+    if not clientes:
+        print("ERROR: No se encontraron clientes activos con coordenadas.")
+        sys.exit(1)
 
-    # 3. Calcular distancias OSRM
-    print("\n[3/6] Calculando distancias OSRM desde base...")
-    clients = calc_distances_from_base(clients)
+    osrm = OSRMClient()
+    optimizer = RouteOptimizer(osrm)
 
-    print("\n[4/6] Calculando costes incrementales por ruta...")
-    clients = calc_incremental_cost(clients)
+    # agrupar clientes por ruta
+    clientes_por_ruta = {}
+    sin_ruta = []
+    for c in clientes:
+        rid = c.get("ruta_id")
+        if rid:
+            clientes_por_ruta.setdefault(rid, []).append(c)
+        else:
+            sin_ruta.append(c)
 
-    # 4. Análisis de rentabilidad
-    print("\n[5/6] Analizando rentabilidad y reasignación...")
-    clients = analyze_profitability(clients)
-    clients = analyze_reassignment(clients)
+    if sin_ruta:
+        print(f"\n⚠ {len(sin_ruta)} clientes sin ruta asignada (se omiten del análisis)")
 
-    # Resumen rápido
-    n_rent = sum(1 for c in clients if c['clasificacion'] == 'RENTABLE')
-    n_rev = sum(1 for c in clients if c['clasificacion'] == 'REVISAR')
-    n_nrent = sum(1 for c in clients if c['clasificacion'] == 'NO RENTABLE')
-    print(f"  → 🟢 {n_rent} rentables, 🟡 {n_rev} revisar, 🔴 {n_nrent} no rentables")
+    datos_rutas = []
 
-    ahorro = sum(c['ahorro_mensual'] for c in clients if c['clasificacion'] == 'NO RENTABLE')
-    print(f"  → Ahorro potencial mensual: {fmt_eur(ahorro)}")
-    print(f"  → Ahorro potencial anual: {fmt_eur(ahorro * 12)}")
+    for ruta in rutas:
+        ruta_clientes = clientes_por_ruta.get(ruta["id"], [])
+        if not ruta_clientes:
+            print(f"\nRuta '{ruta['name']}': sin clientes, omitida.")
+            continue
 
-    # 5. Generar gráficos
-    print("\n[6/6] Generando informe .docx con gráficos...")
-    charts = {}
-    charts['ahorro_ruta'] = str(chart_ahorro_por_ruta(clients))
-    charts['dispersion'] = str(chart_facturacion_vs_coste(clients))
-    charts['tarta'] = str(chart_clasificacion_tarta(clients))
-    charts['top10'] = str(chart_top10_ahorro(clients))
-    charts['comparativo'] = str(chart_coste_actual_vs_optimizado(clients))
-    print(f"  → {len(charts)} gráficos generados en {CHART_DIR}")
+        print(f"\nAnalizando ruta '{ruta['name']}' ({len(ruta_clientes)} clientes)...")
+        delegacion = asignar_delegacion(ruta_clientes, delegaciones, osrm)
+        if not delegacion:
+            print("  ⚠ Sin delegación disponible, omitida.")
+            continue
 
-    # 6. Generar DOCX
-    output_path = generate_docx(clients, charts)
-    print(f"\n{'='*60}")
-    print(f"INFORME GENERADO: {output_path}")
-    print(f"{'='*60}")
+        resultado = analizar_ruta(ruta, ruta_clientes, delegacion, osrm, optimizer)
+        if resultado:
+            datos_rutas.append(resultado)
 
-    # Guardar también JSON con datos
-    json_path = OUTPUT_DIR / 'datos_analisis.json'
-    export = []
-    for c in clients:
-        export.append({
-            'id': c['id'], 'name': c['name'], 'ruta': c.get('ruta_name'),
-            'km_base': c['km_desde_base'], 'km_incremental': c['km_incremental'],
-            'facturacion_mensual': c['facturacion_mensual'],
-            'coste_ruta_mensual': c['coste_ruta_mensual'],
-            'coste_paqueteria_mensual': c['coste_paqueteria_mensual'],
-            'ahorro_mensual': c['ahorro_mensual'],
-            'ratio': c['ratio'],
-            'clasificacion': c['clasificacion'],
-        })
-    with open(json_path, 'w', encoding='utf-8') as f:
-        json.dump(export, f, ensure_ascii=False, indent=2)
-    print(f"Datos exportados: {json_path}")
+    # ordenar por ahorro desc
+    datos_rutas.sort(key=lambda d: -d["ahorro_km"])
+
+    # reasignaciones
+    reasignaciones = analizar_reasignaciones(datos_rutas, osrm, optimizer)
+
+    # geometrías OSRM para mapas
+    obtener_geometrias(datos_rutas, osrm)
+
+    print(f"\nEstadísticas OSRM: {osrm.cache_hits} cache hits, {osrm.osrm_calls} llamadas OSRM")
+    osrm.close()
+
+    # generar JSON
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+    total_clientes = sum(d["total_clientes"] for d in datos_rutas)
+    km_actual = round(sum(d["km_actual"] for d in datos_rutas), 1)
+    km_opt = round(sum(d["km_optimizado"] for d in datos_rutas), 1)
+
+    datos_json = {
+        "fecha_generacion": datetime.now().isoformat(),
+        "umbrales": {"rentable_km": UMBRAL_RENTABLE, "revisar_km": UMBRAL_REVISAR},
+        "resumen": {
+            "total_clientes": total_clientes,
+            "rentables": sum(d["n_rentable"] for d in datos_rutas),
+            "revisar": sum(d["n_revisar"] for d in datos_rutas),
+            "no_rentables": sum(d["n_no_rentable"] for d in datos_rutas),
+            "km_actuales": km_actual,
+            "km_optimizados": km_opt,
+            "ahorro_km": round(km_actual - km_opt, 1),
+            "ahorro_pct": round(((km_actual - km_opt) / km_actual * 100) if km_actual else 0, 1),
+        },
+        "rutas": [{
+            "id": d["id"],
+            "nombre": d["nombre"],
+            "delegacion": d["delegacion"],
+            "km_actual": d["km_actual"],
+            "km_optimizado": d["km_optimizado"],
+            "ahorro_km": d["ahorro_km"],
+            "clientes": d["clientes"],
+        } for d in datos_rutas],
+        "reasignaciones": reasignaciones,
+    }
+
+    json_path = os.path.join(OUTPUT_DIR, "datos_rentabilidad.json")
+    with open(json_path, "w", encoding="utf-8") as f:
+        json.dump(datos_json, f, ensure_ascii=False, indent=2)
+    print(f"\n✓ Datos guardados en: {json_path}")
+
+    # generar HTML
+    print("Generando HTML...")
+    html = generar_html(datos_rutas, reasignaciones, delegaciones)
+    html_path = os.path.join(OUTPUT_DIR, "informe_rentabilidad_rutas.html")
+    with open(html_path, "w", encoding="utf-8") as f:
+        f.write(html)
+    print(f"✓ Informe guardado en: {html_path}")
+
+    print("\n" + "=" * 60)
+    print("DONE")
+    print("=" * 60)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

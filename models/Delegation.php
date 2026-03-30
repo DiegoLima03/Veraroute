@@ -6,17 +6,22 @@ class Delegation extends Model
 {
     public function getAll()
     {
-        return $this->query('SELECT * FROM delegations WHERE active = 1 ORDER BY name')->fetchAll();
+        return $this->normalizeTextRows(
+            $this->query('SELECT * FROM delegations WHERE active = 1 ORDER BY name')->fetchAll()
+        );
     }
 
     public function getAllIncludingInactive()
     {
-        return $this->query('SELECT * FROM delegations ORDER BY active DESC, name')->fetchAll();
+        return $this->normalizeTextRows(
+            $this->query('SELECT * FROM delegations ORDER BY active DESC, name')->fetchAll()
+        );
     }
 
     public function getById(int $id)
     {
-        return $this->query('SELECT * FROM delegations WHERE id = ?', [$id])->fetch() ?: null;
+        $row = $this->query('SELECT * FROM delegations WHERE id = ?', [$id])->fetch() ?: null;
+        return $row ? $this->normalizeTextRow($row) : null;
     }
 
     public function create(array $data)

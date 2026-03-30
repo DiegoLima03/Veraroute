@@ -7,10 +7,11 @@ class HojaRuta extends Model
     /* ── Listar hojas por fecha (y opcionalmente por ruta) ── */
     public function getByFecha(string $fecha, ?int $rutaId = null, ?int $userId = null)
     {
-        $sql = "SELECT h.*, r.name as ruta_name,
+        $sql = "SELECT h.*, r.name as ruta_name, v.name as vehicle_name, v.plate as vehicle_plate,
                        (SELECT COUNT(*) FROM hoja_ruta_lineas l WHERE l.hoja_ruta_id = h.id) as num_lineas
                 FROM hojas_ruta h
                 JOIN rutas r ON r.id = h.ruta_id
+                LEFT JOIN vehicles v ON v.id = h.vehicle_id
                 WHERE h.fecha = ?
                   AND EXISTS (SELECT 1 FROM hoja_ruta_lineas l WHERE l.hoja_ruta_id = h.id)";
         $params = [$fecha];
@@ -39,9 +40,10 @@ class HojaRuta extends Model
     public function getById(int $id)
     {
         $hoja = $this->query(
-            "SELECT h.*, r.name as ruta_name
+            "SELECT h.*, r.name as ruta_name, v.name as vehicle_name, v.plate as vehicle_plate
              FROM hojas_ruta h
              JOIN rutas r ON r.id = h.ruta_id
+             LEFT JOIN vehicles v ON v.id = h.vehicle_id
              WHERE h.id = ?",
             [$id]
         )->fetch();
@@ -87,10 +89,10 @@ class HojaRuta extends Model
                 $fields = ["estado = 'borrador'"];
                 $params = [];
 
-                foreach (['responsable', 'notas', 'user_id'] as $f) {
+                foreach (['responsable', 'notas', 'user_id', 'vehicle_id'] as $f) {
                     if (array_key_exists($f, $data)) {
                         $fields[] = "$f = ?";
-                        $params[] = $data[$f];
+                        $params[] = $f === 'vehicle_id' && empty($data[$f]) ? null : $data[$f];
                     }
                 }
 
@@ -105,10 +107,11 @@ class HojaRuta extends Model
         }
 
         $this->query(
-            "INSERT INTO hojas_ruta (ruta_id, fecha, responsable, notas, user_id)
-             VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO hojas_ruta (ruta_id, vehicle_id, fecha, responsable, notas, user_id)
+             VALUES (?, ?, ?, ?, ?, ?)",
             [
                 $data['ruta_id'],
+                !empty($data['vehicle_id']) ? (int) $data['vehicle_id'] : null,
                 $data['fecha'],
                 $data['responsable'] ?? null,
                 $data['notas'] ?? null,
@@ -124,10 +127,10 @@ class HojaRuta extends Model
         $fields = [];
         $params = [];
 
-        foreach (['responsable', 'notas', 'estado', 'total_cc', 'total_bn', 'total_litros'] as $f) {
+        foreach (['responsable', 'notas', 'estado', 'total_cc', 'total_bn', 'total_litros', 'vehicle_id'] as $f) {
             if (array_key_exists($f, $data)) {
                 $fields[] = "$f = ?";
-                $params[] = $data[$f];
+                $params[] = $f === 'vehicle_id' && empty($data[$f]) ? null : $data[$f];
             }
         }
 
@@ -228,6 +231,7 @@ class HojaRuta extends Model
 
         $newId = $this->create([
             'ruta_id'     => $source['ruta_id'],
+            'vehicle_id'  => $source['vehicle_id'] ?? null,
             'fecha'       => $newFecha,
             'responsable' => $source['responsable'],
             'notas'       => $source['notas'],

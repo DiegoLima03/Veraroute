@@ -62,6 +62,19 @@ class HojaRutaController extends Controller
     public function update($id)
     {
         $data = $this->getInput();
+        $hoja = $this->model->getById((int) $id);
+        if (!$hoja) $this->json(['error' => 'Hoja no encontrada'], 404);
+
+        if (array_key_exists('vehicle_id', $data)) {
+            $data['vehicle_id'] = !empty($data['vehicle_id']) ? (int) $data['vehicle_id'] : null;
+        }
+
+        $targetEstado = $data['estado'] ?? $hoja['estado'];
+        $targetVehicleId = array_key_exists('vehicle_id', $data) ? $data['vehicle_id'] : ($hoja['vehicle_id'] ?? null);
+        if ($targetEstado === 'cerrada' && empty($targetVehicleId)) {
+            $this->json(['error' => 'Debes asignar un vehiculo antes de cerrar la ruta'], 400);
+        }
+
         $this->model->update((int) $id, $data);
         $this->json($this->model->getById((int) $id));
     }
@@ -83,6 +96,13 @@ class HojaRutaController extends Controller
         if (empty($data['estado'])) {
             $this->json(['error' => 'estado es obligatorio'], 400);
         }
+
+        $hoja = $this->model->getById((int) $id);
+        if (!$hoja) $this->json(['error' => 'Hoja no encontrada'], 404);
+        if ($data['estado'] === 'cerrada' && empty($hoja['vehicle_id'])) {
+            $this->json(['error' => 'Debes asignar un vehiculo antes de cerrar la ruta'], 400);
+        }
+
         $ok = $this->model->updateEstado((int) $id, $data['estado']);
         if (!$ok) $this->json(['error' => 'Estado no valido'], 400);
         $this->json($this->model->getById((int) $id));

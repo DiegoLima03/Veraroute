@@ -54,6 +54,7 @@ let hrRouteDuration = null;
 let lineaSelectedClients = new Set();
 let hrMapMarkers = [];
 let hrMapLine = null;
+const SIDEBAR_WIDTH_STORAGE_KEY = 'veraroute.sidebarWidth';
 
 function getUserComercialIds() {
   if (typeof APP_USER === 'undefined') return [];
@@ -73,6 +74,94 @@ function shouldHideComercialSelector() {
   return typeof APP_USER !== 'undefined'
     && APP_USER.role === 'comercial'
     && getUserComercialIds().length > 0;
+}
+
+function getSidebarWidthBounds(mainEl) {
+  const mainWidth = mainEl?.getBoundingClientRect().width || window.innerWidth;
+  const minWidth = 320;
+  const maxWidth = Math.max(minWidth, Math.min(760, Math.round(mainWidth - 280)));
+  return { minWidth, maxWidth };
+}
+
+function clampSidebarWidth(width, mainEl) {
+  const { minWidth, maxWidth } = getSidebarWidthBounds(mainEl);
+  return Math.min(Math.max(Math.round(width), minWidth), maxWidth);
+}
+
+function syncMapAfterSidebarResize() {
+  if (!map) return;
+  window.requestAnimationFrame(() => map.invalidateSize());
+}
+
+function applySidebarWidth(width, mainEl) {
+  const nextWidth = clampSidebarWidth(width, mainEl);
+  document.documentElement.style.setProperty('--sidebar-width', nextWidth + 'px');
+  return nextWidth;
+}
+
+function initMainResizer() {
+  const mainEl = document.getElementById('appMain');
+  const resizerEl = document.getElementById('mainResizer');
+  if (!mainEl || !resizerEl) return;
+
+  try {
+    const savedWidth = parseInt(window.localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY) || '', 10);
+    if (savedWidth) {
+      applySidebarWidth(savedWidth, mainEl);
+      syncMapAfterSidebarResize();
+    }
+  } catch (e) { /* localStorage no disponible */ }
+
+  let isDragging = false;
+
+  const updateWidthFromPointer = (clientX) => {
+    const rect = mainEl.getBoundingClientRect();
+    const nextWidth = applySidebarWidth(clientX - rect.left, mainEl);
+    try {
+      window.localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(nextWidth));
+    } catch (e) { /* ignorar */ }
+    syncMapAfterSidebarResize();
+  };
+
+  const stopDragging = (pointerId) => {
+    if (!isDragging) return;
+    isDragging = false;
+    mainEl.classList.remove('resizing');
+    if (pointerId !== undefined && resizerEl.hasPointerCapture?.(pointerId)) {
+      resizerEl.releasePointerCapture(pointerId);
+    }
+    syncMapAfterSidebarResize();
+  };
+
+  resizerEl.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    isDragging = true;
+    mainEl.classList.add('resizing');
+    resizerEl.setPointerCapture?.(e.pointerId);
+    updateWidthFromPointer(e.clientX);
+    e.preventDefault();
+  });
+
+  resizerEl.addEventListener('pointermove', (e) => {
+    if (!isDragging) return;
+    updateWidthFromPointer(e.clientX);
+  });
+
+  resizerEl.addEventListener('pointerup', (e) => stopDragging(e.pointerId));
+  resizerEl.addEventListener('pointercancel', (e) => stopDragging(e.pointerId));
+  resizerEl.addEventListener('dblclick', () => {
+    const resetWidth = applySidebarWidth(400, mainEl);
+    try {
+      window.localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(resetWidth));
+    } catch (e) { /* ignorar */ }
+    syncMapAfterSidebarResize();
+  });
+
+  window.addEventListener('resize', () => {
+    const currentWidth = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--sidebar-width'), 10) || 400;
+    applySidebarWidth(currentWidth, mainEl);
+    syncMapAfterSidebarResize();
+  });
 }
 
 // Delegacion principal — retrocompatibilidad
@@ -486,7 +575,7 @@ function collectScheduleData() {
   return schedule;
 }
 
-function openClientModal(id = null) {
+async function openClientModal(id = null) {
   const c = id ? clients.find(x => x.id === id) : null;
   document.getElementById('cModalTitle').textContent = c ? 'Editar cliente' : 'Nuevo cliente';
   document.getElementById('cId').value = id || '';
@@ -500,6 +589,11 @@ function openClientModal(id = null) {
   const rutaSel = document.getElementById('cRuta');
   if (rutaSel) {
     rutaSel.innerHTML = '<option value="">Sin ruta</option>' + rutas.map(r => '<option value="' + r.id + '"' + (c?.ruta_id == r.id ? ' selected' : '') + '>' + r.name + '</option>').join('');
+  }
+  await loadComerciales();
+  const comSel = document.getElementById('cComercial');
+  if (comSel) {
+    comSel.innerHTML = '<option value="">Sin comercial</option>' + comerciales.map(com => '<option value="' + com.id + '"' + (c?.comercial_id == com.id ? ' selected' : '') + '>' + esc(com.name) + '</option>').join('');
   }
   // Al contado
   document.getElementById('cContado').checked = c?.al_contado || false;
@@ -565,6 +659,7 @@ async function saveClient() {
   // Use Monday as fallback for open_time/close_time
   const mon = schedule[0] || [];
   const rutaVal = document.getElementById('cRuta')?.value;
+  const comercialVal = document.getElementById('cComercial')?.value;
   const data = {
     name,
     address: document.getElementById('cAddr').value.trim(),
@@ -575,6 +670,7 @@ async function saveClient() {
     close_time: mon[0]?.close_time || '18:00',
     open_time_2: mon[1]?.open_time || '',
     close_time_2: mon[1]?.close_time || '',
+    comercial_id: comercialVal ? parseInt(comercialVal, 10) : null,
     ruta_id: rutaVal ? parseInt(rutaVal) : null,
     al_contado: document.getElementById('cContado').checked ? 1 : 0,
   };
@@ -828,7 +924,7 @@ function renderFleetLists() {
   if (!vehicles.length) {
     vl.innerHTML = '<div class="empty">Sin vehiculos. Pulsa "+ Vehiculo" para crear.</div>';
   } else {
-    vl.innerHTML = vehicles.map(v => {
+    vl.innerHTML = vehicles.map((v, index) => {
       const active = parseInt(v.active);
       const caps = [];
       if (v.max_weight_kg) caps.push(parseFloat(v.max_weight_kg) + ' kg');
@@ -836,9 +932,10 @@ function renderFleetLists() {
       if (v.max_items) caps.push(v.max_items + ' items');
       return '<div class="client-card' + (!active ? ' inactive' : '') + '" onclick="openVehicleModal(' + v.id + ')">' +
         '<div class="card-top">' +
-          '<div class="cnum order">' + (v.plate || 'V') + '</div>' +
+          '<div class="cnum order">V' + (index + 1) + '</div>' +
           '<div class="cname">' + v.name + '</div>' +
         '</div>' +
+        (v.plate ? '<div class="card-sub"><span class="card-addr">' + esc(v.plate) + '</span></div>' : '') +
         '<div class="pills">' +
           '<span class="pill">' + (v.delegation_name || 'Sin delegacion') + '</span>' +
           (caps.length ? '<span class="pill">' + caps.join(' | ') + '</span>' : '<span class="pill">Sin limites</span>') +
@@ -1846,7 +1943,38 @@ async function loadHojasRuta() {
     hojasData = await api('hojas-ruta?fecha=' + fecha);
   } catch (e) { hojasData = { hojas: [], rutas_sin_hoja: [] }; }
   renderHojasList();
-  document.getElementById('bhr').textContent = hojasData.hojas.length;
+  updateHojasRutaBadge();
+}
+
+function updateHojasRutaBadge() {
+  const badge = document.getElementById('bhr');
+  if (!badge) return;
+
+  const borradorCount = hojasData.hojas.filter(h => h.estado === 'borrador').length;
+  const cerradaCount = hojasData.hojas.filter(h => h.estado === 'cerrada').length;
+  const otherCount = hojasData.hojas.length - borradorCount - cerradaCount;
+
+  badge.classList.remove('green', 'orange', 'red');
+
+  if (borradorCount && cerradaCount) {
+    badge.textContent = `B${borradorCount} C${cerradaCount}`;
+    badge.classList.add('orange');
+  } else if (borradorCount) {
+    badge.textContent = `B${borradorCount}`;
+    badge.classList.add('red');
+  } else if (cerradaCount) {
+    badge.textContent = `C${cerradaCount}`;
+    badge.classList.add('green');
+  } else {
+    badge.textContent = hojasData.hojas.length;
+  }
+
+  const titleParts = [
+    `Borradores: ${borradorCount}`,
+    `Cerradas: ${cerradaCount}`,
+  ];
+  if (otherCount > 0) titleParts.push(`Otras: ${otherCount}`);
+  badge.title = titleParts.join(' · ');
 }
 
 function renderHojasList() {
@@ -1977,6 +2105,7 @@ async function createHoja() {
 
 // ── Detalle de hoja ──
 async function openHojaDetail(id) {
+  if (!vehicles.length) await loadVehicles();
   try {
     currentHoja = await api('hojas-ruta/' + id);
   } catch (e) { return showToast('Error: ' + e.message); }
@@ -2013,6 +2142,18 @@ function renderHojaDetail() {
   badge.textContent = h.estado;
   badge.className = 'hr-estado-badge hr-estado-' + h.estado;
   document.getElementById('hrEstadoSel').value = h.estado;
+  const vehicleSel = document.getElementById('hrVehicleSel');
+  if (vehicleSel) {
+    const options = ['<option value="">Vehiculo...</option>'];
+    vehicles.forEach(v => {
+      const suffix = parseInt(v.active) ? '' : ' [INACTIVO]';
+      const label = esc(v.name + (v.plate ? ' · ' + v.plate : '') + suffix);
+      options.push(`<option value="${v.id}">${label}</option>`);
+    });
+    vehicleSel.innerHTML = options.join('');
+    vehicleSel.value = h.vehicle_id ? String(h.vehicle_id) : '';
+    vehicleSel.disabled = !vehicles.length;
+  }
 
   const lineas = h.lineas || [];
   document.getElementById('hrTotalClientes').textContent = lineas.length;
@@ -2070,11 +2211,45 @@ function renderHojaDetail() {
 
 async function changeHojaEstado(estado) {
   if (!currentHoja) return;
+  const prevEstado = currentHoja.estado;
+  const estadoSel = document.getElementById('hrEstadoSel');
+  if (estado === 'cerrada' && !currentHoja.vehicle_id) {
+    showToast('Asigna un vehiculo antes de cerrar la ruta');
+    if (estadoSel) estadoSel.value = prevEstado;
+    document.getElementById('hrVehicleSel')?.focus();
+    return;
+  }
   try {
     currentHoja = await api('hojas-ruta/' + currentHoja.id + '/estado', 'PUT', { estado });
+    await loadHojasRuta();
     renderHojaDetail();
     showToast('Estado: ' + estado);
-  } catch (e) { showToast('Error: ' + e.message); }
+  } catch (e) {
+    if (estadoSel) estadoSel.value = prevEstado;
+    showToast('Error: ' + e.message);
+  }
+}
+
+async function changeHojaVehicle(vehicleId) {
+  if (!currentHoja) return;
+  const normalizedVehicleId = vehicleId ? parseInt(vehicleId, 10) : null;
+  const vehicleSel = document.getElementById('hrVehicleSel');
+
+  if (currentHoja.estado === 'cerrada' && !normalizedVehicleId) {
+    showToast('Una ruta cerrada debe tener vehiculo asignado');
+    if (vehicleSel) vehicleSel.value = currentHoja.vehicle_id ? String(currentHoja.vehicle_id) : '';
+    return;
+  }
+
+  try {
+    currentHoja = await api('hojas-ruta/' + currentHoja.id, 'PUT', { vehicle_id: normalizedVehicleId });
+    await loadHojasRuta();
+    renderHojaDetail();
+    showToast(normalizedVehicleId ? 'Vehiculo asignado' : 'Vehiculo quitado');
+  } catch (e) {
+    if (vehicleSel) vehicleSel.value = currentHoja.vehicle_id ? String(currentHoja.vehicle_id) : '';
+    showToast('Error: ' + e.message);
+  }
 }
 
 // (variables movidas al bloque STATE)
@@ -2587,6 +2762,7 @@ async function deleteUser() {
 // ── INIT ───────────────────────────────────────────────────
 window.addEventListener('DOMContentLoaded', async () => {
   if (document.getElementById('rDate')) setToday();
+  initMainResizer();
   tickClock();
   setInterval(tickClock, 60000);
 
@@ -2595,6 +2771,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   if (typeof APP_USER !== 'undefined' && APP_USER.role === 'comercial') {
     await loadClients();
     await loadRutas();
+    await loadVehicles();
     await loadHojasRuta();
   } else {
     const today = todayStr();
@@ -2606,6 +2783,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     map.setView([delegation.x, delegation.y], 12);
     await loadClients();
     await loadOrders();
+    await loadHojasRuta();
     refreshAll();
     fitMapToMarkers();
   }

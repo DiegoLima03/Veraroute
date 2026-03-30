@@ -6,42 +6,44 @@ class Vehicle extends Model
 {
     public function getAll()
     {
-        return $this->query(
+        return $this->normalizeTextRows($this->query(
             'SELECT v.*, d.name AS delegation_name
              FROM vehicles v
              JOIN delegations d ON v.delegation_id = d.id
              WHERE v.active = 1
              ORDER BY d.name, v.name'
-        )->fetchAll();
+        )->fetchAll());
     }
 
     public function getAllIncludingInactive()
     {
-        return $this->query(
+        return $this->normalizeTextRows($this->query(
             'SELECT v.*, d.name AS delegation_name
              FROM vehicles v
              JOIN delegations d ON v.delegation_id = d.id
              ORDER BY v.active DESC, d.name, v.name'
-        )->fetchAll();
+        )->fetchAll());
     }
 
     public function getByDelegation(int $delegationId)
     {
-        return $this->query(
+        return $this->normalizeTextRows($this->query(
             'SELECT * FROM vehicles WHERE delegation_id = ? AND active = 1 ORDER BY name',
             [$delegationId]
-        )->fetchAll();
+        )->fetchAll());
     }
 
     public function getById(int $id)
     {
-        return $this->query(
+        $row = $this->query(
             'SELECT v.*, d.name AS delegation_name
              FROM vehicles v
              JOIN delegations d ON v.delegation_id = d.id
              WHERE v.id = ?',
             [$id]
         )->fetch() ?: null;
+
+        return $row ? $this->normalizeTextRow($row) : null;
     }
 
     public function create(array $data)

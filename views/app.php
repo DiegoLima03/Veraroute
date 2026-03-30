@@ -66,6 +66,9 @@
       <div style="padding:8px 14px;border-bottom:1px solid var(--border);display:flex;gap:6px;flex-wrap:wrap;background:var(--surface);flex-shrink:0">
         <button class="btn btn-primary btn-sm" onclick="openAddLineaModal()">+ Cliente</button>
         <button class="btn btn-secondary btn-sm" onclick="printHoja()">Imprimir</button>
+        <select id="hrVehicleSel" onchange="changeHojaVehicle(this.value)" style="width:auto;min-width:170px;padding:4px 8px;font-size:10px;border-radius:6px">
+          <option value="">Vehiculo...</option>
+        </select>
         <select id="hrEstadoSel" onchange="changeHojaEstado(this.value)" style="width:auto;padding:4px 8px;font-size:10px;border-radius:6px">
           <option value="borrador">Borrador</option>
           <option value="cerrada">Cerrada</option>
@@ -84,7 +87,7 @@
 
 <?php else: ?>
 <!-- ═══ VISTA ADMIN / LOGISTICA ═══ -->
-<div class="main">
+<div class="main main-resizable" id="appMain">
   <div class="panel">
     <div class="tabs">
       <button class="tab active" id="tab-c" onclick="switchTab('c')">Clientes <span class="tab-badge green" id="bc">0</span></button>
@@ -149,6 +152,9 @@
           <button class="btn btn-secondary btn-sm" onclick="autoOrdenarHoja()">Auto-ordenar</button>
           <button class="btn btn-secondary btn-sm" onclick="printHoja()">Imprimir</button>
           <button class="btn btn-secondary btn-sm" onclick="duplicarHoja()">Duplicar</button>
+          <select id="hrVehicleSel" onchange="changeHojaVehicle(this.value)" style="width:auto;min-width:170px;padding:4px 8px;font-size:10px;border-radius:6px">
+            <option value="">Vehiculo...</option>
+          </select>
           <select id="hrEstadoSel" onchange="changeHojaEstado(this.value)" style="width:auto;padding:4px 8px;font-size:10px;border-radius:6px">
             <option value="borrador">Borrador</option>
             <option value="cerrada">Cerrada</option>
@@ -219,6 +225,8 @@
     </div>
   </div>
 
+  <div class="main-resizer" id="mainResizer" role="separator" aria-orientation="vertical" title="Arrastra para ajustar el ancho del panel"></div>
+
   <div class="map-area">
     <div id="map"></div>
     <div class="legend">
@@ -263,6 +271,10 @@
         <div class="fg">
           <div><label>Ruta</label><select id="cRuta"><option value="">Sin ruta</option></select></div>
           <div style="display:flex;align-items:center;gap:6px;padding-top:16px"><input type="checkbox" id="cContado" style="width:auto"><label for="cContado" style="margin:0;cursor:pointer">Al contado</label></div>
+        </div>
+        <div class="ff">
+          <label>Comercial asignado</label>
+          <select id="cComercial"><option value="">Sin comercial</option></select>
         </div>
       </div>
       <div class="msection">

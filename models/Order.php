@@ -10,8 +10,10 @@ class Order extends Model
     public function getByDate(string $date)
     {
         $rows = $this->query(
-            'SELECT o.id, o.client_id, o.notes
+            'SELECT o.id, o.client_id, o.notes, o.comercial_id, o.cc_aprox, o.observaciones,
+                    com.name as comercial_name
              FROM orders o
+             LEFT JOIN comerciales com ON com.id = o.comercial_id
              WHERE o.order_date = ?',
             [$date]
         )->fetchAll();
@@ -24,11 +26,15 @@ class Order extends Model
             )->fetchAll();
 
             $result[$row['client_id']] = [
-                'id'    => (int) $row['id'],
-                'items' => array_map(function ($it) {
+                'id'              => (int) $row['id'],
+                'items'           => array_map(function ($it) {
                     return ['name' => $it['item_name'], 'qty' => (int) $it['quantity']];
                 }, $items),
-                'notes' => $row['notes'] ?? '',
+                'notes'           => $row['notes'] ?? '',
+                'comercial_id'    => $row['comercial_id'] ? (int) $row['comercial_id'] : null,
+                'comercial_name'  => $row['comercial_name'] ?? null,
+                'cc_aprox'        => $row['cc_aprox'] !== null ? (float) $row['cc_aprox'] : null,
+                'observaciones'   => $row['observaciones'] ?? '',
             ];
         }
 
@@ -38,7 +44,8 @@ class Order extends Model
     /**
      * Crea o actualiza un pedido para un cliente en una fecha.
      */
-    public function createOrUpdate(int $clientId, string $date, array $items, string $notes)
+    public function createOrUpdate(int $clientId, string $date, array $items, string $notes,
+                                    ?int $comercialId = null, ?float $ccAprox = null, ?string $observaciones = null)
     {
         $db = $this->db();
         $db->beginTransaction();
@@ -52,12 +59,15 @@ class Order extends Model
 
             if ($existing) {
                 $orderId = (int) $existing['id'];
-                $this->query('UPDATE orders SET notes = ? WHERE id = ?', [$notes, $orderId]);
+                $this->query(
+                    'UPDATE orders SET notes = ?, comercial_id = ?, cc_aprox = ?, observaciones = ? WHERE id = ?',
+                    [$notes, $comercialId, $ccAprox, $observaciones, $orderId]
+                );
                 $this->query('DELETE FROM order_items WHERE order_id = ?', [$orderId]);
             } else {
                 $this->query(
-                    'INSERT INTO orders (client_id, order_date, notes) VALUES (?, ?, ?)',
-                    [$clientId, $date, $notes]
+                    'INSERT INTO orders (client_id, order_date, notes, comercial_id, cc_aprox, observaciones) VALUES (?, ?, ?, ?, ?, ?)',
+                    [$clientId, $date, $notes, $comercialId, $ccAprox, $observaciones]
                 );
                 $orderId = (int) $db->lastInsertId();
             }

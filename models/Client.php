@@ -7,7 +7,7 @@ class Client extends Model
     public function getAll()
     {
         return $this->query(
-            'SELECT c.*, r.name as ruta_name FROM clients c LEFT JOIN rutas r ON c.ruta_id = r.id ORDER BY c.active DESC, c.name'
+            'SELECT c.*, r.name as ruta_name, com.name as comercial_name FROM clients c LEFT JOIN rutas r ON c.ruta_id = r.id LEFT JOIN comerciales com ON com.id = c.comercial_id ORDER BY c.active DESC, c.name'
         )->fetchAll();
     }
 
@@ -24,8 +24,8 @@ class Client extends Model
     public function create(array $data)
     {
         $this->query(
-            'INSERT INTO clients (name, address, phone, notes, x, y, open_time, close_time, open_time_2, close_time_2, ruta_id)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            'INSERT INTO clients (name, address, phone, notes, x, y, open_time, close_time, open_time_2, close_time_2, ruta_id, al_contado)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
             [
                 $data['name'],
                 $data['address'] ?? '',
@@ -38,6 +38,7 @@ class Client extends Model
                 $data['open_time_2'] ?: null,
                 $data['close_time_2'] ?: null,
                 $data['ruta_id'] ?: null,
+                !empty($data['al_contado']) ? 1 : 0,
             ]
         );
         return (int) $this->db()->lastInsertId();
@@ -46,7 +47,7 @@ class Client extends Model
     public function update(int $id, array $data)
     {
         $this->query(
-            'UPDATE clients SET name = ?, address = ?, phone = ?, notes = ?, x = ?, y = ?, open_time = ?, close_time = ?, open_time_2 = ?, close_time_2 = ?, ruta_id = ?
+            'UPDATE clients SET name = ?, address = ?, phone = ?, notes = ?, x = ?, y = ?, open_time = ?, close_time = ?, open_time_2 = ?, close_time_2 = ?, ruta_id = ?, al_contado = ?
              WHERE id = ?',
             [
                 $data['name'],
@@ -60,9 +61,15 @@ class Client extends Model
                 $data['open_time_2'] ?: null,
                 $data['close_time_2'] ?: null,
                 $data['ruta_id'] ?: null,
+                !empty($data['al_contado']) ? 1 : 0,
                 $id,
             ]
         );
+    }
+
+    public function setContado(int $id, bool $contado)
+    {
+        $this->query('UPDATE clients SET al_contado = ? WHERE id = ?', [$contado ? 1 : 0, $id]);
     }
 
     public function delete(int $id)

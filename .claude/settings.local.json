@@ -7,7 +7,25 @@
       "Bash(python -c \":*)",
       "Bash(curl -s \"http://localhost/Gestor%20de%20Rutas/api/clients\")",
       "Bash(curl -s -X PUT \"http://localhost/Gestor%20de%20Rutas/api/clients/2/toggle\")",
-      "Bash(python3 -c \":*)"
+      "Bash(python3 -c \":*)",
+      "Bash(/c/wamp64/bin/mysql/mysql8.4.7/bin/mysql.exe -u root --port=3308 -e \"DESCRIBE hojas_ruta; DESCRIBE hoja_ruta_lineas; DESCRIBE orders;\" gestorrutas)",
+      "Bash(curl -s http://localhost/Gestor%20de%20Rutas/api/hojas-ruta?fecha=2026-03-30)",
+      "Bash(curl -s http://localhost/Gestor%20de%20Rutas/api/comerciales)",
+      "Bash(curl -s http://localhost/Gestor%20de%20Rutas/)",
+      "Bash(curl -s -v -X POST \"http://localhost/Gestor%20de%20Rutas/api/hojas-ruta\" -H \"Content-Type: application/json\" -d '{\"\"\"\"ruta_id\"\"\"\":2,\"\"\"\"fecha\"\"\"\":\"\"\"\"2026-03-30\"\"\"\",\"\"\"\"responsable\"\"\"\":\"\"\"\"Test\"\"\"\"}')",
+      "Bash(/c/wamp64/bin/mysql/mysql8.4.7/bin/mysql.exe -u root --port=3308 -e \"SELECT id, name FROM clients LIMIT 3;\" gestorrutas)",
+      "Bash(/c/wamp64/bin/mysql/mysql8.4.7/bin/mysql.exe -u root --port=3308 -e \"DELETE FROM hoja_ruta_lineas WHERE hoja_ruta_id = 1; DELETE FROM hojas_ruta WHERE id = 1;\" gestorrutas)",
+      "Bash(node -c public/js/app.js)",
+      "Bash(/c/wamp64/bin/mysql/mysql8.4.7/bin/mysql.exe -u root --port=3308 -e \"SELECT id, name, address FROM clients WHERE name LIKE ''%LEIRA%'' LIMIT 3;\" gestorrutas)",
+      "Bash(/c/wamp64/bin/mysql/mysql8.4.7/bin/mysql.exe -u root --port=3308 -e \"SELECT COUNT\\(*\\) as total FROM clients;\" gestorrutas)",
+      "Bash(curl -s http://localhost/Gestor%20de%20Rutas/api/clients)",
+      "Bash(node -c \"/c/wamp64/www/Gestor de Rutas/public/js/app.js\")",
+      "Bash(/c/wamp64/bin/mysql/mysql8.4.7/bin/mysql.exe -u root --port=3308 -e \"SELECT id, name, x, y, active FROM delegations ORDER BY id;\" gestorrutas)",
+      "Bash(/c/wamp64/bin/mysql/mysql8.4.7/bin/mysql.exe -u root --port=3308 -e \"SELECT delegation_id, COUNT\\(*\\) as n FROM clients WHERE active=1 GROUP BY delegation_id ORDER BY n DESC;\" gestorrutas)",
+      "Bash(/c/wamp64/bin/mysql/mysql8.4.7/bin/mysql.exe -u root --port=3308 -e \"ALTER TABLE clients ADD COLUMN al_contado TINYINT\\(1\\) NOT NULL DEFAULT 0 AFTER comercial_id;\" gestorrutas)",
+      "Bash(curl -s -X PUT \"http://localhost/Gestor%20de%20Rutas/api/clients/2/contado\" -H \"Content-Type: application/json\" -d '{\"\"al_contado\"\":1}')",
+      "Bash(/c/wamp64/bin/mysql/mysql8.4.7/bin/mysql.exe -u root --port=3308 -e \"SELECT id, name, al_contado FROM clients WHERE id=2;\" gestorrutas)",
+      "Bash(curl -s -X PUT \"http://localhost/Gestor%20de%20Rutas/api/clients/2/contado\" -H \"Content-Type: application/json\" -d '{\"\"al_contado\"\":0}')"
     ]
   }
 }

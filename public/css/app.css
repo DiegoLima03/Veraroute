@@ -54,9 +54,13 @@ body { background: var(--bg); color: var(--text); font-family: "Segoe UI", Tahom
 .cnum { width: 22px; height: 22px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; flex-shrink: 0; background: var(--surface2); border: 1px solid var(--border); color: var(--text-dim); }
 .cnum.order { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
 .cnum.route { background: var(--accent2); border-color: var(--accent2); color: #fff; }
-.cname { font-weight: 700; font-size: 13px; color: var(--text-bright); flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cname { font-weight: 700; font-size: 13px; color: var(--text-bright); flex: 1; min-width: 0; word-break: break-word; }
 .card-actions { display: flex; gap: 3px; opacity: 0; transition: opacity 0.15s; flex-shrink: 0; }
 .client-card:hover .card-actions { opacity: 1; }
+
+.card-sub { font-size: 11px; color: var(--text-dim); margin-bottom: 4px; padding-left: 30px; display: flex; flex-wrap: wrap; gap: 4px 12px; }
+.card-addr { opacity: 0.8; }
+.card-comercial { font-weight: 600; }
 
 .pills { display: flex; gap: 5px; flex-wrap: wrap; }
 .pill { padding: 2px 7px; border-radius: 20px; font-size: 10px; border: 1px solid var(--border); color: var(--text-dim); background: var(--surface2); white-space: nowrap; }
@@ -217,6 +221,66 @@ textarea { resize: none; height: 54px; }
 .rstop-item.stop-skipped { background: rgba(200,60,50,0.05); }
 .rstop-item.stop-skipped .stop-status { color: var(--danger); }
 .rstop-item.stop-skipped .stop-name { text-decoration: line-through; opacity: 0.4; }
+
+/* HOJAS DE RUTA */
+.hr-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; margin-bottom: 6px; cursor: pointer; transition: border-color 0.15s; box-shadow: 0 2px 6px rgba(16,24,14,0.06); }
+.hr-card:hover { border-color: var(--accent); }
+.hr-card-top { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.hr-card-ruta { font-weight: 700; font-size: 13px; flex: 1; }
+.hr-card-resp { font-size: 11px; color: var(--text-dim); }
+.hr-card-bottom { display: flex; gap: 10px; font-size: 10px; color: var(--text-dim); }
+.hr-estado-badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; }
+.hr-estado-borrador { background: var(--surface2); color: var(--text-dim); border: 1px solid var(--border); }
+.hr-estado-cerrada { background: rgba(212,168,48,0.15); color: var(--accent2); border: 1px solid rgba(212,168,48,0.3); }
+.hr-estado-planificada { background: rgba(52,152,219,0.12); color: #2471a3; border: 1px solid rgba(52,152,219,0.3); }
+.hr-estado-en_reparto { background: rgba(230,126,34,0.12); color: #e67e22; border: 1px solid rgba(230,126,34,0.3); }
+.hr-estado-completada { background: var(--accent-soft); color: var(--accent); border: 1px solid rgba(142,139,48,0.3); }
+
+.hr-linea { display: flex; align-items: flex-start; gap: 6px; padding: 7px 10px; margin: 2px 0; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; font-size: 11px; cursor: pointer; transition: border-color 0.12s; }
+.hr-linea:hover { border-color: var(--accent); }
+.hr-linea.entregado { background: rgba(142,139,48,0.06); }
+.hr-linea.entregado .hr-linea-name { text-decoration: line-through; opacity: 0.6; }
+.hr-linea.cancelado { background: rgba(200,60,50,0.05); }
+.hr-linea.cancelado .hr-linea-name { text-decoration: line-through; opacity: 0.4; }
+.hr-linea-handle { color: var(--text-dim); cursor: grab; font-size: 11px; flex-shrink: 0; user-select: none; margin-top: 3px; }
+.hr-linea-handle:active { cursor: grabbing; }
+.hr-linea-num { width: 20px; height: 20px; border-radius: 50%; background: var(--accent); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 9px; font-weight: 700; flex-shrink: 0; margin-top: 1px; }
+.hr-linea-body { flex: 1; min-width: 0; }
+.hr-linea-row1 { display: flex; align-items: center; gap: 6px; }
+.hr-linea-name { flex: 1; font-weight: 600; word-break: break-word; }
+.hr-linea-row2 { display: flex; gap: 10px; margin-top: 2px; }
+.hr-linea-zona { color: var(--text-dim); font-size: 10px; }
+.hr-linea-com { color: var(--accent2); font-size: 10px; font-weight: 600; }
+.hr-linea-cc { color: var(--accent); font-weight: 700; flex-shrink: 0; }
+.hr-linea-estado { font-size: 10px; flex-shrink: 0; }
+
+.hr-sin-hoja { padding: 8px 12px; background: var(--surface2); border: 1px dashed var(--border); border-radius: 8px; margin-bottom: 4px; display: flex; align-items: center; justify-content: space-between; font-size: 11px; color: var(--text-dim); }
+
+.hr-add-client-item { display: flex; align-items: flex-start; gap: 8px; padding: 8px; border-bottom: 1px solid var(--border); cursor: pointer; font-size: 12px; transition: background 0.1s; overflow: hidden; }
+.hr-add-client-item:hover { background: var(--accent-soft); }
+.hr-add-client-item input[type=checkbox] { flex-shrink: 0; margin-top: 3px; width: 16px; height: 16px; }
+.hr-add-client-name { font-weight: 600; font-size: 12px; line-height: 1.3; word-break: break-word; }
+.hr-add-client-zona { font-size: 10px; color: var(--text-dim); margin-top: 2px; line-height: 1.2; word-break: break-word; }
+
+/* Responsive movil */
+@media (max-width: 768px) {
+  .main { grid-template-columns: 1fr; }
+  .map-area { display: none; }
+  .panel { border-right: none; }
+  .header { padding: 10px 14px; height: auto; flex-wrap: wrap; }
+  .stats-bar { gap: 12px; }
+  .tab { padding: 8px 6px; font-size: 9px; letter-spacing: 1px; }
+  .hr-linea { padding: 10px; font-size: 12px; }
+  .hr-linea-handle { font-size: 14px; padding: 4px; }
+  .hr-linea-num { width: 24px; height: 24px; font-size: 10px; }
+}
+
+/* Print */
+@media print {
+  body * { visibility: hidden; }
+  #printFrame, #printFrame * { visibility: visible; }
+  #printFrame { position: absolute; left: 0; top: 0; width: 100%; }
+}
 
 .toast { position: fixed; bottom: 20px; right: 20px; background: var(--surface); border: 1px solid var(--accent); color: var(--text); padding: 10px 16px; border-radius: 10px; font-size: 12px; z-index: 200; transform: translateY(60px); opacity: 0; transition: all 0.3s ease; pointer-events: none; box-shadow: 0 4px 12px rgba(16, 24, 14, 0.15); }
 .toast.show { transform: translateY(0); opacity: 1; }

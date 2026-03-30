@@ -82,6 +82,13 @@ class ClientController extends Controller
         $this->json($updated);
     }
 
+    public function updateContado($id)
+    {
+        $data = $this->getInput();
+        $this->client->setContado((int) $id, !empty($data['al_contado']));
+        $this->json(['ok' => true]);
+    }
+
     public function destroy($id)
     {
         $this->client->delete((int) $id);

@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>VeraRoute — Gestor de Rutas</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-<link rel="stylesheet" href="public/css/app.css">
+<link rel="stylesheet" href="public/css/app.css?v=<?= time() ?>">
 </head>
 <body>
 
@@ -25,7 +25,7 @@
   <div class="panel">
     <div class="tabs">
       <button class="tab active" id="tab-c" onclick="switchTab('c')">Clientes <span class="tab-badge green" id="bc">0</span></button>
-      <button class="tab" id="tab-p" onclick="switchTab('p')">Pedidos <span class="tab-badge orange" id="bp">0</span></button>
+      <button class="tab" id="tab-hr" onclick="switchTab('hr')">Hojas Ruta <span class="tab-badge" id="bhr">0</span></button>
       <button class="tab" id="tab-f" onclick="switchTab('f')">Flota</button>
       <button class="tab" id="tab-h" onclick="switchTab('h')">Historial</button>
     </div>
@@ -51,18 +51,53 @@
       <div class="scroll-list" id="clientList"></div>
     </div>
 
-    <!-- PEDIDOS -->
-    <div id="vp" style="display:none;flex-direction:column;flex:1;overflow:hidden">
+    <!-- Fecha interna para pedidos/mapa (oculto) -->
+    <input type="hidden" id="rDate" value="">
+
+    <!-- HOJAS DE RUTA -->
+    <div id="vhr" style="display:none;flex-direction:column;flex:1;overflow:hidden">
       <div class="date-bar">
         <div class="date-label">Fecha</div>
-        <input type="date" id="rDate" onchange="onDateChange()">
-        <button class="btn btn-secondary" onclick="setToday();onDateChange()">Hoy</button>
+        <input type="date" id="hrDate" onchange="onHrDateChange()">
+        <button class="btn btn-secondary btn-sm" onclick="hrDateNav(-1)" title="Dia anterior">&larr;</button>
+        <button class="btn btn-secondary btn-sm" onclick="setHrToday()">Hoy</button>
+        <button class="btn btn-secondary btn-sm" onclick="hrDateNav(1)" title="Dia siguiente">&rarr;</button>
       </div>
-      <div class="panel-header">
-        <div class="panel-title">Pedidos registrados</div>
-        <button class="btn btn-primary" onclick="openOrderModal(null)">+ Pedido</button>
+      <!-- Panel listado de hojas (vista principal) -->
+      <div id="hrListView" style="display:flex;flex-direction:column;flex:1;overflow:hidden">
+        <div class="panel-header">
+          <div class="panel-title">Hojas del dia</div>
+          <button class="btn btn-primary" onclick="openCreateHojaModal()">+ Nueva hoja</button>
+        </div>
+        <div class="scroll-list" id="hrList"></div>
       </div>
-      <div class="scroll-list" id="pedidosList"></div>
+      <!-- Vista detalle de una hoja -->
+      <div id="hrDetailView" style="display:none;flex-direction:column;flex:1;overflow:hidden">
+        <div class="panel-header" style="gap:8px">
+          <button class="btn btn-secondary btn-sm" onclick="closeHojaDetail()">&larr; Volver</button>
+          <div class="panel-title" id="hrDetailTitle" style="flex:1">—</div>
+          <span class="hr-estado-badge" id="hrDetailEstado"></span>
+        </div>
+        <div style="padding:8px 14px;border-bottom:1px solid var(--border);display:flex;gap:6px;flex-wrap:wrap;background:var(--surface);flex-shrink:0">
+          <button class="btn btn-primary btn-sm" onclick="openAddLineaModal()">+ Cliente</button>
+          <button class="btn btn-secondary btn-sm" onclick="autoOrdenarHoja()">Auto-ordenar</button>
+          <button class="btn btn-secondary btn-sm" onclick="printHoja()">Imprimir</button>
+          <button class="btn btn-secondary btn-sm" onclick="duplicarHoja()">Duplicar</button>
+          <select id="hrEstadoSel" onchange="changeHojaEstado(this.value)" style="width:auto;padding:4px 8px;font-size:10px;border-radius:6px">
+            <option value="borrador">Borrador</option>
+            <option value="cerrada">Cerrada</option>
+            <option value="planificada">Planificada</option>
+            <option value="en_reparto">En reparto</option>
+            <option value="completada">Completada</option>
+          </select>
+        </div>
+        <div class="scroll-list" id="hrLineasList" style="flex:1"></div>
+        <div style="padding:8px 14px;border-top:1px solid var(--border);background:var(--surface);font-size:11px;display:flex;gap:16px;flex-shrink:0">
+          <span><b id="hrTotalClientes">0</b> clientes</span>
+          <span><b id="hrTotalCC">0</b> CC</span>
+          <span id="hrRouteInfo" style="margin-left:auto;color:var(--accent);font-weight:700"></span>
+        </div>
+      </div>
     </div>
 
     <!-- FLOTA -->
@@ -147,7 +182,10 @@
           <div><label>Telefono</label><input id="cPhone" placeholder="600 000 000"></div>
         </div>
         <div class="ff"><label>Notas internas</label><textarea id="cNotes" placeholder="Instrucciones de entrega, acceso, contacto..."></textarea></div>
-        <div class="ff"><label>Ruta</label><select id="cRuta"><option value="">Sin ruta</option></select></div>
+        <div class="fg">
+          <div><label>Ruta</label><select id="cRuta"><option value="">Sin ruta</option></select></div>
+          <div style="display:flex;align-items:center;gap:6px;padding-top:16px"><input type="checkbox" id="cContado" style="width:auto"><label for="cContado" style="margin:0;cursor:pointer">Al contado</label></div>
+        </div>
       </div>
       <div class="msection">
         <div class="msec-title">Ubicacion (click en el mapa o introduce coordenadas)</div>
@@ -166,36 +204,6 @@
       <button class="btn btn-danger" id="cToggleBtn" onclick="toggleFromModal()" style="margin-right:auto;display:none">Desactivar</button>
       <button class="btn btn-secondary" onclick="closeCModal()">Cancelar</button>
       <button class="btn btn-primary" onclick="saveClient()">Guardar cliente</button>
-    </div>
-  </div>
-</div>
-
-<!-- MODAL PEDIDO -->
-<div class="overlay" id="pModal">
-  <div class="modal">
-    <div class="mhead">
-      <div class="mtitle" id="pModalTitle">Registrar pedido</div>
-      <button class="mclose" onclick="closePModal()">x</button>
-    </div>
-    <div class="mbody">
-      <input type="hidden" id="pClientIdFixed">
-      <div class="msection">
-        <div class="msec-title">Cliente</div>
-        <div class="ff"><label>Seleccionar cliente *</label><select id="pClientSel"></select></div>
-      </div>
-      <div class="msection">
-        <div class="msec-title">Articulos del pedido</div>
-        <div id="itemsContainer"></div>
-        <button class="add-item" onclick="addItemRow()">+ Anadir articulo</button>
-      </div>
-      <div class="msection">
-        <div class="msec-title">Notas del pedido</div>
-        <textarea id="pNotes" placeholder="Urgente, fragil, horario especifico de entrega..."></textarea>
-      </div>
-    </div>
-    <div class="mfoot">
-      <button class="btn btn-secondary" onclick="closePModal()">Cancelar</button>
-      <button class="btn btn-primary" onclick="saveOrder()">Guardar pedido</button>
     </div>
   </div>
 </div>
@@ -313,10 +321,84 @@
   </div>
 </div>
 
+<!-- MODAL CREAR HOJA -->
+<div class="overlay" id="hrCreateModal">
+  <div class="modal" style="width:380px">
+    <div class="mhead">
+      <div class="mtitle">Nueva hoja de ruta</div>
+      <button class="mclose" onclick="closeHrCreateModal()">x</button>
+    </div>
+    <div class="mbody">
+      <div class="ff"><label>Ruta *</label><select id="hrNewRuta"></select></div>
+      <div class="ff"><label>Responsable</label><input id="hrNewResp" placeholder="Fran, Jose, Elvis..."></div>
+      <div class="ff"><label>Notas</label><textarea id="hrNewNotas" placeholder="Notas generales..."></textarea></div>
+    </div>
+    <div class="mfoot">
+      <button class="btn btn-secondary" onclick="closeHrCreateModal()">Cancelar</button>
+      <button class="btn btn-primary" onclick="createHoja()">Crear</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL AÑADIR CLIENTE A HOJA -->
+<div class="overlay" id="hrAddLineaModal">
+  <div class="modal" style="width:440px">
+    <div class="mhead">
+      <div class="mtitle">Añadir cliente a la hoja</div>
+      <button class="mclose" onclick="closeAddLineaModal()">x</button>
+    </div>
+    <div class="mbody">
+      <div class="ff"><label>Buscar cliente</label><input id="hrLineaSearch" placeholder="Nombre del cliente..." oninput="filterLineaClients(this.value)"></div>
+      <div id="hrLineaClientList" style="max-height:200px;overflow-y:auto;overflow-x:hidden;margin-bottom:10px"></div>
+      <div class="fg">
+        <div><label>Comercial</label><select id="hrLineaComercial"><option value="">—</option></select></div>
+        <div><label>CC Aprox</label><input type="number" id="hrLineaCC" step="0.25" min="0" placeholder="0.50"></div>
+      </div>
+      <div class="ff"><label>Observaciones</label><input id="hrLineaObs" placeholder="Direccion, llamar antes..."></div>
+    </div>
+    <div class="mfoot">
+      <button class="btn btn-secondary" onclick="closeAddLineaModal()">Cancelar</button>
+      <button class="btn btn-primary" onclick="addLineasToHoja()">Añadir</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL EDITAR LINEA -->
+<div class="overlay" id="hrEditLineaModal">
+  <div class="modal" style="width:380px">
+    <div class="mhead">
+      <div class="mtitle" id="hrEditLineaTitle">Editar linea</div>
+      <button class="mclose" onclick="closeEditLineaModal()">x</button>
+    </div>
+    <div class="mbody">
+      <input type="hidden" id="hrEditLineaId">
+      <div class="fg">
+        <div><label>Comercial</label><select id="hrEditComercial"><option value="">—</option></select></div>
+        <div><label>CC Aprox</label><input type="number" id="hrEditCC" step="0.25" min="0"></div>
+      </div>
+      <div class="ff"><label>Zona</label><input id="hrEditZona"></div>
+      <div class="ff"><label>Observaciones</label><input id="hrEditObs"></div>
+      <div class="ff"><label>Estado</label>
+        <select id="hrEditEstado">
+          <option value="pendiente">Pendiente</option>
+          <option value="entregado">Entregado</option>
+          <option value="cancelado">Cancelado</option>
+          <option value="no_entregado">No entregado</option>
+        </select>
+      </div>
+    </div>
+    <div class="mfoot">
+      <button class="btn btn-danger" onclick="removeLineaFromModal()">Quitar</button>
+      <button class="btn btn-secondary" onclick="closeEditLineaModal()">Cancelar</button>
+      <button class="btn btn-primary" onclick="saveEditLinea()">Guardar</button>
+    </div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js"></script>
-<script src="public/js/app.js"></script>
+<script src="public/js/app.js?v=<?= time() ?>"></script>
 </body>
 </html>

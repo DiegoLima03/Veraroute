@@ -33,6 +33,7 @@ $router->get('', 'PageController@index');
 $router->get('api/clients', 'ClientController@index');
 $router->post('api/clients', 'ClientController@store');
 $router->put('api/clients/(\d+)/toggle', 'ClientController@toggleActive');
+$router->put('api/clients/(\d+)/contado', 'ClientController@updateContado');
 $router->put('api/clients/(\d+)', 'ClientController@update');
 $router->delete('api/clients/(\d+)', 'ClientController@destroy');
 $router->get('api/clients/(\d+)/schedules', 'ClientController@getSchedules');
@@ -92,6 +93,24 @@ $router->get('api/rutas', 'RutaController@index');
 $router->post('api/rutas', 'RutaController@store');
 $router->put('api/rutas/(\d+)', 'RutaController@update');
 $router->delete('api/rutas/(\d+)', 'RutaController@destroy');
+
+// API — Hojas de Ruta
+$router->get('api/hojas-ruta', 'HojaRutaController@index');
+$router->get('api/hojas-ruta/(\d+)', 'HojaRutaController@show');
+$router->post('api/hojas-ruta', 'HojaRutaController@store');
+$router->put('api/hojas-ruta/(\d+)', 'HojaRutaController@update');
+$router->delete('api/hojas-ruta/(\d+)', 'HojaRutaController@destroy');
+$router->put('api/hojas-ruta/(\d+)/estado', 'HojaRutaController@updateEstado');
+$router->post('api/hojas-ruta/(\d+)/lineas', 'HojaRutaController@addLinea');
+$router->put('api/hojas-ruta/(\d+)/lineas/(\d+)', 'HojaRutaController@updateLinea');
+$router->delete('api/hojas-ruta/(\d+)/lineas/(\d+)', 'HojaRutaController@removeLinea');
+$router->put('api/hojas-ruta/(\d+)/reordenar', 'HojaRutaController@reorder');
+$router->post('api/hojas-ruta/(\d+)/auto-ordenar', 'HojaRutaController@autoOrder');
+$router->get('api/hojas-ruta/(\d+)/imprimir', 'HojaRutaController@printHoja');
+$router->post('api/hojas-ruta/(\d+)/duplicar', 'HojaRutaController@duplicate');
+
+// API — Comerciales
+$router->get('api/comerciales', 'HojaRutaController@comerciales');
 
 // API — Plantillas de ruta
 $router->get('api/templates', 'TemplateController@index');

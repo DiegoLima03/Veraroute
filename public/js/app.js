@@ -271,6 +271,10 @@ async function loadClients() {
       active: c.active !== undefined ? !!parseInt(c.active) : true,
       ruta_id: c.ruta_id ? parseInt(c.ruta_id) : null,
       ruta_name: c.ruta_name || '',
+      delegation_id: c.delegation_id ? parseInt(c.delegation_id) : null,
+      comercial_id: c.comercial_id ? parseInt(c.comercial_id) : null,
+      comercial_name: c.comercial_name || '',
+      al_contado: !!parseInt(c.al_contado || 0),
     }));
   } catch (e) {
     showToast('Error cargando clientes: ' + e.message);
@@ -310,15 +314,16 @@ async function loadDemo() {
 // ── TABS ───────────────────────────────────────────────────
 function switchTab(t) {
   document.getElementById('vc').style.display = t === 'c' ? 'flex' : 'none';
-  document.getElementById('vp').style.display = t === 'p' ? 'flex' : 'none';
+  document.getElementById('vhr').style.display = t === 'hr' ? 'flex' : 'none';
   document.getElementById('vf').style.display = t === 'f' ? 'flex' : 'none';
   document.getElementById('vh').style.display = t === 'h' ? 'flex' : 'none';
   document.getElementById('tab-c').classList.toggle('active', t === 'c');
-  document.getElementById('tab-p').classList.toggle('active', t === 'p');
+  document.getElementById('tab-hr').classList.toggle('active', t === 'hr');
   document.getElementById('tab-f').classList.toggle('active', t === 'f');
   document.getElementById('tab-h').classList.toggle('active', t === 'h');
   if (t === 'f') renderFleetLists();
   if (t === 'h') { loadHistory(); loadDashboard(); }
+  if (t === 'hr') loadHojasRuta();
 }
 
 // ── DATE ───────────────────────────────────────────────────
@@ -455,6 +460,8 @@ function openClientModal(id = null) {
   if (rutaSel) {
     rutaSel.innerHTML = '<option value="">Sin ruta</option>' + rutas.map(r => '<option value="' + r.id + '"' + (c?.ruta_id == r.id ? ' selected' : '') + '>' + r.name + '</option>').join('');
   }
+  // Al contado
+  document.getElementById('cContado').checked = c?.al_contado || false;
   // Horario semanal editable
   buildScheduleGrid(c);
 
@@ -528,6 +535,7 @@ async function saveClient() {
     open_time_2: mon[1]?.open_time || '',
     close_time_2: mon[1]?.close_time || '',
     ruta_id: rutaVal ? parseInt(rutaVal) : null,
+    al_contado: document.getElementById('cContado').checked ? 1 : 0,
   };
 
   const eid = parseInt(document.getElementById('cId').value);
@@ -651,7 +659,7 @@ async function deleteOrder(cid) {
 
 // ── RENDER ─────────────────────────────────────────────────
 function refreshAll() {
-  renderClientList(); renderPedidosList(); updateStats(); drawMap();
+  renderClientList(); updateStats(); drawMap();
 }
 
 function renderClientList() {
@@ -689,8 +697,11 @@ function renderClientList() {
         '<div class="cnum ' + numCls + '">' + (inRoute ? ri : (i + 1)) + '</div>' +
         '<div class="cname">' + c.name + '</div>' +
       '</div>' +
+      '<div class="card-sub">' +
+        '<span class="card-addr">' + (c.addr || (c.x.toFixed(4) + ', ' + c.y.toFixed(4))) + '</span>' +
+        (c.comercial_name ? '<span class="card-comercial">' + c.comercial_name + '</span>' : '') +
+      '</div>' +
       '<div class="pills">' +
-        '<span class="pill">' + (c.addr || (c.x.toFixed(4) + ', ' + c.y.toFixed(4))) + '</span>' +
         '<span class="pill ' + (isOpen ? 'open' : 'closed') + '">' + (isOpen ? 'ABIERTO' : 'CERRADO') + ' ' + clientHoursText(c, todayDb) + '</span>' +
         (hasOrd ? '<span class="pill has-ord">PEDIDO</span>' : '') +
         (c.ruta_name ? '<span class="pill" style="border-color:' + getRutaColor(c.ruta_id) + '44;color:' + getRutaColor(c.ruta_id) + ';background:' + getRutaColor(c.ruta_id) + '18">' + c.ruta_name + '</span>' : '') +
@@ -746,7 +757,6 @@ function updateStats() {
   document.getElementById('sPedidos').textContent = np;
   document.getElementById('sVehicles').textContent = av;
   document.getElementById('bc').textContent = ac;
-  document.getElementById('bp').textContent = np;
 }
 
 // ── FLEET MANAGEMENT ──────────────────────────────────────
@@ -1772,6 +1782,565 @@ async function toggleStopStatus(planId, stopOrder, currentStatus) {
   } catch (e) { showToast('Error: ' + e.message); }
 }
 
+// ── HOJAS DE RUTA ─────────────────────────────────────────
+let hojasData = { hojas: [], rutas_sin_hoja: [] };
+let currentHoja = null;
+let comerciales = [];
+let hrSortable = null;
+
+function getHrDate() { return document.getElementById('hrDate').value || todayStr(); }
+function setHrToday() { document.getElementById('hrDate').value = todayStr(); onHrDateChange(); }
+function hrDateNav(delta) {
+  const d = new Date(getHrDate());
+  d.setDate(d.getDate() + delta);
+  document.getElementById('hrDate').value = d.toISOString().slice(0, 10);
+  onHrDateChange();
+}
+async function onHrDateChange() { await loadHojasRuta(); }
+
+async function loadComerciales() {
+  if (comerciales.length) return;
+  try { comerciales = await api('comerciales'); } catch (e) { comerciales = []; }
+}
+
+async function loadHojasRuta() {
+  const fecha = getHrDate();
+  try {
+    hojasData = await api('hojas-ruta?fecha=' + fecha);
+  } catch (e) { hojasData = { hojas: [], rutas_sin_hoja: [] }; }
+  renderHojasList();
+  document.getElementById('bhr').textContent = hojasData.hojas.length;
+}
+
+function renderHojasList() {
+  const el = document.getElementById('hrList');
+  const { hojas, rutas_sin_hoja } = hojasData;
+
+  if (!hojas.length && !rutas_sin_hoja.length) {
+    el.innerHTML = '<div class="empty"><div class="empty-icon">📋</div>No hay hojas de ruta para esta fecha</div>';
+    return;
+  }
+
+  // Resumen diario
+  const totalClientes = hojas.reduce((s, h) => s + (h.lineas ? h.lineas.length : (h.num_lineas || 0)), 0);
+  const totalCC = hojas.reduce((s, h) => s + parseFloat(h.total_cc || 0), 0);
+  const porEstado = {};
+  hojas.forEach(h => { porEstado[h.estado] = (porEstado[h.estado] || 0) + 1; });
+  const estadoResumen = Object.entries(porEstado).map(([e, n]) => `${n} ${e}`).join(', ');
+
+  let html = `<div style="padding:8px 10px;background:var(--surface);border:1px solid var(--border);border-radius:8px;margin-bottom:10px;font-size:11px;display:flex;gap:14px;flex-wrap:wrap">
+    <span><b>${hojas.length}</b> hojas</span>
+    <span><b>${totalClientes}</b> clientes</span>
+    <span><b>${totalCC.toFixed(1)}</b> CC</span>
+    <span style="color:var(--text-dim)">${estadoResumen}</span>
+  </div>`;
+  hojas.forEach(h => {
+    const numLineas = h.lineas ? h.lineas.length : (h.num_lineas || 0);
+    html += `<div class="hr-card" onclick="openHojaDetail(${h.id})">
+      <div class="hr-card-top">
+        <div class="hr-card-ruta">${esc(h.ruta_name)}</div>
+        <span class="hr-estado-badge hr-estado-${h.estado}">${h.estado}</span>
+      </div>
+      <div class="hr-card-bottom">
+        <span>${esc(h.responsable || '—')}</span>
+        <span>${numLineas} clientes</span>
+        <span>${parseFloat(h.total_cc || 0).toFixed(1)} CC</span>
+      </div>
+    </div>`;
+  });
+
+  if (rutas_sin_hoja.length) {
+    html += '<div style="margin-top:10px;font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">Rutas sin hoja hoy</div>';
+    rutas_sin_hoja.forEach(r => {
+      html += `<div class="hr-sin-hoja">
+        <span>${esc(r.name)}</span>
+        <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation();quickCreateHoja(${r.id})">+ Crear</button>
+      </div>`;
+    });
+  }
+
+  el.innerHTML = html;
+}
+
+async function quickCreateHoja(rutaId) {
+  try {
+    await api('hojas-ruta', 'POST', { ruta_id: rutaId, fecha: getHrDate() });
+    showToast('Hoja creada');
+    await loadHojasRuta();
+  } catch (e) { showToast('Error: ' + e.message); }
+}
+
+function openCreateHojaModal() {
+  const sel = document.getElementById('hrNewRuta');
+  sel.innerHTML = hojasData.rutas_sin_hoja.map(r => `<option value="${r.id}">${esc(r.name)}</option>`).join('');
+  if (!sel.innerHTML) sel.innerHTML = '<option value="">Todas las rutas ya tienen hoja</option>';
+  document.getElementById('hrNewResp').value = '';
+  document.getElementById('hrNewNotas').value = '';
+  document.getElementById('hrCreateModal').classList.add('open');
+}
+function closeHrCreateModal() { document.getElementById('hrCreateModal').classList.remove('open'); }
+
+async function createHoja() {
+  const rutaId = document.getElementById('hrNewRuta').value;
+  if (!rutaId) return showToast('Selecciona una ruta');
+  try {
+    await api('hojas-ruta', 'POST', {
+      ruta_id: parseInt(rutaId),
+      fecha: getHrDate(),
+      responsable: document.getElementById('hrNewResp').value,
+      notas: document.getElementById('hrNewNotas').value,
+    });
+    closeHrCreateModal();
+    showToast('Hoja creada');
+    await loadHojasRuta();
+  } catch (e) { showToast('Error: ' + e.message); }
+}
+
+// ── Detalle de hoja ──
+async function openHojaDetail(id) {
+  try {
+    currentHoja = await api('hojas-ruta/' + id);
+  } catch (e) { return showToast('Error: ' + e.message); }
+
+  hrOsrmGeometry = null;
+  hrRouteDistance = null;
+  hrRouteDuration = null;
+  document.getElementById('hrRouteInfo').textContent = '';
+
+  await loadComerciales();
+
+  document.getElementById('hrListView').style.display = 'none';
+  document.getElementById('hrDetailView').style.display = 'flex';
+  renderHojaDetail();
+  drawHojaOnMap();
+}
+
+function closeHojaDetail() {
+  currentHoja = null;
+  hrOsrmGeometry = null;
+  hrRouteDistance = null;
+  hrRouteDuration = null;
+  document.getElementById('hrDetailView').style.display = 'none';
+  document.getElementById('hrListView').style.display = 'flex';
+  drawMap();
+}
+
+function renderHojaDetail() {
+  if (!currentHoja) return;
+  const h = currentHoja;
+
+  document.getElementById('hrDetailTitle').textContent = h.ruta_name + ' — ' + h.fecha;
+  const badge = document.getElementById('hrDetailEstado');
+  badge.textContent = h.estado;
+  badge.className = 'hr-estado-badge hr-estado-' + h.estado;
+  document.getElementById('hrEstadoSel').value = h.estado;
+
+  const lineas = h.lineas || [];
+  document.getElementById('hrTotalClientes').textContent = lineas.length;
+  document.getElementById('hrTotalCC').textContent = lineas.reduce((s, l) => s + parseFloat(l.cc_aprox || 0), 0).toFixed(1);
+
+  const el = document.getElementById('hrLineasList');
+  if (!lineas.length) {
+    el.innerHTML = '<div class="empty"><div class="empty-icon">📋</div>Sin clientes. Pulsa "+ Cliente" para añadir.</div>';
+    return;
+  }
+
+  let html = '';
+  lineas.forEach((l, i) => {
+    const num = l.orden_descarga || (i + 1);
+    const estadoCls = l.estado === 'entregado' || l.estado === 'cancelado' ? l.estado : '';
+    const estadoIcon = l.estado === 'entregado' ? '&#10004;' : l.estado === 'cancelado' ? '&#10008;' : l.estado === 'no_entregado' ? '!' : '';
+    const cl = clients.find(c => c.id === parseInt(l.client_id));
+    const contado = cl?.al_contado ? '<span style="color:var(--danger);font-size:9px;font-weight:700;flex-shrink:0">CTD</span>' : '';
+    html += `<div class="hr-linea ${estadoCls}" data-id="${l.id}" onclick="openEditLineaModal(${l.id})">
+      <span class="hr-linea-handle" data-sortable-handle>&#9776;</span>
+      <span class="hr-linea-num">${num}</span>
+      <div class="hr-linea-body">
+        <div class="hr-linea-row1">
+          <span class="hr-linea-name">${esc(l.client_name)}</span>
+          ${contado}
+          <span class="hr-linea-cc">${parseFloat(l.cc_aprox || 0) > 0 ? parseFloat(l.cc_aprox).toFixed(1) + ' CC' : ''}</span>
+          <span class="hr-linea-estado">${estadoIcon}</span>
+        </div>
+        <div class="hr-linea-row2">
+          <span class="hr-linea-zona">${esc(l.zona || '')}</span>
+          <span class="hr-linea-com">${esc(l.comercial_name || '')}</span>
+        </div>
+      </div>
+    </div>`;
+  });
+  el.innerHTML = html;
+
+  // Init Sortable drag&drop
+  if (hrSortable) hrSortable.destroy();
+  hrSortable = new Sortable(el, {
+    handle: '.hr-linea-handle',
+    animation: 150,
+    ghostClass: 'sortable-ghost',
+    onEnd: async function () {
+      const ids = Array.from(el.querySelectorAll('.hr-linea')).map(e => parseInt(e.dataset.id));
+      try {
+        currentHoja = await api('hojas-ruta/' + currentHoja.id + '/reordenar', 'PUT', { linea_ids: ids });
+        renderHojaDetail();
+        await fetchHojaOSRMRoute();
+        drawHojaOnMap();
+      } catch (e) { showToast('Error al reordenar: ' + e.message); }
+    }
+  });
+}
+
+async function changeHojaEstado(estado) {
+  if (!currentHoja) return;
+  try {
+    currentHoja = await api('hojas-ruta/' + currentHoja.id + '/estado', 'PUT', { estado });
+    renderHojaDetail();
+    showToast('Estado: ' + estado);
+  } catch (e) { showToast('Error: ' + e.message); }
+}
+
+let hrOsrmGeometry = null; // polilínea real OSRM
+let hrRouteDistance = null;
+let hrRouteDuration = null;
+
+async function autoOrdenarHoja() {
+  if (!currentHoja) return;
+  try {
+    showToast('Ordenando...');
+    currentHoja = await api('hojas-ruta/' + currentHoja.id + '/auto-ordenar', 'POST');
+    renderHojaDetail();
+
+    // Obtener ruta real OSRM
+    await fetchHojaOSRMRoute();
+    drawHojaOnMap();
+  } catch (e) { showToast('Error: ' + e.message); }
+}
+
+async function fetchHojaOSRMRoute() {
+  hrOsrmGeometry = null;
+  hrRouteDistance = null;
+  hrRouteDuration = null;
+  document.getElementById('hrRouteInfo').textContent = '';
+
+  if (!currentHoja || !currentHoja.lineas?.length) return;
+
+  const lineas = currentHoja.lineas;
+  const waypoints = [];
+
+  // Buscar la delegación más común entre los clientes de la hoja
+  const delCount = {};
+  lineas.forEach(l => {
+    const cl = clients.find(c => c.id === parseInt(l.client_id));
+    if (cl && cl.delegation_id) delCount[cl.delegation_id] = (delCount[cl.delegation_id] || 0) + 1;
+  });
+  let bestDelId = null;
+  let bestDelN = 0;
+  for (const [did, n] of Object.entries(delCount)) {
+    if (n > bestDelN) { bestDelN = n; bestDelId = parseInt(did); }
+  }
+  const del = bestDelId ? delegations.find(d => d.id == bestDelId) : delegations.find(d => parseInt(d.active));
+  if (del) {
+    waypoints.push({ x: parseFloat(del.x), y: parseFloat(del.y) });
+  } else if (delegation) {
+    waypoints.push({ x: delegation.x, y: delegation.y });
+  }
+
+  // Añadir clientes en orden
+  lineas.forEach(l => {
+    const lat = parseFloat(l.client_x);
+    const lng = parseFloat(l.client_y);
+    if (lat && lng) waypoints.push({ x: lat, y: lng });
+  });
+
+  if (waypoints.length < 2) return;
+
+  try {
+    const result = await fetchOSRMRoute(waypoints);
+    hrOsrmGeometry = result.geometry;
+    hrRouteDistance = result.distance;
+    hrRouteDuration = result.duration;
+
+    const km = result.distance.toFixed(1);
+    const h = Math.floor(result.duration);
+    const m = Math.round((result.duration - h) * 60);
+    const timeStr = h > 0 ? h + 'h ' + m + 'min' : m + ' min';
+    document.getElementById('hrRouteInfo').textContent = km + ' km · ' + timeStr;
+    showToast('Ruta: ' + km + ' km, ' + timeStr);
+  } catch (e) {
+    document.getElementById('hrRouteInfo').textContent = 'Error ruta';
+    console.warn('OSRM error:', e);
+  }
+}
+
+async function duplicarHoja() {
+  if (!currentHoja) return;
+  const fecha = prompt('Fecha para la nueva hoja (YYYY-MM-DD):', todayStr());
+  if (!fecha) return;
+  try {
+    const newHoja = await api('hojas-ruta/' + currentHoja.id + '/duplicar', 'POST', { fecha });
+    showToast('Hoja duplicada');
+    await loadHojasRuta();
+    openHojaDetail(newHoja.id);
+  } catch (e) { showToast('Error: ' + e.message); }
+}
+
+// ── Modal añadir líneas ──
+let lineaSelectedClients = new Set();
+
+function openAddLineaModal() {
+  if (!currentHoja) return;
+  loadComerciales().then(() => {
+    const comSel = document.getElementById('hrLineaComercial');
+    comSel.innerHTML = '<option value="">—</option>' + comerciales.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
+  });
+  document.getElementById('hrLineaCC').value = '';
+  document.getElementById('hrLineaObs').value = '';
+  document.getElementById('hrLineaSearch').value = '';
+  lineaSelectedClients = new Set();
+  filterLineaClients('');
+  document.getElementById('hrAddLineaModal').classList.add('open');
+}
+function closeAddLineaModal() { document.getElementById('hrAddLineaModal').classList.remove('open'); }
+
+function filterLineaClients(q) {
+  const existingIds = new Set((currentHoja?.lineas || []).map(l => parseInt(l.client_id)));
+  const rutaId = currentHoja?.ruta_id;
+  q = q.toLowerCase();
+
+  // Primero clientes de la ruta, luego el resto
+  const rutaClients = clients.filter(c => c.active && c.ruta_id == rutaId && !existingIds.has(c.id));
+  const otherClients = clients.filter(c => c.active && c.ruta_id != rutaId && !existingIds.has(c.id));
+
+  let filtered = [...rutaClients, ...otherClients];
+  if (q) filtered = filtered.filter(c => c.name.toLowerCase().includes(q) || (c.addr || '').toLowerCase().includes(q));
+  filtered = filtered.slice(0, 50);
+
+  const el = document.getElementById('hrLineaClientList');
+  if (!filtered.length) {
+    el.innerHTML = '<div style="padding:10px;font-size:11px;color:var(--text-dim)">Sin resultados</div>';
+    return;
+  }
+
+  el.innerHTML = filtered.map(c => {
+    const checked = lineaSelectedClients.has(c.id) ? 'checked' : '';
+    const isRuta = c.ruta_id == rutaId;
+    const badge = isRuta ? ' <span class="pill ruta" style="font-size:9px;vertical-align:middle">Ruta</span>' : '';
+    const contadoChecked = c.al_contado ? 'checked' : '';
+    const addr = c.addr ? '<div style="font-size:10px;color:var(--text-dim);margin-top:2px;word-break:break-word">' + esc(c.addr) + '</div>' : '';
+    return '<div class="hr-add-client-item" onclick="toggleLineaClient(' + c.id + ', this)">' +
+      '<input type="checkbox" ' + checked + ' onclick="event.stopPropagation();toggleLineaClient(' + c.id + ', this.parentElement)" style="flex-shrink:0;width:16px;height:16px;margin-top:2px">' +
+      '<div style="flex:1;min-width:0;overflow:hidden">' +
+        '<div style="font-weight:600;font-size:12px;word-break:break-word">' + esc(c.name) + badge + '</div>' +
+        addr +
+      '</div>' +
+      '<label onclick="event.stopPropagation()" style="display:flex;align-items:center;gap:4px;flex-shrink:0;cursor:pointer;font-size:9px;color:var(--danger);font-weight:700;white-space:nowrap;margin-top:2px">' +
+        '<input type="checkbox" ' + contadoChecked + ' onchange="toggleContado(' + c.id + ', this.checked)" style="width:13px;height:13px;accent-color:var(--danger)"> CTD' +
+      '</label>' +
+    '</div>';
+  }).join('');
+}
+
+function toggleLineaClient(id, row) {
+  if (lineaSelectedClients.has(id)) {
+    lineaSelectedClients.delete(id);
+  } else {
+    lineaSelectedClients.add(id);
+  }
+  const cb = row.querySelector('input[type=checkbox]');
+  if (cb) cb.checked = lineaSelectedClients.has(id);
+}
+
+async function addLineasToHoja() {
+  if (!currentHoja || !lineaSelectedClients.size) return showToast('Selecciona al menos un cliente');
+  const comercialId = document.getElementById('hrLineaComercial').value || null;
+  const cc = document.getElementById('hrLineaCC').value || 0;
+  const obs = document.getElementById('hrLineaObs').value || '';
+
+  try {
+    for (const clientId of lineaSelectedClients) {
+      const client = clients.find(c => c.id === clientId);
+      await api('hojas-ruta/' + currentHoja.id + '/lineas', 'POST', {
+        client_id: clientId,
+        comercial_id: comercialId ? parseInt(comercialId) : (client?.comercial_id || null),
+        cc_aprox: parseFloat(cc) || 0,
+        zona: client?.addr || '',
+        observaciones: obs,
+      });
+    }
+    closeAddLineaModal();
+    currentHoja = await api('hojas-ruta/' + currentHoja.id);
+    renderHojaDetail();
+    drawHojaOnMap();
+    showToast(lineaSelectedClients.size + ' cliente(s) añadido(s)');
+  } catch (e) { showToast('Error: ' + e.message); }
+}
+
+// ── Modal editar línea ──
+function openEditLineaModal(lineaId) {
+  const linea = (currentHoja?.lineas || []).find(l => parseInt(l.id) === lineaId);
+  if (!linea) return;
+
+  loadComerciales().then(() => {
+    const comSel = document.getElementById('hrEditComercial');
+    comSel.innerHTML = '<option value="">—</option>' + comerciales.map(c =>
+      `<option value="${c.id}" ${parseInt(linea.comercial_id) === c.id ? 'selected' : ''}>${esc(c.name)}</option>`
+    ).join('');
+  });
+
+  document.getElementById('hrEditLineaId').value = lineaId;
+  document.getElementById('hrEditLineaTitle').textContent = linea.client_name;
+  document.getElementById('hrEditCC').value = linea.cc_aprox || '';
+  document.getElementById('hrEditZona').value = linea.zona || '';
+  document.getElementById('hrEditObs').value = linea.observaciones || '';
+  document.getElementById('hrEditEstado').value = linea.estado || 'pendiente';
+  document.getElementById('hrEditLineaModal').classList.add('open');
+}
+function closeEditLineaModal() { document.getElementById('hrEditLineaModal').classList.remove('open'); }
+
+async function saveEditLinea() {
+  const lineaId = document.getElementById('hrEditLineaId').value;
+  if (!lineaId || !currentHoja) return;
+  try {
+    currentHoja = await api('hojas-ruta/' + currentHoja.id + '/lineas/' + lineaId, 'PUT', {
+      comercial_id: document.getElementById('hrEditComercial').value || null,
+      cc_aprox: parseFloat(document.getElementById('hrEditCC').value) || 0,
+      zona: document.getElementById('hrEditZona').value,
+      observaciones: document.getElementById('hrEditObs').value,
+      estado: document.getElementById('hrEditEstado').value,
+    });
+    closeEditLineaModal();
+    renderHojaDetail();
+    drawHojaOnMap();
+  } catch (e) { showToast('Error: ' + e.message); }
+}
+
+async function removeLineaFromModal() {
+  const lineaId = document.getElementById('hrEditLineaId').value;
+  if (!lineaId || !currentHoja) return;
+  if (!confirm('Quitar este cliente de la hoja?')) return;
+  try {
+    currentHoja = await api('hojas-ruta/' + currentHoja.id + '/lineas/' + lineaId, 'DELETE');
+    closeEditLineaModal();
+    renderHojaDetail();
+    drawHojaOnMap();
+    showToast('Cliente quitado');
+  } catch (e) { showToast('Error: ' + e.message); }
+}
+
+// ── Mapa para hoja de ruta ──
+let hrMapMarkers = [];
+let hrMapLine = null;
+
+function drawHojaOnMap() {
+  // Limpiar marcadores de hoja anteriores
+  hrMapMarkers.forEach(m => map.removeLayer(m));
+  hrMapMarkers = [];
+  if (hrMapLine) { map.removeLayer(hrMapLine); hrMapLine = null; }
+
+  if (!currentHoja || !currentHoja.lineas?.length) return;
+
+  const lineas = currentHoja.lineas;
+  const points = [];
+
+  // Marcador de delegación si hay ruta OSRM
+  if (hrOsrmGeometry && delegations.length) {
+    const del = delegations.find(d => parseInt(d.active));
+    if (del) {
+      const dm = L.marker([parseFloat(del.x), parseFloat(del.y)], { icon: delegationIcon('D'), zIndexOffset: 1000 })
+        .bindTooltip(del.name, { permanent: true, direction: 'bottom', offset: [0, 10], className: 'delegation-tooltip' })
+        .addTo(map);
+      hrMapMarkers.push(dm);
+    }
+  }
+
+  lineas.forEach((l, i) => {
+    const lat = parseFloat(l.client_x);
+    const lng = parseFloat(l.client_y);
+    if (!lat || !lng) return;
+
+    const num = l.orden_descarga || (i + 1);
+    const cc = parseFloat(l.cc_aprox || 0);
+    const tooltip = l.client_name + (cc > 0 ? ' (' + cc.toFixed(1) + ' CC)' : '');
+    const marker = L.marker([lat, lng], { icon: clientIcon('#8e8b30', num) })
+      .bindTooltip(tooltip, { direction: 'top', offset: [0, -12] })
+      .addTo(map);
+    hrMapMarkers.push(marker);
+    points.push([lat, lng]);
+  });
+
+  // Dibujar ruta: OSRM real si disponible, o línea recta como fallback
+  if (hrOsrmGeometry && hrOsrmGeometry.length > 1) {
+    hrMapLine = L.polyline(hrOsrmGeometry, { color: '#8e8b30', weight: 4, opacity: 0.8 }).addTo(map);
+    map.fitBounds(hrMapLine.getBounds().pad(0.1));
+  } else if (points.length > 1) {
+    hrMapLine = L.polyline(points, { color: '#8e8b30', weight: 3, opacity: 0.7, dashArray: '8,6' }).addTo(map);
+    map.fitBounds(L.latLngBounds(points).pad(0.15));
+  } else if (points.length) {
+    map.fitBounds(L.latLngBounds(points).pad(0.15));
+  }
+}
+
+// ── Impresión ──
+function printHoja() {
+  if (!currentHoja) return;
+  const h = currentHoja;
+  const lineas = h.lineas || [];
+
+  let rows = lineas.map((l, i) => {
+    const num = l.orden_descarga || (i + 1);
+    const cl = clients.find(c => c.id === parseInt(l.client_id));
+    const contado = cl?.al_contado ? ' <span style="color:red;font-weight:700">[CTD]</span>' : '';
+    return `<tr>
+      <td style="text-align:center">${num}</td>
+      <td><b>${esc(l.client_name)}</b>${contado}</td>
+      <td>${esc(l.zona || '')}</td>
+      <td>${esc(l.comercial_name || '')}</td>
+      <td style="text-align:center">${parseFloat(l.cc_aprox || 0) > 0 ? parseFloat(l.cc_aprox).toFixed(1) : ''}</td>
+      <td></td>
+      <td>${esc(l.observaciones || '')}</td>
+    </tr>`;
+  }).join('');
+
+  const totalCC = lineas.reduce((s, l) => s + parseFloat(l.cc_aprox || 0), 0).toFixed(1);
+
+  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Hoja de Ruta - ${esc(h.ruta_name)}</title>
+  <style>
+    body { font-family: "Segoe UI", Tahoma, sans-serif; padding: 20px; font-size: 12px; }
+    h1 { text-align: center; font-size: 18px; margin: 0; }
+    h2 { text-align: center; font-size: 14px; color: #666; margin: 4px 0 16px; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { border: 1px solid #ccc; padding: 5px 8px; text-align: left; font-size: 11px; }
+    th { background: #f0f0f0; font-size: 10px; text-transform: uppercase; }
+    .totals { margin-top: 12px; font-size: 13px; font-weight: 700; text-align: center; }
+    .firma { margin-top: 40px; display: flex; justify-content: space-between; }
+    .firma div { border-top: 1px solid #999; width: 200px; text-align: center; padding-top: 4px; font-size: 10px; color: #666; }
+    @media print { body { padding: 10px; } }
+  </style></head><body>
+  <h1>${esc(h.ruta_name)}</h1>
+  <h2>${h.fecha} — ${esc(h.responsable || '')}</h2>
+  <table>
+    <thead><tr><th>Ord</th><th>Cliente</th><th>Zona</th><th>Com.</th><th>CC</th><th>Entregado</th><th>Observaciones</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>
+  <div class="totals">TOTALES: ${totalCC} CC &middot; ${lineas.length} clientes</div>
+  <div class="firma"><div>Firma conductor</div><div>Firma almacen</div></div>
+  <script>window.print();<\/script>
+  </body></html>`;
+
+  const w = window.open('', '_blank');
+  w.document.write(html);
+  w.document.close();
+}
+
+async function toggleContado(clientId, checked) {
+  const c = clients.find(x => x.id === clientId);
+  if (c) c.al_contado = checked;
+  try {
+    await api('clients/' + clientId + '/contado', 'PUT', { al_contado: checked ? 1 : 0 });
+  } catch (e) { showToast('Error: ' + e.message); }
+}
+
+function esc(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+
 // ── CLOCK ──────────────────────────────────────────────────
 function tickClock() {
   const n = new Date();
@@ -1795,6 +2364,8 @@ window.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('hTo').value = today;
   const d30 = new Date(); d30.setDate(d30.getDate() - 30);
   document.getElementById('hFrom').value = d30.toISOString().slice(0, 10);
+
+  document.getElementById('hrDate').value = todayStr();
 
   await Promise.all([loadDelegation(), loadDelegations(), loadVehicles(), loadRutas()]);
   map.setView([delegation.x, delegation.y], 12);

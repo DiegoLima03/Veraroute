@@ -5,18 +5,24 @@ require_once __DIR__ . '/../core/Model.php';
 class HojaRuta extends Model
 {
     /* ── Listar hojas por fecha (y opcionalmente por ruta) ── */
-    public function getByFecha(string $fecha, ?int $rutaId = null)
+    public function getByFecha(string $fecha, ?int $rutaId = null, ?int $userId = null)
     {
         $sql = "SELECT h.*, r.name as ruta_name,
                        (SELECT COUNT(*) FROM hoja_ruta_lineas l WHERE l.hoja_ruta_id = h.id) as num_lineas
                 FROM hojas_ruta h
                 JOIN rutas r ON r.id = h.ruta_id
-                WHERE h.fecha = ?";
+                WHERE h.fecha = ?
+                  AND EXISTS (SELECT 1 FROM hoja_ruta_lineas l WHERE l.hoja_ruta_id = h.id)";
         $params = [$fecha];
 
         if ($rutaId) {
             $sql .= " AND h.ruta_id = ?";
             $params[] = $rutaId;
+        }
+
+        if ($userId) {
+            $sql .= " AND h.user_id = ?";
+            $params[] = $userId;
         }
 
         $sql .= " ORDER BY r.name";
@@ -65,14 +71,48 @@ class HojaRuta extends Model
     /* ── Crear hoja ── */
     public function create(array $data)
     {
+        $existing = $this->query(
+            "SELECT h.id,
+                    EXISTS(SELECT 1 FROM hoja_ruta_lineas l WHERE l.hoja_ruta_id = h.id) as has_lineas
+             FROM hojas_ruta h
+             WHERE h.ruta_id = ? AND h.fecha = ?
+             LIMIT 1",
+            [$data['ruta_id'], $data['fecha']]
+        )->fetch();
+
+        if ($existing) {
+            $hojaId = (int) $existing['id'];
+
+            if (!(int) $existing['has_lineas']) {
+                $fields = ["estado = 'borrador'"];
+                $params = [];
+
+                foreach (['responsable', 'notas', 'user_id'] as $f) {
+                    if (array_key_exists($f, $data)) {
+                        $fields[] = "$f = ?";
+                        $params[] = $data[$f];
+                    }
+                }
+
+                $params[] = $hojaId;
+                $this->query(
+                    "UPDATE hojas_ruta SET " . implode(', ', $fields) . " WHERE id = ?",
+                    $params
+                );
+            }
+
+            return $hojaId;
+        }
+
         $this->query(
-            "INSERT INTO hojas_ruta (ruta_id, fecha, responsable, notas)
-             VALUES (?, ?, ?, ?)",
+            "INSERT INTO hojas_ruta (ruta_id, fecha, responsable, notas, user_id)
+             VALUES (?, ?, ?, ?, ?)",
             [
                 $data['ruta_id'],
                 $data['fecha'],
                 $data['responsable'] ?? null,
                 $data['notas'] ?? null,
+                $data['user_id'] ?? null,
             ]
         );
         return (int) $this->db()->lastInsertId();
@@ -229,7 +269,13 @@ class HojaRuta extends Model
         return $this->query(
             "SELECT r.* FROM rutas r
              WHERE r.active = 1
-               AND r.id NOT IN (SELECT ruta_id FROM hojas_ruta WHERE fecha = ?)
+               AND NOT EXISTS (
+                   SELECT 1
+                   FROM hojas_ruta h
+                   WHERE h.ruta_id = r.id
+                     AND h.fecha = ?
+                     AND EXISTS (SELECT 1 FROM hoja_ruta_lineas l WHERE l.hoja_ruta_id = h.id)
+               )
              ORDER BY r.name",
             [$fecha]
         )->fetchAll();

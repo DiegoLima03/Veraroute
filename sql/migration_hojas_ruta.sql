@@ -5,6 +5,7 @@
 CREATE TABLE IF NOT EXISTS hojas_ruta (
     id INT AUTO_INCREMENT PRIMARY KEY,
     ruta_id INT NOT NULL                        COMMENT 'Ruta comercial (Comarca A, B, etc.)',
+    user_id INT UNSIGNED NULL                   COMMENT 'Usuario que creó la hoja',
     fecha DATE NOT NULL                         COMMENT 'Fecha de la hoja',
     responsable VARCHAR(100)                    COMMENT 'Quién gestiona la hoja',
     estado ENUM('borrador','cerrada','planificada','en_reparto','completada') DEFAULT 'borrador',

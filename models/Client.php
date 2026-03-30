@@ -11,6 +11,25 @@ class Client extends Model
         )->fetchAll();
     }
 
+    public function getAllByComercialIds(array $comercialIds)
+    {
+        if (empty($comercialIds)) {
+            return [];
+        }
+
+        $placeholders = implode(',', array_fill(0, count($comercialIds), '?'));
+
+        return $this->query(
+            "SELECT c.*, r.name as ruta_name, com.name as comercial_name
+             FROM clients c
+             LEFT JOIN rutas r ON c.ruta_id = r.id
+             LEFT JOIN comerciales com ON com.id = c.comercial_id
+             WHERE c.comercial_id IN ($placeholders)
+             ORDER BY c.active DESC, c.name",
+            array_values(array_map('intval', $comercialIds))
+        )->fetchAll();
+    }
+
     public function toggleActive(int $id)
     {
         $this->query('UPDATE clients SET active = NOT active WHERE id = ?', [$id]);

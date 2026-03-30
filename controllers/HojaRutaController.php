@@ -1,7 +1,9 @@
 <?php
 
 require_once __DIR__ . '/../core/Controller.php';
+require_once __DIR__ . '/../core/Auth.php';
 require_once __DIR__ . '/../models/HojaRuta.php';
+require_once __DIR__ . '/../models/Client.php';
 
 class HojaRutaController extends Controller
 {
@@ -17,8 +19,9 @@ class HojaRutaController extends Controller
     {
         $fecha  = $_GET['fecha'] ?? date('Y-m-d');
         $rutaId = isset($_GET['ruta_id']) ? (int) $_GET['ruta_id'] : null;
+        $userId = Auth::isComercial() ? Auth::currentUser()['id'] : null;
 
-        $hojas = $this->model->getByFecha($fecha, $rutaId);
+        $hojas = $this->model->getByFecha($fecha, $rutaId, $userId);
         $rutasSinHoja = $this->model->getRutasSinHoja($fecha);
 
         $this->json([
@@ -44,6 +47,7 @@ class HojaRutaController extends Controller
         }
 
         try {
+            $data['user_id'] = Auth::currentUser()['id'] ?? null;
             $id = $this->model->create($data);
             $this->json($this->model->getById($id), 201);
         } catch (\Exception $e) {
@@ -91,6 +95,25 @@ class HojaRutaController extends Controller
         if (empty($data['client_id'])) {
             $this->json(['error' => 'client_id es obligatorio'], 400);
         }
+
+        if (Auth::isComercial()) {
+            $clientModel = new Client();
+            $client = $clientModel->getById((int) $data['client_id']);
+            if (!$client) {
+                $this->json(['error' => 'Cliente no encontrado'], 404);
+            }
+
+            $allowedComercialIds = Auth::comercialIds();
+            $clientComercialId = !empty($client['comercial_id']) ? (int) $client['comercial_id'] : null;
+
+            if (!$clientComercialId || !in_array($clientComercialId, $allowedComercialIds, true)) {
+                $this->json(['error' => 'Ese cliente no pertenece a tus comerciales asociados'], 403);
+            }
+
+            // Para usuarios comerciales el comercial de la linea se deduce del propio cliente.
+            $data['comercial_id'] = $clientComercialId;
+        }
+
         $data['hoja_ruta_id'] = (int) $id;
         $lineaId = $this->model->addLinea((int) $id, $data);
         $this->json($this->model->getById((int) $id), 201);
@@ -217,7 +240,17 @@ class HojaRutaController extends Controller
     /* GET /api/comerciales */
     public function comerciales()
     {
-        $this->json($this->model->getComerciales());
+        $comerciales = $this->model->getComerciales();
+
+        if (Auth::isComercial()) {
+            $allowedIds = Auth::comercialIds();
+            $comerciales = array_values(array_filter(
+                $comerciales,
+                fn ($comercial) => in_array((int) $comercial['id'], $allowedIds, true)
+            ));
+        }
+
+        $this->json($comerciales);
     }
 
     /* ── Helpers privados ── */

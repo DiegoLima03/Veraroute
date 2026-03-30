@@ -8,10 +8,22 @@
 <link rel="stylesheet" href="public/css/app.css?v=<?= time() ?>">
 </head>
 <body>
+<?php $u = Auth::currentUser(); ?>
+<script>
+  var APP_USER = <?= json_encode([
+    'id'           => $u['id'] ?? null,
+    'username'     => $u['username'] ?? '',
+    'full_name'    => $u['full_name'] ?? '',
+    'role'         => $u['role'] ?? '',
+    'comercial_id' => $u['comercial_id'] ?? null,
+    'comercial_ids'=> Auth::comercialIds(),
+  ]) ?>;
+</script>
 
 <header class="header">
   <div class="logo">Vera<span>Route</span></div>
   <div class="badge">v3.0</div>
+  <?php if ($u['role'] !== 'comercial'): ?>
   <div class="stats-bar">
     <div class="stat"><div class="stat-val" id="sClientes">0</div><div class="stat-label">Clientes</div></div>
     <div class="stat"><div class="stat-val" id="sPedidos">0</div><div class="stat-label">Con pedido</div></div>
@@ -19,8 +31,59 @@
     <div class="stat"><div class="stat-val" id="sDist">—</div><div class="stat-label">Km total</div></div>
     <div class="stat"><div class="stat-val" id="sTime">—</div><div class="stat-label">Horas</div></div>
   </div>
+  <?php endif; ?>
+  <?php if ($u): ?>
+  <div class="user-info">
+    <span class="user-name"><?= htmlspecialchars($u['full_name'] ?: $u['username']) ?></span>
+    <span class="user-role-badge"><?= htmlspecialchars(strtoupper($u['role'])) ?></span>
+    <a href="logout" class="btn-logout" title="Cerrar sesion">Salir</a>
+  </div>
+  <?php endif; ?>
 </header>
 
+<?php if ($u['role'] === 'comercial'): ?>
+<!-- ═══ VISTA COMERCIAL: solo hojas de ruta a pantalla completa ═══ -->
+<div class="main" style="grid-template-columns:1fr">
+  <div class="panel" style="max-width:100%;width:100%">
+    <input type="hidden" id="rDate" value="">
+    <input type="hidden" id="hrDate" value="">
+    <span id="bhr" style="display:none">0</span>
+
+    <!-- Vista listado (principal) -->
+    <div id="hrListView" style="display:flex;flex-direction:column;flex:1;overflow:hidden">
+      <div class="scroll-list" id="hrList" style="flex:1">
+        <div style="padding:40px 20px;text-align:center;color:var(--text-dim)">Cargando rutas...</div>
+      </div>
+    </div>
+
+    <!-- Vista detalle de una hoja -->
+    <div id="hrDetailView" style="display:none;flex-direction:column;flex:1;overflow:hidden">
+      <div class="panel-header" style="gap:8px">
+        <button class="btn btn-secondary btn-sm" onclick="closeHojaDetail()">&larr; Volver</button>
+        <div class="panel-title" id="hrDetailTitle" style="flex:1">—</div>
+        <span class="hr-estado-badge" id="hrDetailEstado"></span>
+      </div>
+      <div style="padding:8px 14px;border-bottom:1px solid var(--border);display:flex;gap:6px;flex-wrap:wrap;background:var(--surface);flex-shrink:0">
+        <button class="btn btn-primary btn-sm" onclick="openAddLineaModal()">+ Cliente</button>
+        <button class="btn btn-secondary btn-sm" onclick="printHoja()">Imprimir</button>
+        <select id="hrEstadoSel" onchange="changeHojaEstado(this.value)" style="width:auto;padding:4px 8px;font-size:10px;border-radius:6px">
+          <option value="borrador">Borrador</option>
+          <option value="cerrada">Cerrada</option>
+        </select>
+      </div>
+      <div class="scroll-list" id="hrLineasList" style="flex:1"></div>
+      <div style="padding:8px 14px;border-top:1px solid var(--border);background:var(--surface);font-size:11px;display:flex;gap:16px;flex-shrink:0">
+        <span><b id="hrTotalClientes">0</b> clientes</span>
+        <span><b id="hrTotalCC">0</b> CC</span>
+        <span id="hrRouteInfo" style="margin-left:auto;color:var(--accent);font-weight:700"></span>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<?php else: ?>
+<!-- ═══ VISTA ADMIN / LOGISTICA ═══ -->
 <div class="main">
   <div class="panel">
     <div class="tabs">
@@ -28,6 +91,9 @@
       <button class="tab" id="tab-hr" onclick="switchTab('hr')">Hojas Ruta <span class="tab-badge" id="bhr">0</span></button>
       <button class="tab" id="tab-f" onclick="switchTab('f')">Flota</button>
       <button class="tab" id="tab-h" onclick="switchTab('h')">Historial</button>
+      <?php if ($u['role'] === 'admin'): ?>
+      <button class="tab" id="tab-u" onclick="switchTab('u')">Usuarios</button>
+      <?php endif; ?>
     </div>
 
     <!-- CLIENTES -->
@@ -134,6 +200,17 @@
       <div id="dashboardPanel" style="padding:10px;font-size:11px;overflow-y:auto;flex:0.5"></div>
     </div>
 
+    <?php if ($u['role'] === 'admin'): ?>
+    <!-- USUARIOS -->
+    <div id="vu" style="display:none;flex-direction:column;flex:1;overflow:hidden">
+      <div class="panel-header">
+        <div class="panel-title">Gestion de usuarios</div>
+        <button class="btn btn-primary" onclick="openUserModal()">+ Nuevo usuario</button>
+      </div>
+      <div class="scroll-list" id="userList"></div>
+    </div>
+    <?php endif; ?>
+
     <div class="optimize-bar">
       <button class="btn btn-primary" onclick="optimizeFleetRoutes()">Optimizar rutas</button>
       <button class="btn btn-secondary" onclick="clearRoute()" title="Limpiar">Limpiar</button>
@@ -164,6 +241,7 @@
     </div>
   </div>
 </div>
+<?php endif; ?>
 
 <!-- MODAL CLIENTE -->
 <div class="overlay" id="cModal">
@@ -351,7 +429,7 @@
       <div class="ff"><label>Buscar cliente</label><input id="hrLineaSearch" placeholder="Nombre del cliente..." oninput="filterLineaClients(this.value)"></div>
       <div id="hrLineaClientList" style="max-height:200px;overflow-y:auto;overflow-x:hidden;margin-bottom:10px"></div>
       <div class="fg">
-        <div><label>Comercial</label><select id="hrLineaComercial"><option value="">—</option></select></div>
+        <div id="hrLineaComercialWrap"><label>Comercial</label><select id="hrLineaComercial"><option value="">—</option></select></div>
         <div><label>CC Aprox</label><input type="number" id="hrLineaCC" step="0.25" min="0" placeholder="0.50"></div>
       </div>
       <div class="ff"><label>Observaciones</label><input id="hrLineaObs" placeholder="Direccion, llamar antes..."></div>
@@ -373,7 +451,7 @@
     <div class="mbody">
       <input type="hidden" id="hrEditLineaId">
       <div class="fg">
-        <div><label>Comercial</label><select id="hrEditComercial"><option value="">—</option></select></div>
+        <div id="hrEditComercialWrap"><label>Comercial</label><select id="hrEditComercial"><option value="">—</option></select></div>
         <div><label>CC Aprox</label><input type="number" id="hrEditCC" step="0.25" min="0"></div>
       </div>
       <div class="ff"><label>Zona</label><input id="hrEditZona"></div>
@@ -395,10 +473,51 @@
   </div>
 </div>
 
+<!-- MODAL USUARIO -->
+<div class="overlay" id="uModal">
+  <div class="modal" style="width:520px">
+    <div class="mhead">
+      <div class="mtitle" id="uModalTitle">Nuevo usuario</div>
+      <button class="mclose" onclick="closeUserModal()">x</button>
+    </div>
+    <div class="mbody">
+      <input type="hidden" id="uId">
+      <div class="msection">
+        <div class="msec-title">Datos de acceso</div>
+        <div class="fg">
+          <div><label>Usuario *</label><input id="uUsername" placeholder="nombre.usuario"></div>
+          <div><label>Nombre completo</label><input id="uFullName" placeholder="Pedro Garcia"></div>
+        </div>
+        <div class="fg">
+          <div><label id="uPassLabel">Contraseña *</label><input type="password" id="uPassword" placeholder="Min. 4 caracteres"></div>
+          <div><label>Rol *</label>
+            <select id="uRole" onchange="onUserRoleChange()">
+              <option value="comercial">Comercial</option>
+              <option value="logistica">Logistica</option>
+              <option value="admin">Administrador</option>
+            </select>
+          </div>
+        </div>
+      </div>
+      <div class="msection" id="uComercialesSection">
+        <div class="msec-title">Comerciales asociados</div>
+        <div id="uComercialesList" style="max-height:220px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:6px"></div>
+      </div>
+    </div>
+    <div class="mfoot">
+      <button class="btn btn-danger" id="uDeleteBtn" onclick="deleteUser()" style="display:none;margin-right:auto">Eliminar</button>
+      <button class="btn btn-secondary" onclick="closeUserModal()">Cancelar</button>
+      <button class="btn btn-primary" onclick="saveUser()">Guardar</button>
+    </div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
+<?php if ($u['role'] !== 'comercial'): ?>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js"></script>
+<?php endif; ?>
 <script src="public/js/app.js?v=<?= time() ?>"></script>
 </body>
 </html>

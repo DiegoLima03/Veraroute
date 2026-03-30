@@ -43,6 +43,37 @@ let filterMode = 'active';
 const ROUTE_COLORS = ['#d4a830', '#3498db', '#e74c3c', '#2ecc71', '#9b59b6', '#e67e22', '#1abc9c', '#e84393', '#0984e3', '#6c5ce7'];
 const RUTA_COLORS = ['#e74c3c', '#3498db', '#2ecc71', '#9b59b6', '#e67e22', '#1abc9c', '#e84393', '#0984e3', '#6c5ce7', '#d4a830'];
 let rutas = [];
+// Hojas de ruta
+let hojasData = { hojas: [], rutas_sin_hoja: [] };
+let currentHoja = null;
+let comerciales = [];
+let hrSortable = null;
+let hrOsrmGeometry = null;
+let hrRouteDistance = null;
+let hrRouteDuration = null;
+let lineaSelectedClients = new Set();
+let hrMapMarkers = [];
+let hrMapLine = null;
+
+function getUserComercialIds() {
+  if (typeof APP_USER === 'undefined') return [];
+
+  const ids = Array.isArray(APP_USER.comercial_ids)
+    ? APP_USER.comercial_ids.map(id => parseInt(id, 10)).filter(Boolean)
+    : [];
+
+  if (!ids.length && APP_USER.comercial_id) {
+    ids.push(parseInt(APP_USER.comercial_id, 10));
+  }
+
+  return Array.from(new Set(ids));
+}
+
+function shouldHideComercialSelector() {
+  return typeof APP_USER !== 'undefined'
+    && APP_USER.role === 'comercial'
+    && getUserComercialIds().length > 0;
+}
 
 // Delegacion principal — retrocompatibilidad
 let delegation = { name: 'Delegacion', x: 41.994524, y: -8.739887, address: '' };
@@ -72,11 +103,14 @@ async function loadVehicles() {
 }
 
 // ── LEAFLET MAP ───────────────────────────────────────────
-const map = L.map('map').setView([40.0, -3.5], 6);
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-  attribution: '&copy; OpenStreetMap',
-  maxZoom: 19,
-}).addTo(map);
+const mapEl = document.getElementById('map');
+const map = (mapEl && typeof L !== 'undefined') ? L.map('map').setView([40.0, -3.5], 6) : null;
+if (map) {
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '&copy; OpenStreetMap',
+    maxZoom: 19,
+  }).addTo(map);
+}
 
 let mapMarkers = [];
 let clientMarkerMap = {};
@@ -97,7 +131,7 @@ function clientIcon(color, label) {
 }
 
 // Click en mapa para colocar ubicaciones
-map.on('click', function (e) {
+if (map) map.on('click', function (e) {
   const lat = e.latlng.lat;
   const lng = e.latlng.lng;
   const modalOpen = document.getElementById('cModal').classList.contains('open');
@@ -143,6 +177,7 @@ function focusClientOnMap(id) {
 }
 
 function drawMap() {
+  if (!map) return;
   // Limpiar marcadores anteriores
   mapMarkers.forEach(m => map.removeLayer(m));
   mapMarkers = [];
@@ -240,6 +275,7 @@ function drawMap() {
 }
 
 function fitMapToMarkers() {
+  if (!map) return;
   const ac = activeClients();
   if (!ac.length) {
     map.setView([delegation.x, delegation.y], 12);
@@ -317,13 +353,18 @@ function switchTab(t) {
   document.getElementById('vhr').style.display = t === 'hr' ? 'flex' : 'none';
   document.getElementById('vf').style.display = t === 'f' ? 'flex' : 'none';
   document.getElementById('vh').style.display = t === 'h' ? 'flex' : 'none';
+  const vu = document.getElementById('vu');
+  if (vu) vu.style.display = t === 'u' ? 'flex' : 'none';
   document.getElementById('tab-c').classList.toggle('active', t === 'c');
   document.getElementById('tab-hr').classList.toggle('active', t === 'hr');
   document.getElementById('tab-f').classList.toggle('active', t === 'f');
   document.getElementById('tab-h').classList.toggle('active', t === 'h');
+  const tabU = document.getElementById('tab-u');
+  if (tabU) tabU.classList.toggle('active', t === 'u');
   if (t === 'f') renderFleetLists();
   if (t === 'h') { loadHistory(); loadDashboard(); }
   if (t === 'hr') loadHojasRuta();
+  if (t === 'u') loadUsers();
 }
 
 // ── DATE ───────────────────────────────────────────────────
@@ -749,6 +790,7 @@ function renderPedidosList() {
 }
 
 function updateStats() {
+  if (typeof APP_USER !== 'undefined' && APP_USER.role === 'comercial') return;
   const date = getDate(); const day = orders[date] || {};
   const np = Object.keys(day).length;
   const ac = activeClients().length;
@@ -1783,11 +1825,6 @@ async function toggleStopStatus(planId, stopOrder, currentStatus) {
 }
 
 // ── HOJAS DE RUTA ─────────────────────────────────────────
-let hojasData = { hojas: [], rutas_sin_hoja: [] };
-let currentHoja = null;
-let comerciales = [];
-let hrSortable = null;
-
 function getHrDate() { return document.getElementById('hrDate').value || todayStr(); }
 function setHrToday() { document.getElementById('hrDate').value = todayStr(); onHrDateChange(); }
 function hrDateNav(delta) {
@@ -1815,48 +1852,82 @@ async function loadHojasRuta() {
 function renderHojasList() {
   const el = document.getElementById('hrList');
   const { hojas, rutas_sin_hoja } = hojasData;
+  const isComercial = typeof APP_USER !== 'undefined' && APP_USER.role === 'comercial';
 
   if (!hojas.length && !rutas_sin_hoja.length) {
     el.innerHTML = '<div class="empty"><div class="empty-icon">📋</div>No hay hojas de ruta para esta fecha</div>';
     return;
   }
 
-  // Resumen diario
-  const totalClientes = hojas.reduce((s, h) => s + (h.lineas ? h.lineas.length : (h.num_lineas || 0)), 0);
-  const totalCC = hojas.reduce((s, h) => s + parseFloat(h.total_cc || 0), 0);
-  const porEstado = {};
-  hojas.forEach(h => { porEstado[h.estado] = (porEstado[h.estado] || 0) + 1; });
-  const estadoResumen = Object.entries(porEstado).map(([e, n]) => `${n} ${e}`).join(', ');
+  let html = '';
 
-  let html = `<div style="padding:8px 10px;background:var(--surface);border:1px solid var(--border);border-radius:8px;margin-bottom:10px;font-size:11px;display:flex;gap:14px;flex-wrap:wrap">
-    <span><b>${hojas.length}</b> hojas</span>
-    <span><b>${totalClientes}</b> clientes</span>
-    <span><b>${totalCC.toFixed(1)}</b> CC</span>
-    <span style="color:var(--text-dim)">${estadoResumen}</span>
-  </div>`;
-  hojas.forEach(h => {
-    const numLineas = h.lineas ? h.lineas.length : (h.num_lineas || 0);
-    html += `<div class="hr-card" onclick="openHojaDetail(${h.id})">
-      <div class="hr-card-top">
-        <div class="hr-card-ruta">${esc(h.ruta_name)}</div>
-        <span class="hr-estado-badge hr-estado-${h.estado}">${h.estado}</span>
-      </div>
-      <div class="hr-card-bottom">
-        <span>${esc(h.responsable || '—')}</span>
-        <span>${numLineas} clientes</span>
-        <span>${parseFloat(h.total_cc || 0).toFixed(1)} CC</span>
-      </div>
+  if (isComercial) {
+    // ── Vista comercial: rutas disponibles como tarjetas grandes + hojas creadas ──
+    if (rutas_sin_hoja.length) {
+      html += '<div style="padding:12px 14px 6px;font-size:11px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:1px">Crear hoja de ruta</div>';
+      rutas_sin_hoja.forEach(r => {
+        html += `<div class="hr-card" style="cursor:pointer;border:2px dashed var(--accent);background:var(--accent-soft)" onclick="quickCreateHoja(${r.id})">
+          <div class="hr-card-top">
+            <div class="hr-card-ruta">${esc(r.name)}</div>
+            <span class="btn btn-primary btn-sm" style="pointer-events:none">+ Crear hoja</span>
+          </div>
+        </div>`;
+      });
+    }
+    if (hojas.length) {
+      html += '<div style="padding:12px 14px 6px;font-size:11px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px">Mis hojas de hoy</div>';
+      hojas.forEach(h => {
+        const numLineas = h.lineas ? h.lineas.length : (h.num_lineas || 0);
+        html += `<div class="hr-card" onclick="openHojaDetail(${h.id})">
+          <div class="hr-card-top">
+            <div class="hr-card-ruta">${esc(h.ruta_name)}</div>
+            <span class="hr-estado-badge hr-estado-${h.estado}">${h.estado}</span>
+          </div>
+          <div class="hr-card-bottom">
+            <span>${numLineas} clientes</span>
+            <span>${parseFloat(h.total_cc || 0).toFixed(1)} CC</span>
+          </div>
+        </div>`;
+      });
+    }
+  } else {
+    // ── Vista admin/logistica ──
+    const totalClientes = hojas.reduce((s, h) => s + (h.lineas ? h.lineas.length : (h.num_lineas || 0)), 0);
+    const totalCC = hojas.reduce((s, h) => s + parseFloat(h.total_cc || 0), 0);
+    const porEstado = {};
+    hojas.forEach(h => { porEstado[h.estado] = (porEstado[h.estado] || 0) + 1; });
+    const estadoResumen = Object.entries(porEstado).map(([e, n]) => `${n} ${e}`).join(', ');
+
+    html += `<div style="padding:8px 10px;background:var(--surface);border:1px solid var(--border);border-radius:8px;margin-bottom:10px;font-size:11px;display:flex;gap:14px;flex-wrap:wrap">
+      <span><b>${hojas.length}</b> hojas</span>
+      <span><b>${totalClientes}</b> clientes</span>
+      <span><b>${totalCC.toFixed(1)}</b> CC</span>
+      <span style="color:var(--text-dim)">${estadoResumen}</span>
     </div>`;
-  });
-
-  if (rutas_sin_hoja.length) {
-    html += '<div style="margin-top:10px;font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">Rutas sin hoja hoy</div>';
-    rutas_sin_hoja.forEach(r => {
-      html += `<div class="hr-sin-hoja">
-        <span>${esc(r.name)}</span>
-        <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation();quickCreateHoja(${r.id})">+ Crear</button>
+    hojas.forEach(h => {
+      const numLineas = h.lineas ? h.lineas.length : (h.num_lineas || 0);
+      html += `<div class="hr-card" onclick="openHojaDetail(${h.id})">
+        <div class="hr-card-top">
+          <div class="hr-card-ruta">${esc(h.ruta_name)}</div>
+          <span class="hr-estado-badge hr-estado-${h.estado}">${h.estado}</span>
+        </div>
+        <div class="hr-card-bottom">
+          <span>${esc(h.responsable || '—')}</span>
+          <span>${numLineas} clientes</span>
+          <span>${parseFloat(h.total_cc || 0).toFixed(1)} CC</span>
+        </div>
       </div>`;
     });
+
+    if (rutas_sin_hoja.length) {
+      html += '<div style="margin-top:10px;font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">Rutas sin hoja hoy</div>';
+      rutas_sin_hoja.forEach(r => {
+        html += `<div class="hr-sin-hoja">
+          <span>${esc(r.name)}</span>
+          <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation();quickCreateHoja(${r.id})">+ Crear</button>
+        </div>`;
+      });
+    }
   }
 
   el.innerHTML = html;
@@ -1864,19 +1935,26 @@ function renderHojasList() {
 
 async function quickCreateHoja(rutaId) {
   try {
-    await api('hojas-ruta', 'POST', { ruta_id: rutaId, fecha: getHrDate() });
-    showToast('Hoja creada');
+    const hoja = await api('hojas-ruta', 'POST', { ruta_id: rutaId, fecha: getHrDate() });
     await loadHojasRuta();
+    await openHojaDetail(hoja.id);
+    showToast('Hoja abierta');
   } catch (e) { showToast('Error: ' + e.message); }
 }
 
-function openCreateHojaModal() {
-  const sel = document.getElementById('hrNewRuta');
-  sel.innerHTML = hojasData.rutas_sin_hoja.map(r => `<option value="${r.id}">${esc(r.name)}</option>`).join('');
-  if (!sel.innerHTML) sel.innerHTML = '<option value="">Todas las rutas ya tienen hoja</option>';
-  document.getElementById('hrNewResp').value = '';
-  document.getElementById('hrNewNotas').value = '';
-  document.getElementById('hrCreateModal').classList.add('open');
+async function openCreateHojaModal() {
+  try {
+    // Asegurar que los datos están cargados
+    if (!hojasData.rutas_sin_hoja || !hojasData.rutas_sin_hoja.length) {
+      await loadHojasRuta();
+    }
+    const sel = document.getElementById('hrNewRuta');
+    sel.innerHTML = hojasData.rutas_sin_hoja.map(r => `<option value="${r.id}">${esc(r.name)}</option>`).join('');
+    if (!sel.innerHTML) sel.innerHTML = '<option value="">Todas las rutas ya tienen hoja</option>';
+    document.getElementById('hrNewResp').value = '';
+    document.getElementById('hrNewNotas').value = '';
+    document.getElementById('hrCreateModal').classList.add('open');
+  } catch (e) { showToast('Error abriendo modal: ' + e.message); }
 }
 function closeHrCreateModal() { document.getElementById('hrCreateModal').classList.remove('open'); }
 
@@ -1884,15 +1962,16 @@ async function createHoja() {
   const rutaId = document.getElementById('hrNewRuta').value;
   if (!rutaId) return showToast('Selecciona una ruta');
   try {
-    await api('hojas-ruta', 'POST', {
+    const hoja = await api('hojas-ruta', 'POST', {
       ruta_id: parseInt(rutaId),
       fecha: getHrDate(),
       responsable: document.getElementById('hrNewResp').value,
       notas: document.getElementById('hrNewNotas').value,
     });
     closeHrCreateModal();
-    showToast('Hoja creada');
     await loadHojasRuta();
+    await openHojaDetail(hoja.id);
+    showToast('Hoja abierta');
   } catch (e) { showToast('Error: ' + e.message); }
 }
 
@@ -1998,9 +2077,7 @@ async function changeHojaEstado(estado) {
   } catch (e) { showToast('Error: ' + e.message); }
 }
 
-let hrOsrmGeometry = null; // polilínea real OSRM
-let hrRouteDistance = null;
-let hrRouteDuration = null;
+// (variables movidas al bloque STATE)
 
 async function autoOrdenarHoja() {
   if (!currentHoja) return;
@@ -2084,14 +2161,20 @@ async function duplicarHoja() {
 }
 
 // ── Modal añadir líneas ──
-let lineaSelectedClients = new Set();
 
 function openAddLineaModal() {
   if (!currentHoja) return;
-  loadComerciales().then(() => {
-    const comSel = document.getElementById('hrLineaComercial');
-    comSel.innerHTML = '<option value="">—</option>' + comerciales.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
-  });
+  const comWrap = document.getElementById('hrLineaComercialWrap');
+  const comSel = document.getElementById('hrLineaComercial');
+  if (shouldHideComercialSelector()) {
+    if (comWrap) comWrap.style.display = 'none';
+    comSel.innerHTML = '<option value="">—</option>';
+  } else {
+    if (comWrap) comWrap.style.display = '';
+    loadComerciales().then(() => {
+      comSel.innerHTML = '<option value="">—</option>' + comerciales.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
+    });
+  }
   document.getElementById('hrLineaCC').value = '';
   document.getElementById('hrLineaObs').value = '';
   document.getElementById('hrLineaSearch').value = '';
@@ -2104,11 +2187,19 @@ function closeAddLineaModal() { document.getElementById('hrAddLineaModal').class
 function filterLineaClients(q) {
   const existingIds = new Set((currentHoja?.lineas || []).map(l => parseInt(l.client_id)));
   const rutaId = currentHoja?.ruta_id;
+  const userComercialIds = getUserComercialIds();
   q = q.toLowerCase();
 
+  let visibleClients = clients.filter(c => c.active && !existingIds.has(c.id));
+  if (typeof APP_USER !== 'undefined' && APP_USER.role === 'comercial') {
+    visibleClients = userComercialIds.length
+      ? visibleClients.filter(c => c.comercial_id && userComercialIds.includes(c.comercial_id))
+      : [];
+  }
+
   // Primero clientes de la ruta, luego el resto
-  const rutaClients = clients.filter(c => c.active && c.ruta_id == rutaId && !existingIds.has(c.id));
-  const otherClients = clients.filter(c => c.active && c.ruta_id != rutaId && !existingIds.has(c.id));
+  const rutaClients = visibleClients.filter(c => c.ruta_id == rutaId);
+  const otherClients = visibleClients.filter(c => c.ruta_id != rutaId);
 
   let filtered = [...rutaClients, ...otherClients];
   if (q) filtered = filtered.filter(c => c.name.toLowerCase().includes(q) || (c.addr || '').toLowerCase().includes(q));
@@ -2152,6 +2243,8 @@ function toggleLineaClient(id, row) {
 async function addLineasToHoja() {
   if (!currentHoja || !lineaSelectedClients.size) return showToast('Selecciona al menos un cliente');
   const comercialId = document.getElementById('hrLineaComercial').value || null;
+  const userComercialIds = getUserComercialIds();
+  const defaultUserComercialId = userComercialIds.length === 1 ? userComercialIds[0] : null;
   const cc = document.getElementById('hrLineaCC').value || 0;
   const obs = document.getElementById('hrLineaObs').value || '';
 
@@ -2160,7 +2253,7 @@ async function addLineasToHoja() {
       const client = clients.find(c => c.id === clientId);
       await api('hojas-ruta/' + currentHoja.id + '/lineas', 'POST', {
         client_id: clientId,
-        comercial_id: comercialId ? parseInt(comercialId) : (client?.comercial_id || null),
+        comercial_id: comercialId ? parseInt(comercialId) : (client?.comercial_id || defaultUserComercialId || null),
         cc_aprox: parseFloat(cc) || 0,
         zona: client?.addr || '',
         observaciones: obs,
@@ -2178,6 +2271,11 @@ async function addLineasToHoja() {
 function openEditLineaModal(lineaId) {
   const linea = (currentHoja?.lineas || []).find(l => parseInt(l.id) === lineaId);
   if (!linea) return;
+  const comWrap = document.getElementById('hrEditComercialWrap');
+
+  if (comWrap) {
+    comWrap.style.display = shouldHideComercialSelector() ? 'none' : '';
+  }
 
   loadComerciales().then(() => {
     const comSel = document.getElementById('hrEditComercial');
@@ -2227,8 +2325,6 @@ async function removeLineaFromModal() {
 }
 
 // ── Mapa para hoja de ruta ──
-let hrMapMarkers = [];
-let hrMapLine = null;
 
 function drawHojaOnMap() {
   // Limpiar marcadores de hoja anteriores
@@ -2344,8 +2440,9 @@ function esc(s) { const d = document.createElement('div'); d.textContent = s || 
 // ── CLOCK ──────────────────────────────────────────────────
 function tickClock() {
   const n = new Date();
-  document.getElementById('clock').textContent = String(n.getHours()).padStart(2, '0') + ':' + String(n.getMinutes()).padStart(2, '0');
-  refreshAll();
+  const el = document.getElementById('clock');
+  if (el) el.textContent = String(n.getHours()).padStart(2, '0') + ':' + String(n.getMinutes()).padStart(2, '0');
+  if (typeof APP_USER === 'undefined' || APP_USER.role !== 'comercial') refreshAll();
 }
 
 function showToast(msg) {
@@ -2353,24 +2450,163 @@ function showToast(msg) {
   setTimeout(() => t.classList.remove('show'), 2800);
 }
 
+// ── GESTIÓN DE USUARIOS ──────────────────────────────────
+let appUsers = [];
+let allComerciales = [];
+
+async function loadUsers() {
+  try {
+    appUsers = await api('users');
+    if (!allComerciales.length) allComerciales = await api('comerciales');
+  } catch (e) { appUsers = []; }
+  renderUserList();
+}
+
+function renderUserList() {
+  const el = document.getElementById('userList');
+  if (!el) return;
+  if (!appUsers.length) {
+    el.innerHTML = '<div class="empty">No hay usuarios</div>';
+    return;
+  }
+  const roleLabels = { admin: 'Admin', logistica: 'Logistica', comercial: 'Comercial' };
+  const roleColors = { admin: '#c83c32', logistica: '#3498db', comercial: '#8e8b30' };
+  let html = '';
+  appUsers.forEach(u => {
+    const comNames = u.comercial_ids && u.comercial_ids.length
+      ? u.comercial_ids.map(cid => { const c = allComerciales.find(x => x.id === cid); return c ? c.name : ''; }).filter(Boolean).join(', ')
+      : '';
+    html += `<div class="hr-card" onclick="openUserModal(${u.id})" style="cursor:pointer">
+      <div class="hr-card-top">
+        <div class="hr-card-ruta">${esc(u.full_name || u.username)}</div>
+        <span style="background:${roleColors[u.role] || '#888'};color:#fff;padding:2px 8px;border-radius:4px;font-size:9px;font-weight:700;text-transform:uppercase">${roleLabels[u.role] || u.role}</span>
+      </div>
+      <div class="hr-card-bottom">
+        <span style="color:var(--text-dim)">@${esc(u.username)}</span>
+        ${!u.active ? '<span style="color:var(--danger);font-weight:700">INACTIVO</span>' : ''}
+        ${u.locked ? '<span style="color:var(--danger);font-weight:700">BLOQUEADO</span>' : ''}
+        ${comNames ? '<span style="font-size:10px;color:var(--text-dim)">' + esc(comNames) + '</span>' : ''}
+      </div>
+    </div>`;
+  });
+  el.innerHTML = html;
+}
+
+function openUserModal(id) {
+  const isEdit = !!id;
+  document.getElementById('uModalTitle').textContent = isEdit ? 'Editar usuario' : 'Nuevo usuario';
+  document.getElementById('uId').value = id || '';
+  document.getElementById('uDeleteBtn').style.display = isEdit ? '' : 'none';
+  document.getElementById('uPassLabel').textContent = isEdit ? 'Nueva contraseña (dejar vacio para no cambiar)' : 'Contraseña *';
+
+  const u = isEdit ? appUsers.find(x => x.id === id) : null;
+  document.getElementById('uUsername').value = u ? u.username : '';
+  document.getElementById('uFullName').value = u ? u.full_name : '';
+  document.getElementById('uPassword').value = '';
+  document.getElementById('uRole').value = u ? u.role : 'comercial';
+
+  renderComercialesCheckboxes(u ? u.comercial_ids : []);
+  onUserRoleChange();
+  document.getElementById('uModal').classList.add('open');
+}
+
+function closeUserModal() { document.getElementById('uModal').classList.remove('open'); }
+
+function onUserRoleChange() {
+  const role = document.getElementById('uRole').value;
+  document.getElementById('uComercialesSection').style.display = role === 'comercial' ? '' : 'none';
+}
+
+function renderComercialesCheckboxes(selectedIds) {
+  const el = document.getElementById('uComercialesList');
+  if (!allComerciales.length) {
+    el.innerHTML = '<div style="padding:8px;color:var(--text-dim);font-size:11px">No hay comerciales en la base de datos</div>';
+    return;
+  }
+  const ids = selectedIds || [];
+  el.innerHTML = allComerciales.map(c => {
+    const checked = ids.includes(c.id) ? 'checked' : '';
+    return `<label style="display:flex;align-items:center;gap:6px;padding:4px 6px;font-size:12px;cursor:pointer;border-bottom:1px solid var(--border)">
+      <input type="checkbox" value="${c.id}" ${checked} style="width:auto;flex-shrink:0">
+      <span style="flex:1">${esc(c.name)}</span>
+      <span style="color:var(--text-dim);font-size:10px">${esc(c.code)}</span>
+    </label>`;
+  }).join('');
+}
+
+function getSelectedComercialIds() {
+  return Array.from(document.querySelectorAll('#uComercialesList input[type=checkbox]:checked'))
+    .map(cb => parseInt(cb.value));
+}
+
+async function saveUser() {
+  const id = document.getElementById('uId').value;
+  const username = document.getElementById('uUsername').value.trim();
+  const password = document.getElementById('uPassword').value;
+  const fullName = document.getElementById('uFullName').value.trim();
+  const role = document.getElementById('uRole').value;
+
+  if (!username) return showToast('El usuario es obligatorio');
+  if (!id && !password) return showToast('La contraseña es obligatoria');
+  if (password && password.length < 4) return showToast('Minimo 4 caracteres');
+
+  const body = {
+    username,
+    full_name: fullName,
+    role,
+    comercial_ids: role === 'comercial' ? getSelectedComercialIds() : [],
+    active: 1,
+    locked: 0,
+  };
+  if (password) body.password = password;
+
+  try {
+    if (id) {
+      await api('users/' + id, 'PUT', body);
+      showToast('Usuario actualizado');
+    } else {
+      await api('users', 'POST', body);
+      showToast('Usuario creado');
+    }
+    closeUserModal();
+    await loadUsers();
+  } catch (e) { showToast('Error: ' + e.message); }
+}
+
+async function deleteUser() {
+  const id = document.getElementById('uId').value;
+  if (!id || !confirm('¿Eliminar este usuario?')) return;
+  try {
+    await api('users/' + id, 'DELETE');
+    showToast('Usuario eliminado');
+    closeUserModal();
+    await loadUsers();
+  } catch (e) { showToast('Error: ' + e.message); }
+}
+
 // ── INIT ───────────────────────────────────────────────────
 window.addEventListener('DOMContentLoaded', async () => {
-  setToday();
+  if (document.getElementById('rDate')) setToday();
   tickClock();
   setInterval(tickClock, 60000);
 
-  // Inicializar fechas del historial (ultimos 30 dias)
-  const today = todayStr();
-  document.getElementById('hTo').value = today;
-  const d30 = new Date(); d30.setDate(d30.getDate() - 30);
-  document.getElementById('hFrom').value = d30.toISOString().slice(0, 10);
-
   document.getElementById('hrDate').value = todayStr();
 
-  await Promise.all([loadDelegation(), loadDelegations(), loadVehicles(), loadRutas()]);
-  map.setView([delegation.x, delegation.y], 12);
-  await loadClients();
-  await loadOrders();
-  refreshAll();
-  fitMapToMarkers();
+  if (typeof APP_USER !== 'undefined' && APP_USER.role === 'comercial') {
+    await loadClients();
+    await loadRutas();
+    await loadHojasRuta();
+  } else {
+    const today = todayStr();
+    document.getElementById('hTo').value = today;
+    const d30 = new Date(); d30.setDate(d30.getDate() - 30);
+    document.getElementById('hFrom').value = d30.toISOString().slice(0, 10);
+
+    await Promise.all([loadDelegation(), loadDelegations(), loadVehicles(), loadRutas()]);
+    map.setView([delegation.x, delegation.y], 12);
+    await loadClients();
+    await loadOrders();
+    refreshAll();
+    fitMapToMarkers();
+  }
 });

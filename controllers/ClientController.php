@@ -1,6 +1,7 @@
 <?php
 
 require_once __DIR__ . '/../core/Controller.php';
+require_once __DIR__ . '/../core/Auth.php';
 require_once __DIR__ . '/../models/Client.php';
 require_once __DIR__ . '/../models/ClientSchedule.php';
 require_once __DIR__ . '/../models/Order.php';
@@ -18,7 +19,9 @@ class ClientController extends Controller
 
     public function index()
     {
-        $clients   = $this->client->getAll();
+        $clients = Auth::isComercial()
+            ? $this->client->getAllByComercialIds(Auth::comercialIds())
+            : $this->client->getAll();
         $schedules = $this->schedule->getAllGrouped();
 
         foreach ($clients as &$c) {

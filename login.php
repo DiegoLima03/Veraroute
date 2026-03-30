@@ -1,353 +1,96 @@
 <?php
-// login.php — versión UI corporativa con redirección por dispositivo (solo móviles a versión móvil)
 declare(strict_types=1);
-ini_set('display_errors','1'); error_reporting(E_ALL);
+ini_set('display_errors', '1');
+error_reporting(E_ALL);
 
-require_once __DIR__ . '/conexion.php';
-require_once __DIR__ . '/auth.php';
+require_once __DIR__ . '/config/database.php';
+require_once __DIR__ . '/core/Auth.php';
 
-// ====== LOG A CSV (nuevo destino: ../private/logs_veratrack.log) ======
-// 3. Ruta base real
-// Apunta a c:/wamp64/www/private/
-$baseDir = realpath(__DIR__ . '/../private');
-if ($baseDir === false) {
-  $baseDir = __DIR__ . '/../private';
-}
-$LOGIN_TXT_PATH = rtrim($baseDir, "/\\") . DIRECTORY_SEPARATOR . 'logs_veratrack.log';
+$pdo = Database::connect();
 
-// Asegura que la carpeta exista
-$logDir = dirname($LOGIN_TXT_PATH);
-if (!is_dir($logDir)) {
-  @mkdir($logDir, 0755, true);
-}
-
-function getClientIp(): string {
-  $candidates = [
-    'HTTP_CF_CONNECTING_IP',   // Cloudflare
-    'HTTP_X_FORWARDED_FOR',    // proxy
-    'HTTP_X_REAL_IP',
-    'REMOTE_ADDR'
-  ];
-
-  foreach ($candidates as $key) {
-    if (empty($_SERVER[$key])) continue;
-
-    if ($key === 'HTTP_X_FORWARDED_FOR') {
-      $parts = array_map('trim', explode(',', (string)$_SERVER[$key]));
-      foreach ($parts as $ip) {
-        if (filter_var($ip, FILTER_VALIDATE_IP)) return $ip;
-      }
-    } else {
-      $ip = trim((string)$_SERVER[$key]);
-      if (filter_var($ip, FILTER_VALIDATE_IP)) return $ip;
-    }
-  }
-  return '0.0.0.0';
-}
-
-function geo_country_from_ip(string $ip): array {
-  // Localhost / loopback no tiene pais real
-  if ($ip === '::1' || $ip === '127.0.0.1') {
-    return ['Local', 'LOCAL'];
-  }
-
-  $url = 'https://free.freeipapi.com/api/json/' . rawurlencode($ip);
-  $ctx = stream_context_create([
-    'http' => [
-      'method'  => 'GET',
-      'timeout' => 2,
-      'header'  => "Accept: application/json\r\n",
-    ],
-  ]);
-
-  $raw = @file_get_contents($url, false, $ctx);
-  if ($raw === false) return ['', ''];
-
-  $data = json_decode($raw, true);
-  if (!is_array($data)) return ['', ''];
-
-  $countryName = (string)($data['countryName'] ?? '');
-  $countryCode = (string)($data['countryCode'] ?? '');
-
-  return [$countryName, $countryCode];
-}
-
-function append_login_txt(string $file, string $username, int $userId, bool $success, string $tipo = 'user'): void {
-  $date = date('Y-m-d H:i:s');
-  $ip   = getClientIp();
-  $ua   = $_SERVER['HTTP_USER_AGENT'] ?? '';
-  [$countryName, $countryCode] = geo_country_from_ip($ip);
-
-  // limpiar para que no rompa el CSV
-  $username = str_replace(["\r","\n","\t"], ' ', $username);
-  $ua       = str_replace(["\r","\n","\t"], ' ', $ua);
-
-  $isNew = (!file_exists($file) || @filesize($file) === 0);
-
-  $fh = @fopen($file, 'ab');
-  if ($fh === false) return;
-  if (@flock($fh, LOCK_EX)) {
-    if ($isNew) {
-      @fputcsv($fh, ['date','tipo','user_id','user','success','ip','ua','country','country_code'], ';');
-    }
-    @fputcsv($fh, [
-      $date,
-      $tipo,
-      $userId,
-      $username,
-      $success ? 1 : 0,
-      $ip,
-      $ua,
-      $countryName,
-      $countryCode
-    ], ';');
-    @flock($fh, LOCK_UN);
-  }
-  @fclose($fh);
-}
+define('MAX_FAILED_LOGINS', 5);
 
 // === NAVIDAD: activar/desactivar nieve ===
-// Opción A (recomendado): por rango de fechas (01/12 a 07/01)
 $SNOW_ENABLED = (date('n') == 12) || (date('n') == 1 && date('j') <= 7);
-
-// Opción B (manual): fuerza ON/OFF comentando lo anterior
-// $SNOW_ENABLED = true;  // ON
-// $SNOW_ENABLED = false; // OFF
-
-
-// === Control de login ===
-if (!defined('MAX_FAILED_LOGINS')) {
-  define('MAX_FAILED_LOGINS', 5); // umbral de bloqueos
-}
-
-/**
- * Devuelve true SOLO para teléfonos.
- *
- * Reglas:
- *  - iPhone / iPod → móvil
- *  - Android con "Mobile" → móvil (teléfono)
- *  - Windows Phone / IEMobile / Opera Mini / BlackBerry → móvil
- *  - iPad, tablets Android (Android sin "Mobile"), y cualquier desktop → NO móvil
- */
-function is_phone_device(): bool {
-  $ua = strtolower($_SERVER['HTTP_USER_AGENT'] ?? '');
-  if ($ua === '') return false;
-
-  // pistas de escritorio para evitar falsos positivos
-  $isDesktopHints = (
-      strpos($ua, 'windows nt') !== false
-      || strpos($ua, 'macintosh') !== false
-      || strpos($ua, 'x11') !== false
-  ) && strpos($ua, 'mobile') === false;
-
-  if ($isDesktopHints) return false;
-
-  // Teléfonos comunes
-  if (preg_match('/iphone|ipod|windows phone|iemobile|opera mini|blackberry|bb10/i', $ua)) {
-    return true;
-  }
-
-  // Android: solo si lleva "mobile" (tablets Android suelen ir sin "mobile")
-  if (strpos($ua, 'android') !== false && strpos($ua, 'mobile') !== false) {
-    return true;
-  }
-
-  // iPad/tablet NO son móviles aquí (queremos vista escritorio)
-  return false;
-}
 
 $login_success = !empty($_SESSION['login_success']);
 unset($_SESSION['login_success']);
 
-
-// --- Si ya está logueado, redirige según dispositivo ---
-if (is_logged_in() && !$login_success) {
-  $currentUser = current_user();
-  // Si es chofer, redirigir a menu_chofer.php
-  if (isset($currentUser['is_chofer']) && $currentUser['is_chofer']) {
-    header('Location: menu_chofer.php');
+// Si ya está logueado, redirigir a la app
+if (Auth::isLoggedIn() && !$login_success) {
+    // Acción de logout
+    if (isset($_GET['logout'])) {
+        Auth::logout();
+        header('Location: login.php');
+        exit;
+    }
+    header('Location: /Gestor de Rutas/');
     exit;
-  }
-  // Si es usuario normal, redirigir según dispositivo
-  $target = is_current_user_limited_taller_profile($pdo) ? 'menu_taller.php' : (is_phone_device() ? 'vehiculos_movil.php' : 'vehiculos.php');
-  header('Location: ' . $target);
-  exit;
 }
-
 
 $error = null;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-  $username = trim($_POST['username'] ?? '');
-  $password = (string)($_POST['password'] ?? '');
-  $ip       = getClientIp(); // ✅ mejor que REMOTE_ADDR directamente
+    $username = trim($_POST['username'] ?? '');
+    $password = (string) ($_POST['password'] ?? '');
+    $ip = $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
 
-  // Traemos solo lo necesario y evitamos * para no mezclar columnas
-  $stmt = $pdo->prepare("
-    SELECT id, username, pass_hash, full_name, is_admin, failed_logins, locked
-    FROM app_users
-    WHERE username = ?
-    LIMIT 1
-  ");
-  $stmt->execute([$username]);
-  $user = $stmt->fetch();
-
-  // Usuario inexistente => buscar en chofers
-  if (!$user) {
-    // Buscar en tabla chofers por nombre
-    $stmtChofer = $pdo->prepare("
-      SELECT id, nombre, nombre_completo, pass, vehiculo_id
-      FROM chofers
-      WHERE nombre = ?
-      LIMIT 1
-    ");
-    $stmtChofer->execute([$username]);
-    $chofer = $stmtChofer->fetch(PDO::FETCH_ASSOC);
-
-    // Si encontramos un chofer, verificar contraseña
-    if ($chofer && password_verify($password, $chofer['pass'])) {
-      // Actualizar ult_log
-      $updateLog = $pdo->prepare("
-        UPDATE chofers
-        SET ult_log = NOW()
-        WHERE id = ?
-        LIMIT 1
-      ");
-      $updateLog->execute([(int)$chofer['id']]);
-
-      // Crear sesión para chofer
-      session_regenerate_id(true);
-      $_SESSION['user'] = [
-        'id'           => (int)$chofer['id'],
-        'username'     => $chofer['nombre'],
-        'full_name'    => $chofer['nombre_completo'] ?? $chofer['nombre'],
-        'is_admin'     => 0,
-        'is_chofer'    => true,
-        'vehiculo_id'  => $chofer['vehiculo_id']
-      ];
-
-      // Flag para animación SOLO en login correcto
-      $_SESSION['login_success'] = true;
-
-      // ✅ LOG (chofer OK)
-      append_login_txt($LOGIN_TXT_PATH, (string)$username, (int)$chofer['id'], true, 'chofer');
-
-      // Redirigir a mis_tickets.php para chofers
-      header('Location: login.php');
-      exit;
-    } else {
-      // No es usuario ni chofer válido
-      usleep(200000); // 200ms
-
-      // ✅ LOG (unknown FAIL)
-      append_login_txt($LOGIN_TXT_PATH, (string)$username, 0, false, 'unknown');
-
-      $error = 'Usuario o contraseña incorrectos';
-    }
-  }
-  // Usuario bloqueado
-  elseif ((int)$user['locked'] === 1) {
-
-    // ✅ LOG (user bloqueado)
-    append_login_txt($LOGIN_TXT_PATH, (string)$username, (int)$user['id'], false, 'user_locked');
-
-    $error = 'Tu usuario está bloqueado por intentos fallidos. Contacta con un administrador.';
-  }
-  // Comprobación de contraseña
-  elseif (password_verify($password, $user['pass_hash'])) {
-    // Éxito: resetear contador y sellar último login
-    $ok = $pdo->prepare("
-      UPDATE app_users
-      SET failed_logins = 0,
-          last_login_at = NOW(),
-          last_login_ip = :ip
-      WHERE id = :id
-      LIMIT 1
-    ");
-    $ok->execute([':ip' => $ip, ':id' => (int)$user['id']]);
-
-    session_regenerate_id(true);
-    $_SESSION['user'] = [
-      'id'        => (int)$user['id'],
-      'username'  => $user['username'],
-      'full_name' => $user['full_name'],
-      'is_admin'  => (int)$user['is_admin'],
-    ];
-
-    // ✅ Flag para animación SOLO en login correcto
-    $_SESSION['login_success'] = true;
-
-    // ✅ LOG (user OK)
-    append_login_txt($LOGIN_TXT_PATH, (string)$user['username'], (int)$user['id'], true, 'user');
-
-    // ✅ Volvemos al login para reproducir animación y redirigir después
-    header('Location: login.php');
-    exit;
-  }
-  // Fallo de contraseña: incrementamos y bloqueamos con lógica determinista (2 pasos, transacción)
-  else {
-    $userId = (int)$user['id'];
-
-    $pdo->beginTransaction();
-    try {
-      // 1) Bloqueamos la fila y leemos estado actual
-      $st = $pdo->prepare("
-        SELECT
-          COALESCE(failed_logins, 0) AS failed_logins,
-          COALESCE(locked, 0)        AS locked,
-          locked_at
+    $stmt = $pdo->prepare("
+        SELECT id, username, pass_hash, full_name, role, comercial_id, failed_logins, locked
         FROM app_users
-        WHERE id = ?
-        FOR UPDATE
-      ");
-      $st->execute([$userId]);
-      $cur = $st->fetch(PDO::FETCH_ASSOC);
+        WHERE username = ? AND active = 1
+        LIMIT 1
+    ");
+    $stmt->execute([$username]);
+    $user = $stmt->fetch();
 
-      $failed = (int)($cur['failed_logins'] ?? 0);
-      $locked = (int)($cur['locked'] ?? 0);
-      $lockedAtIsNull = ($cur['locked_at'] === null);
+    if (!$user) {
+        usleep(200000);
+        $error = 'Usuario o contraseña incorrectos';
+    } elseif ((int) $user['locked'] === 1) {
+        $error = 'Tu usuario está bloqueado por intentos fallidos. Contacta con un administrador.';
+    } elseif (password_verify($password, $user['pass_hash'])) {
+        // Login OK
+        $pdo->prepare("
+            UPDATE app_users SET failed_logins = 0, last_login_at = NOW(), last_login_ip = ? WHERE id = ?
+        ")->execute([$ip, (int) $user['id']]);
 
-      $newFailed = min($failed + 1, MAX_FAILED_LOGINS);
-      $willLock  = ($newFailed >= MAX_FAILED_LOGINS) ? 1 : 0;
+        Auth::login($user);
+        $_SESSION['login_success'] = true;
+        header('Location: login.php');
+        exit;
+    } else {
+        // Fallo: incrementar contador
+        $userId = (int) $user['id'];
+        $pdo->beginTransaction();
+        try {
+            $st = $pdo->prepare("SELECT COALESCE(failed_logins,0) AS failed_logins, COALESCE(locked,0) AS locked FROM app_users WHERE id = ? FOR UPDATE");
+            $st->execute([$userId]);
+            $cur = $st->fetch();
 
-      // Sella locked_at SOLO la primera vez que pasa a bloqueado
-      $setLockAt = ($willLock === 1 && $locked === 0 && $lockedAtIsNull) ? 1 : 0;
+            $newFailed = min((int) $cur['failed_logins'] + 1, MAX_FAILED_LOGINS);
+            $willLock = $newFailed >= MAX_FAILED_LOGINS ? 1 : 0;
 
-      // 2) Actualizamos exactamente lo calculado
-      $upd = $pdo->prepare("
-        UPDATE app_users
-           SET failed_logins     = :fl,
-               last_failed_login = NOW(),
-               locked            = :lk,
-               locked_at         = IF(:setla = 1, NOW(), locked_at)
-         WHERE id = :id
-         LIMIT 1
-      ");
-      $upd->execute([
-        ':fl'    => $newFailed,
-        ':lk'    => $willLock ? 1 : $locked,  // si no llega al umbral, conserva estado anterior
-        ':setla' => $setLockAt,
-        ':id'    => $userId,
-      ]);
+            $pdo->prepare("
+                UPDATE app_users
+                SET failed_logins = ?, last_failed_login = NOW(), locked = ?,
+                    locked_at = IF(? = 1 AND locked = 0, NOW(), locked_at)
+                WHERE id = ?
+            ")->execute([$newFailed, $willLock, $willLock, $userId]);
 
-      $pdo->commit();
+            $pdo->commit();
 
-      // ✅ LOG (user FAIL)
-      append_login_txt($LOGIN_TXT_PATH, (string)$user['username'], (int)$userId, false, 'user');
-
-      // Mensaje de error para la UI
-      if ($willLock === 1) {
-        $error = 'Has alcanzado 5 intentos fallidos. Tu usuario ha sido bloqueado.';
-      } else {
-        $restantes = MAX_FAILED_LOGINS - $newFailed;
-        if ($restantes < 0) $restantes = 0;
-        $error = "Usuario o contraseña incorrectos. Intentos restantes: {$restantes}";
-      }
-    } catch (Throwable $e) {
-      $pdo->rollBack();
-      throw $e;
+            if ($willLock) {
+                $error = 'Has alcanzado 5 intentos fallidos. Tu usuario ha sido bloqueado.';
+            } else {
+                $restantes = MAX_FAILED_LOGINS - $newFailed;
+                $error = "Usuario o contraseña incorrectos. Intentos restantes: {$restantes}";
+            }
+        } catch (\Throwable $e) {
+            $pdo->rollBack();
+            $error = 'Error interno. Inténtalo de nuevo.';
+        }
     }
-  }
 }
 ?>
 
@@ -625,8 +368,6 @@ body.logging-in .logging-overlay{ opacity:1; }
   animation-iteration-count: infinite, infinite;
 }
 
-
-
 /* Caída vertical */
 @keyframes snowFall{
   0%   { transform: translate3d(0,-12vh,0); }
@@ -643,20 +384,20 @@ body.logging-in .logging-overlay{ opacity:1; }
 @media (prefers-reduced-motion: reduce){
   .snowflake{ animation: none !important; }
 }
-	  
+
   </style>
-  
+
 </head>
 <body>
 <?php if (!empty($SNOW_ENABLED)): ?>
   <div class="snow-layer" id="snowLayer" aria-hidden="true"></div>
 <?php endif; ?>
-	
+
   <div class="login-wrap">
     <!-- Lado imagen -->
     <aside class="login-hero">
       <div class="brand-watermark">
-        Control de cámaras y flota · Veraleza
+        Gestor de Rutas · Veraleza
       </div>
     </aside>
 
@@ -669,10 +410,6 @@ body.logging-in .logging-overlay{ opacity:1; }
 
 
         <div class="body">
-			<?php if (!empty($_GET['error']) && $_GET['error'] === 'bloqueado'): ?>
-			  <div class="alert alert-vz mb-3">Tu usuario está bloqueado por intentos fallidos. Contacta con un administrador.</div>
-			<?php endif; ?>
-
           <?php if ($error): ?>
             <div class="alert alert-vz mb-3"><?=htmlspecialchars($error)?></div>
           <?php endif; ?>
@@ -681,7 +418,8 @@ body.logging-in .logging-overlay{ opacity:1; }
                       <div class="mb-3">
   <label for="user" class="form-label">Usuario</label>
   <div class="input-group">
-    <input id="user" name="username" class="form-control" required autofocus>
+    <input id="user" name="username" class="form-control" required autofocus
+           value="<?= htmlspecialchars($_POST['username'] ?? '') ?>">
 	      <span class="input-group-text">
       <i class="bi bi-person"></i>
     </span>
@@ -704,7 +442,7 @@ body.logging-in .logging-overlay{ opacity:1; }
         </div>
 
         <div class="foot">
-          © <?=date('Y')?> Veraleza
+          &copy; <?=date('Y')?> Veraleza
         </div>
       </div>
     </main>
@@ -725,12 +463,8 @@ body.logging-in .logging-overlay{ opacity:1; }
     icon.classList.toggle('bi-eye-slash', !isPwd);
     icon.classList.toggle('bi-eye', isPwd);
   }
-  if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/sw.js');
-}
-
   </script>
-	
+
 	<?php if (!empty($SNOW_ENABLED)): ?>
 <script>
 (function(){
@@ -751,7 +485,7 @@ body.logging-in .logging-overlay{ opacity:1; }
   for (let i = 0; i < COUNT; i++){
     const flake = document.createElement('div');
     flake.className = 'snowflake';
-    flake.textContent = '❄';
+    flake.textContent = '\u2744';
 
     const size = rand(MIN_SIZE, MAX_SIZE);
     const left = rand(0, 100);
@@ -770,65 +504,17 @@ body.logging-in .logging-overlay{ opacity:1; }
 })();
 </script>
 <?php endif; ?>
-	
+
 	<?php if (!empty($login_success)): ?>
 <script>
   document.addEventListener('DOMContentLoaded', function(){
     document.body.classList.add('logging-in');
     setTimeout(function(){
-      <?php 
-      $currentUser = current_user();
-      if (isset($currentUser['is_chofer']) && $currentUser['is_chofer']) {
-        echo "window.location.href = 'menu_chofer.php';";
-      } else {
-        $target = is_current_user_limited_taller_profile($pdo) ? 'menu_taller.php' : (is_phone_device() ? 'vehiculos_movil.php' : 'vehiculos.php');
-        echo "window.location.href = " . json_encode($target) . ";";
-      }
-      ?>
+      window.location.href = '/Gestor de Rutas/';
     }, 650);
   });
 </script>
 <?php endif; ?>
 
-    <!-- Boton volver arriba -->
-    <button type="button" id="backToTopBtn" class="back-to-top" aria-label="Volver arriba">
-        <span aria-hidden="true" style="font-size:20px;line-height:1;">&#8593;</span>
-    </button>
-    <script>
-        (function () {
-            var btn = document.getElementById('backToTopBtn');
-            if (!btn) return;
-
-            var styleId = 'back-to-top-style';
-            if (!document.getElementById(styleId)) {
-                var style = document.createElement('style');
-                style.id = styleId;
-                style.textContent = '.back-to-top{position:fixed;right:18px;bottom:24px;width:44px;height:44px;border:none;border-radius:999px;background:#8E8B30;color:#fff;display:flex;align-items:center;justify-content:center;box-shadow:0 8px 20px rgba(0,0,0,.25);opacity:0;visibility:hidden;transform:translateY(8px);transition:opacity .2s ease,transform .2s ease,visibility .2s ease;z-index:2200}.back-to-top.show{opacity:1;visibility:visible;transform:translateY(0)}.back-to-top:hover{background:#7c7a2a}.back-to-top:focus{outline:2px solid #fff;outline-offset:2px}@media (max-width:576px){.back-to-top{right:14px;bottom:120px}}';
-                document.head.appendChild(style);
-            }
-
-            function hasScrollableContent() {
-                var doc = document.documentElement;
-                var body = document.body;
-                var scrollHeight = Math.max(doc.scrollHeight, body.scrollHeight);
-                return scrollHeight > (window.innerHeight + 20);
-            }
-
-            function toggleBackToTop() {
-                var y = window.pageYOffset || document.documentElement.scrollTop;
-                btn.classList.toggle('show', y > 220 && hasScrollableContent());
-            }
-
-            btn.addEventListener('click', function () {
-                window.scrollTo({ top: 0, behavior: 'smooth' });
-            });
-
-            window.addEventListener('scroll', toggleBackToTop, { passive: true });
-            window.addEventListener('resize', toggleBackToTop);
-            window.addEventListener('load', toggleBackToTop);
-            toggleBackToTop();
-        })();
-    </script>
 </body>
 </html>
-

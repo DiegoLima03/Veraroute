@@ -19,15 +19,27 @@ if (preg_match('#^public/.+#', $uri) && file_exists(__DIR__ . '/' . $uri)) {
     return false;
 }
 
+// Login page se gestiona por separado
+if ($uri === 'login.php') {
+    require __DIR__ . '/login.php';
+    exit;
+}
+
 require_once __DIR__ . '/config/database.php';
 require_once __DIR__ . '/core/Router.php';
 require_once __DIR__ . '/core/Controller.php';
 require_once __DIR__ . '/core/Model.php';
+require_once __DIR__ . '/core/Auth.php';
+
+// Proteger todas las rutas: requiere sesión activa
+Auth::requireLogin();
 
 $router = new Router();
 
 // Vista principal
 $router->get('', 'PageController@index');
+$router->get('api/me', 'PageController@me');
+$router->get('logout', 'PageController@logout');
 
 // API — Clientes
 $router->get('api/clients', 'ClientController@index');
@@ -111,6 +123,12 @@ $router->post('api/hojas-ruta/(\d+)/duplicar', 'HojaRutaController@duplicate');
 
 // API — Comerciales
 $router->get('api/comerciales', 'HojaRutaController@comerciales');
+
+// API — Usuarios (solo admin)
+$router->get('api/users', 'UserController@index');
+$router->post('api/users', 'UserController@store');
+$router->put('api/users/(\d+)', 'UserController@update');
+$router->delete('api/users/(\d+)', 'UserController@destroy');
 
 // API — Plantillas de ruta
 $router->get('api/templates', 'TemplateController@index');

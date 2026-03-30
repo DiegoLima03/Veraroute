@@ -51,9 +51,18 @@ let hrSortable = null;
 let hrOsrmGeometry = null;
 let hrRouteDistance = null;
 let hrRouteDuration = null;
+let hrClientSearchQuery = '';
+let hrQuickClientSearchQuery = '';
+let hrClientSearchTimer = null;
+let hrQuickClientSearchTimer = null;
+let hrQuickSaveTimers = {};
 let lineaSelectedClients = new Set();
 let hrMapMarkers = [];
 let hrMapLine = null;
+let glsConfigState = null;
+let rentabilityData = null;
+let rentabilitySortKey = 'savings';
+let rentabilitySortDir = 'desc';
 const SIDEBAR_WIDTH_STORAGE_KEY = 'veraroute.sidebarWidth';
 
 function getUserComercialIds() {
@@ -74,6 +83,253 @@ function shouldHideComercialSelector() {
   return typeof APP_USER !== 'undefined'
     && APP_USER.role === 'comercial'
     && getUserComercialIds().length > 0;
+}
+
+function numVal(value) {
+  const n = parseFloat(value);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function formatQty(value) {
+  const n = numVal(value);
+  return Number.isInteger(n) ? String(n) : String(Number(n.toFixed(2)));
+}
+
+function formatMoney(value) {
+  const n = numVal(value);
+  return n.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' EUR';
+}
+
+function formatLineaUnits(linea) {
+  const carros = numVal(linea?.carros);
+  const cajas = numVal(linea?.cajas);
+  const parts = [];
+  if (carros > 0) parts.push(formatQty(carros) + ' carro' + (carros === 1 ? '' : 's'));
+  if (cajas > 0) parts.push(formatQty(cajas) + ' caja' + (cajas === 1 ? '' : 's'));
+  return parts.join(' · ');
+}
+
+function hojaLineaHasCarga(linea) {
+  return numVal(linea?.carros) > 0 || numVal(linea?.cajas) > 0;
+}
+
+function hasLineaCostData(linea) {
+  return linea?.detour_km !== null
+    || linea?.cost_own_route !== null
+    || linea?.cost_gls_adjusted !== null
+    || !!linea?.gls_recommendation
+    || !!linea?.gls_notes;
+}
+
+function getHojaActiveLineas(hoja) {
+  return (hoja?.lineas || []).filter(hojaLineaHasCarga);
+}
+
+function getHojaSummaryLineCount(hoja) {
+  if (Array.isArray(hoja?.lineas)) {
+    return getHojaActiveLineas(hoja).length;
+  }
+  return parseInt(hoja?.num_lineas_activas ?? hoja?.num_lineas ?? 0, 10) || 0;
+}
+
+function getHojaRouteDelegation(lineas) {
+  const delCount = {};
+  (lineas || []).forEach(l => {
+    const cl = clients.find(c => c.id === parseInt(l.client_id, 10));
+    if (cl?.delegation_id) {
+      delCount[cl.delegation_id] = (delCount[cl.delegation_id] || 0) + 1;
+    }
+  });
+
+  let bestDelId = null;
+  let bestDelN = 0;
+  for (const [did, n] of Object.entries(delCount)) {
+    if (n > bestDelN) {
+      bestDelN = n;
+      bestDelId = parseInt(did, 10);
+    }
+  }
+
+  return (bestDelId ? delegations.find(d => parseInt(d.id, 10) === bestDelId) : null)
+    || delegations.find(d => parseInt(d.active, 10))
+    || delegation
+    || null;
+}
+
+function glsRecommendationMeta(recommendation) {
+  const rec = recommendation || 'unavailable';
+  if (rec === 'own_route') return { cls: 'own', label: 'Ruta propia' };
+  if (rec === 'externalize') return { cls: 'externalize', label: 'Externalizar GLS' };
+  if (rec === 'break_even') return { cls: 'break_even', label: 'Empate tecnico' };
+  return { cls: 'unavailable', label: 'No calculable' };
+}
+
+function friendlyGlsNote(note) {
+  const value = (note || '').trim();
+  if (!value) return '';
+  if (value === 'postcode_missing') return 'Falta codigo postal';
+  if (value === 'missing_coords') return 'Faltan coordenadas';
+  if (value === 'vehicle_cost_missing') return 'Falta coste por km del vehiculo';
+  if (value.startsWith('gls_error:')) return value.substring('gls_error:'.length).trim() || 'Error GLS';
+  return value;
+}
+
+function getComercialQuickSearchClients() {
+  const ids = getUserComercialIds();
+  let rows = activeClients().filter(c => c.ruta_id);
+  if (ids.length) {
+    rows = rows.filter(c => c.comercial_id && ids.includes(c.comercial_id));
+  }
+
+  const q = hrQuickClientSearchQuery.trim().toLowerCase();
+  if (q) {
+    rows = rows.filter(c => {
+      const haystack = [c.name, c.addr, c.ruta_name, c.comercial_name].filter(Boolean).join(' ').toLowerCase();
+      return haystack.includes(q);
+    });
+  }
+
+  rows.sort((a, b) => {
+    const byRoute = (a.ruta_name || '').localeCompare(b.ruta_name || '', 'es');
+    return byRoute || a.name.localeCompare(b.name, 'es');
+  });
+
+  return rows.slice(0, 12);
+}
+
+function getQuickHojaAndLineaForClient(clientId) {
+  for (const hoja of hojasData.hojas || []) {
+    const linea = (hoja.lineas || []).find(l => parseInt(l.client_id, 10) === parseInt(clientId, 10));
+    if (linea) return { hoja, linea };
+  }
+  return { hoja: null, linea: null };
+}
+
+function setHrQuickClientSearch(value) {
+  hrQuickClientSearchQuery = value || '';
+  if (hrQuickClientSearchTimer) clearTimeout(hrQuickClientSearchTimer);
+  hrQuickClientSearchTimer = setTimeout(() => {
+    hrQuickClientSearchTimer = null;
+    const results = document.getElementById('hrQuickSearchResults');
+    if (results) {
+      results.innerHTML = renderComercialQuickSearchResults();
+    } else {
+      renderHojasList();
+    }
+  }, 120);
+}
+
+function queueQuickHojaLineSave(clientId) {
+  if (hrQuickSaveTimers[clientId]) clearTimeout(hrQuickSaveTimers[clientId]);
+  hrQuickSaveTimers[clientId] = setTimeout(() => {
+    delete hrQuickSaveTimers[clientId];
+    saveQuickHojaLine(clientId);
+  }, 700);
+}
+
+function renderComercialQuickSearchResults() {
+  const matches = getComercialQuickSearchClients();
+  let html = '';
+
+  if (!hrQuickClientSearchQuery.trim()) {
+    html += '<div style="padding:0 14px 6px;font-size:11px;color:var(--text-dim)">Busca un cliente y escribe carros o cajas para generar la hoja automaticamente.</div>';
+    return html;
+  }
+
+  if (!matches.length) {
+    html += '<div style="padding:0 14px 6px;font-size:11px;color:var(--text-dim)">Sin clientes para esa busqueda.</div>';
+    return html;
+  }
+
+  html += '<div style="display:flex;flex-direction:column;gap:8px;padding:0 4px 4px">';
+  matches.forEach(client => {
+    const { hoja, linea } = getQuickHojaAndLineaForClient(client.id);
+    const status = hoja ? `<span class="hr-estado-badge hr-estado-${hoja.estado}" style="margin-left:auto">${esc(hoja.estado)}</span>` : '';
+    html += `<div class="hr-card" style="cursor:default">
+      <div class="hr-card-top" style="align-items:flex-start;gap:10px">
+        <div style="display:flex;flex-direction:column;gap:3px;min-width:0;flex:1">
+          <div class="hr-card-ruta">${esc(client.name)}</div>
+          <div style="font-size:11px;color:var(--text-dim)">${esc(client.addr || '')}</div>
+          <div style="font-size:10px;color:var(--accent);font-weight:700;display:flex;gap:8px;flex-wrap:wrap">
+            <span>${esc(client.ruta_name || 'Sin ruta')}</span>
+            ${client.comercial_name ? `<span>${esc(client.comercial_name)}</span>` : ''}
+          </div>
+        </div>
+        ${status}
+      </div>
+      <div class="hr-card-bottom" style="justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+          <input type="number" id="hrQuickCarros-${client.id}" value="${numVal(linea?.carros) > 0 ? formatQty(linea.carros) : ''}" min="0" step="1" placeholder="Carros" oninput="queueQuickHojaLineSave(${client.id})" style="width:96px;text-align:right;padding:6px 8px;font-size:11px;border-radius:6px">
+          <input type="number" id="hrQuickCajas-${client.id}" value="${numVal(linea?.cajas) > 0 ? formatQty(linea.cajas) : ''}" min="0" step="1" placeholder="Cajas" oninput="queueQuickHojaLineSave(${client.id})" style="width:96px;text-align:right;padding:6px 8px;font-size:11px;border-radius:6px">
+        </div>
+        
+      </div>
+    </div>`;
+  });
+  html += '</div>';
+  return html;
+}
+
+function renderComercialQuickSearchSection() {
+  return `<div style="padding:12px 14px 6px;font-size:11px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:1px">Buscar cliente</div>
+    <div style="padding:0 0 10px">
+      <div class="search-bar" style="margin:0 0 10px">
+        <input type="search" id="hrQuickClientSearch" placeholder="Buscar cliente por nombre, direccion o ruta..." value="${esc(hrQuickClientSearchQuery)}" oninput="setHrQuickClientSearch(this.value)">
+      </div>
+      <div id="hrQuickSearchResults">${renderComercialQuickSearchResults()}</div>
+    </div>`;
+}
+
+async function saveQuickHojaLine(clientId) {
+  const client = clients.find(c => c.id === parseInt(clientId, 10));
+  if (!client || !client.ruta_id) return;
+
+  const carrosInput = document.getElementById(`hrQuickCarros-${clientId}`);
+  const cajasInput = document.getElementById(`hrQuickCajas-${clientId}`);
+  if (!carrosInput || !cajasInput) return;
+
+  const carros = numVal(carrosInput.value);
+  const cajas = numVal(cajasInput.value);
+  const existing = getQuickHojaAndLineaForClient(clientId);
+
+  if (carros <= 0 && cajas <= 0 && !existing.linea) {
+    return;
+  }
+
+  try {
+    let hoja = existing.hoja;
+    let linea = existing.linea;
+
+    if (!hoja) {
+      const created = await api('hojas-ruta', 'POST', { ruta_id: client.ruta_id, fecha: getHrDate() });
+      hoja = await api('hojas-ruta/' + created.id);
+      linea = (hoja.lineas || []).find(l => parseInt(l.client_id, 10) === client.id) || null;
+    }
+
+    if (!linea) {
+      await api('hojas-ruta/' + hoja.id + '/lineas', 'POST', {
+        client_id: client.id,
+        comercial_id: client.comercial_id || null,
+        carros: 0,
+        cajas: 0,
+        zona: client.addr || '',
+        observaciones: '',
+      });
+      hoja = await api('hojas-ruta/' + hoja.id);
+      linea = (hoja.lineas || []).find(l => parseInt(l.client_id, 10) === client.id) || null;
+    }
+
+    if (!linea) throw new Error('No se pudo preparar la linea del cliente');
+
+    await api('hojas-ruta/' + hoja.id + '/lineas/' + linea.id, 'PUT', {
+      carros,
+      cajas,
+    });
+
+    await loadHojasRuta();
+  } catch (e) {
+    showToast('Error guardando cliente: ' + e.message);
+  }
 }
 
 function getSidebarWidthBounds(mainEl) {
@@ -384,6 +640,7 @@ async function loadClients() {
       id: c.id,
       name: c.name,
       addr: c.address || '',
+      postcode: c.postcode || '',
       phone: c.phone || '',
       notes: c.notes || '',
       x: parseFloat(c.x),
@@ -442,16 +699,22 @@ function switchTab(t) {
   document.getElementById('vhr').style.display = t === 'hr' ? 'flex' : 'none';
   document.getElementById('vf').style.display = t === 'f' ? 'flex' : 'none';
   document.getElementById('vh').style.display = t === 'h' ? 'flex' : 'none';
+  const vr = document.getElementById('vr');
+  if (vr) vr.style.display = t === 'r' ? 'flex' : 'none';
   const vu = document.getElementById('vu');
   if (vu) vu.style.display = t === 'u' ? 'flex' : 'none';
   document.getElementById('tab-c').classList.toggle('active', t === 'c');
   document.getElementById('tab-hr').classList.toggle('active', t === 'hr');
   document.getElementById('tab-f').classList.toggle('active', t === 'f');
   document.getElementById('tab-h').classList.toggle('active', t === 'h');
+  const tabR = document.getElementById('tab-r');
+  if (tabR) tabR.classList.toggle('active', t === 'r');
   const tabU = document.getElementById('tab-u');
   if (tabU) tabU.classList.toggle('active', t === 'u');
+  document.querySelector('.optimize-bar').style.display = 'none';
   if (t === 'f') renderFleetLists();
   if (t === 'h') { loadHistory(); loadDashboard(); }
+  if (t === 'r') loadRentabilityReport();
   if (t === 'hr') loadHojasRuta();
   if (t === 'u') loadUsers();
 }
@@ -581,6 +844,7 @@ async function openClientModal(id = null) {
   document.getElementById('cId').value = id || '';
   document.getElementById('cName').value  = c?.name  || '';
   document.getElementById('cAddr').value  = c?.addr  || '';
+  document.getElementById('cPostcode').value = c?.postcode || '';
   document.getElementById('cPhone').value = c?.phone || '';
   document.getElementById('cNotes').value = c?.notes || '';
   document.getElementById('cX').value    = c?.x ?? '';
@@ -599,6 +863,8 @@ async function openClientModal(id = null) {
   document.getElementById('cContado').checked = c?.al_contado || false;
   // Horario semanal editable
   buildScheduleGrid(c);
+  updateClientPostcodeHint();
+  await loadClientGlsHistory(id);
 
   const toggleBtn = document.getElementById('cToggleBtn');
   const deleteBtn = document.getElementById('cDeleteBtn');
@@ -648,6 +914,67 @@ function closeCModal() {
   if (mapPreviewMarker) { map.removeLayer(mapPreviewMarker); mapPreviewMarker = null; }
 }
 
+function updateClientPostcodeHint() {
+  const hint = document.getElementById('cPostcodeHint');
+  const value = (document.getElementById('cPostcode')?.value || '').trim();
+  if (!hint) return;
+  hint.textContent = value
+    ? 'Este codigo postal se usara para cotizar GLS.'
+    : 'Sin codigo postal no se puede cotizar GLS.';
+  hint.style.color = value ? 'var(--accent)' : 'var(--text-dim)';
+}
+
+async function loadClientGlsHistory(id) {
+  const el = document.getElementById('cGlsHistory');
+  if (!el) return;
+
+  if (!id) {
+    el.innerHTML = 'Sin historial de comparativa GLS todavia.';
+    return;
+  }
+
+  el.innerHTML = '<div class="rent-note">Cargando historial GLS...</div>';
+  try {
+    const rows = await api('gls-costs/client/' + id);
+    if (!rows.length) {
+      el.innerHTML = 'Sin historial de comparativa GLS todavia.';
+      return;
+    }
+
+    el.innerHTML = `<div style="overflow:auto">
+      <table class="history-table">
+        <thead>
+          <tr>
+            <th>Fecha</th>
+            <th>Carros</th>
+            <th>Cajas</th>
+            <th>Km</th>
+            <th>Propio</th>
+            <th>GLS</th>
+            <th>Decision</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.slice(0, 10).map(row => {
+            const meta = glsRecommendationMeta(row.recommendation);
+            return `<tr>
+              <td>${esc(row.fecha)}</td>
+              <td>${formatQty(row.carros)}</td>
+              <td>${formatQty(row.cajas)}</td>
+              <td>${row.detour_km !== null && row.detour_km !== undefined ? formatQty(row.detour_km) : '—'}</td>
+              <td>${row.cost_own_route !== null && row.cost_own_route !== undefined ? formatMoney(row.cost_own_route) : '—'}</td>
+              <td>${row.cost_gls_adjusted !== null && row.cost_gls_adjusted !== undefined ? formatMoney(row.cost_gls_adjusted) : '—'}</td>
+              <td><span class="rent-badge ${meta.cls}">${meta.label}</span></td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>`;
+  } catch (e) {
+    el.innerHTML = '<div class="rent-note">No se pudo cargar el historial GLS.</div>';
+  }
+}
+
 async function saveClient() {
   const name = document.getElementById('cName').value.trim();
   const x = parseFloat(document.getElementById('cX').value);
@@ -663,6 +990,7 @@ async function saveClient() {
   const data = {
     name,
     address: document.getElementById('cAddr').value.trim(),
+    postcode: document.getElementById('cPostcode').value.trim(),
     phone: document.getElementById('cPhone').value.trim(),
     notes: document.getElementById('cNotes').value.trim(),
     x, y,
@@ -1684,12 +2012,20 @@ function clearRoute() {
 // ── SETTINGS MODAL ────────────────────────────────────────
 async function openSettingsModal() {
   try {
-    const s = await api('settings');
+    const requests = [api('settings')];
+    if (typeof APP_USER !== 'undefined' && APP_USER.role === 'admin') {
+      requests.push(api('gls-config').catch(() => null));
+    }
+
+    const [s, gls] = await Promise.all(requests);
     document.getElementById('sLunchDur').value = s.lunch_duration_min || 60;
     document.getElementById('sLunchEarly').value = s.lunch_earliest || '12:00';
     document.getElementById('sLunchLate').value = s.lunch_latest || '15:30';
     document.getElementById('sBaseUnload').value = s.base_unload_min || 5;
     document.getElementById('sSpeed').value = s.default_speed_kmh || 50;
+
+    glsConfigState = gls;
+    applyGlsConfigToForm(gls);
   } catch (e) { /* usa valores por defecto del form */ }
 
   // Mostrar boton de guardar plantilla si hay rutas
@@ -1708,9 +2044,104 @@ async function saveSettings() {
       base_unload_min: document.getElementById('sBaseUnload').value,
       default_speed_kmh: document.getElementById('sSpeed').value,
     });
+
+    if (typeof APP_USER !== 'undefined' && APP_USER.role === 'admin') {
+      const passwordInput = document.getElementById('glsApiPassword').value;
+      await api('gls-config', 'PUT', {
+        api_user: document.getElementById('glsApiUser').value.trim(),
+        api_password: passwordInput || '***',
+        api_env: document.getElementById('glsApiEnv').value,
+        api_base_url: document.getElementById('glsApiBaseUrl').value.trim(),
+        origin_postcode: document.getElementById('glsOriginPostcode').value.trim(),
+        origin_country: document.getElementById('glsOriginCountry').value.trim().toUpperCase(),
+        price_multiplier: document.getElementById('glsPriceMultiplier').value,
+        default_weight_per_carro_kg: document.getElementById('glsWeightPerCarro').value,
+        default_weight_per_caja_kg: document.getElementById('glsWeightPerCaja').value,
+        default_service: document.getElementById('glsDefaultService').value.trim() || 'BusinessParcel',
+      });
+    }
+
     closeSettingsModal();
     showToast('Configuracion guardada');
   } catch (e) { showToast('Error: ' + e.message); }
+}
+
+function applyGlsConfigToForm(gls) {
+  const isAdmin = typeof APP_USER !== 'undefined' && APP_USER.role === 'admin';
+  const defaults = gls || {
+    api_user: '',
+    api_password: '',
+    api_env: 'test',
+    api_base_url: '',
+    origin_postcode: '',
+    origin_country: 'ES',
+    price_multiplier: '1.0000',
+    default_weight_per_carro_kg: '5.00',
+    default_weight_per_caja_kg: '2.50',
+    default_service: 'BusinessParcel',
+  };
+
+  document.getElementById('glsApiUser').value = defaults.api_user || '';
+  document.getElementById('glsApiPassword').value = defaults.api_password || '';
+  document.getElementById('glsApiEnv').value = defaults.api_env || 'test';
+  document.getElementById('glsApiBaseUrl').value = defaults.api_base_url || '';
+  document.getElementById('glsOriginPostcode').value = defaults.origin_postcode || '';
+  document.getElementById('glsOriginCountry').value = defaults.origin_country || 'ES';
+  document.getElementById('glsPriceMultiplier').value = defaults.price_multiplier || '1.0000';
+  document.getElementById('glsWeightPerCarro').value = defaults.default_weight_per_carro_kg || '5.00';
+  document.getElementById('glsWeightPerCaja').value = defaults.default_weight_per_caja_kg || '2.50';
+  document.getElementById('glsDefaultService').value = defaults.default_service || 'BusinessParcel';
+
+  const section = document.getElementById('glsSettingsSection');
+  if (section) section.style.display = isAdmin ? '' : 'none';
+
+  ['glsApiUser', 'glsApiPassword', 'glsApiEnv', 'glsApiBaseUrl', 'glsOriginPostcode', 'glsOriginCountry', 'glsPriceMultiplier', 'glsWeightPerCarro', 'glsWeightPerCaja', 'glsDefaultService']
+    .forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.disabled = !isAdmin;
+    });
+
+  const testBtn = document.getElementById('btnGlsTest');
+  if (testBtn) testBtn.disabled = !isAdmin;
+
+  const status = document.getElementById('glsTestStatus');
+  if (status) {
+    status.textContent = isAdmin ? '' : '';
+    status.style.color = 'var(--text-dim)';
+  }
+}
+
+function toggleGlsPassword() {
+  const input = document.getElementById('glsApiPassword');
+  if (!input) return;
+  input.type = input.type === 'password' ? 'text' : 'password';
+}
+
+async function testGlsConnection() {
+  if (typeof APP_USER === 'undefined' || APP_USER.role !== 'admin') {
+    showToast('Solo admin puede probar la conexion GLS');
+    return;
+  }
+
+  const status = document.getElementById('glsTestStatus');
+  const btn = document.getElementById('btnGlsTest');
+  if (status) status.textContent = 'Probando conexion GLS...';
+  if (btn) btn.disabled = true;
+
+  try {
+    const result = await api('gls-config/test', 'POST', {});
+    if (status) {
+      status.textContent = `Conexion OK - ${formatMoney(result.price_raw)} (${result.service || 'GLS'}) - ${result.response_time_ms} ms`;
+      status.style.color = 'var(--accent)';
+    }
+  } catch (e) {
+    if (status) {
+      status.textContent = 'Error GLS: ' + e.message;
+      status.style.color = 'var(--danger)';
+    }
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 // ── TEMPLATES ─────────────────────────────────────────────
@@ -1893,6 +2324,196 @@ function dashCard(label, value) {
 }
 
 // ── ESTADO DE RUTA (confirmar/marcar paradas) ─────────────
+function getRentabilityDate() {
+  return document.getElementById('rentDate')?.value || todayStr();
+}
+
+function setRentabilityToday() {
+  const input = document.getElementById('rentDate');
+  if (input) input.value = todayStr();
+  onRentabilityDateChange();
+}
+
+function rentabilityDateNav(delta) {
+  const d = new Date(getRentabilityDate());
+  d.setDate(d.getDate() + delta);
+  const input = document.getElementById('rentDate');
+  if (input) input.value = d.toISOString().slice(0, 10);
+  onRentabilityDateChange();
+}
+
+function onRentabilityDateChange() {
+  loadRentabilityReport();
+}
+
+async function loadRentabilityReport() {
+  const wrap = document.getElementById('rentabilityTableWrap');
+  const summary = document.getElementById('rentabilitySummary');
+  const status = document.getElementById('rentabilityStatus');
+  if (!wrap || !summary) return;
+
+  wrap.innerHTML = '<div class="empty">Cargando comparativa de costes...</div>';
+  summary.innerHTML = '';
+  if (status) status.textContent = '';
+
+  try {
+    rentabilityData = await api('gls-costs/daily-report?date=' + getRentabilityDate());
+    renderRentabilityPanel();
+  } catch (e) {
+    rentabilityData = null;
+    wrap.innerHTML = '<div class="empty">Sin comparativas calculadas para esa fecha.</div>';
+    if (status) status.textContent = 'Sin datos';
+  }
+}
+
+async function recalculateRentability(force = true) {
+  if (typeof APP_USER !== 'undefined' && APP_USER.role !== 'admin') {
+    showToast('Solo admin puede recalcular toda la comparativa GLS');
+    return;
+  }
+
+  const status = document.getElementById('rentabilityStatus');
+  if (status) status.textContent = 'Recalculando costes GLS...';
+  try {
+    await api('gls-costs/recalculate', 'POST', { date: getRentabilityDate(), force: force ? 1 : 0 });
+    await loadRentabilityReport();
+    showToast('Comparativa GLS recalculada');
+  } catch (e) {
+    if (status) status.textContent = 'Error al recalcular';
+    showToast('Error GLS: ' + e.message);
+  }
+}
+
+function setRentabilitySort(key) {
+  if (rentabilitySortKey === key) {
+    rentabilitySortDir = rentabilitySortDir === 'asc' ? 'desc' : 'asc';
+  } else {
+    rentabilitySortKey = key;
+    rentabilitySortDir = key === 'client_name' || key === 'ruta_name' ? 'asc' : 'desc';
+  }
+  renderRentabilityPanel();
+}
+
+function getSortedRentabilityLines() {
+  const lines = Array.isArray(rentabilityData?.lines) ? [...rentabilityData.lines] : [];
+  const dir = rentabilitySortDir === 'asc' ? 1 : -1;
+
+  lines.sort((a, b) => {
+    let va = a[rentabilitySortKey];
+    let vb = b[rentabilitySortKey];
+
+    if (rentabilitySortKey === 'client_name' || rentabilitySortKey === 'ruta_name' || rentabilitySortKey === 'recommendation' || rentabilitySortKey === 'client_postcode' || rentabilitySortKey === 'vehicle_name') {
+      va = (va || '').toString().toLowerCase();
+      vb = (vb || '').toString().toLowerCase();
+      if (va < vb) return -1 * dir;
+      if (va > vb) return 1 * dir;
+      return 0;
+    }
+
+    va = numVal(va);
+    vb = numVal(vb);
+    return (va - vb) * dir;
+  });
+
+  return lines;
+}
+
+function renderRentabilityPanel() {
+  const wrap = document.getElementById('rentabilityTableWrap');
+  const summary = document.getElementById('rentabilitySummary');
+  const status = document.getElementById('rentabilityStatus');
+  if (!wrap || !summary) return;
+
+  if (!rentabilityData || !Array.isArray(rentabilityData.lines) || !rentabilityData.lines.length) {
+    summary.innerHTML = [
+      rentCard('Clientes', 0),
+      rentCard('Ruta propia', 0),
+      rentCard('Externalizar', 0),
+      rentCard('Ahorro potencial', formatMoney(0)),
+    ].join('');
+    wrap.innerHTML = '<div class="empty">Sin comparativas calculadas para esa fecha.</div>';
+    if (status) status.textContent = 'Sin datos';
+    return;
+  }
+
+  summary.innerHTML = [
+    rentCard('Total clientes', rentabilityData.total_clients || 0),
+    rentCard('Ruta propia', rentabilityData.recommend_own_route || 0),
+    rentCard('Externalizar', rentabilityData.recommend_externalize || 0),
+    rentCard('Ahorro potencial', formatMoney(rentabilityData.potential_savings || 0)),
+  ].join('');
+
+  if (status) {
+    status.textContent = rentabilityData.last_calculated_at
+      ? 'Ultimo calculo: ' + rentabilityData.last_calculated_at.replace(' ', ' · ')
+      : 'Sin timestamp de calculo';
+  }
+
+  const lines = getSortedRentabilityLines();
+  wrap.innerHTML = `<div class="rent-table-scroll">
+    <table class="rent-table">
+      <thead>
+        <tr>
+          <th onclick="setRentabilitySort('client_name')">Cliente</th>
+          <th onclick="setRentabilitySort('client_postcode')">CP</th>
+          <th onclick="setRentabilitySort('ruta_name')">Ruta</th>
+          <th onclick="setRentabilitySort('vehicle_name')">Vehiculo</th>
+          <th onclick="setRentabilitySort('carros')">Carros</th>
+          <th onclick="setRentabilitySort('cajas')">Cajas</th>
+          <th onclick="setRentabilitySort('detour_km')">Km desvio</th>
+          <th onclick="setRentabilitySort('cost_own_route')">Coste propio</th>
+          <th onclick="setRentabilitySort('cost_gls_adjusted')">Coste GLS</th>
+          <th onclick="setRentabilitySort('savings')">Dif.</th>
+          <th onclick="setRentabilitySort('recommendation')">Recomendacion</th>
+          <th>Estado</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${lines.map(row => {
+          const meta = glsRecommendationMeta(row.recommendation);
+          const note = friendlyGlsNote(row.notes);
+          const rowCls = row.recommendation === 'own_route'
+            ? 'rent-row-own'
+            : row.recommendation === 'externalize'
+              ? 'rent-row-externalize'
+              : 'rent-row-unavailable';
+          const diff = row.savings_if_externalized ?? row.savings ?? 0;
+          return `<tr class="${rowCls}">
+            <td><b>${esc(row.client_name)}</b></td>
+            <td>${esc(row.client_postcode || '—')}</td>
+            <td>${esc(row.ruta_name || '—')}</td>
+            <td>${esc(row.vehicle_name ? row.vehicle_name + (row.vehicle_plate ? ' · ' + row.vehicle_plate : '') : '—')}</td>
+            <td>${formatQty(row.carros)}</td>
+            <td>${formatQty(row.cajas)}</td>
+            <td>${row.detour_km !== null && row.detour_km !== undefined ? formatQty(row.detour_km) : '—'}</td>
+            <td>${row.cost_own_route !== null && row.cost_own_route !== undefined ? formatMoney(row.cost_own_route) : '—'}</td>
+            <td>${row.cost_gls_adjusted !== null && row.cost_gls_adjusted !== undefined ? formatMoney(row.cost_gls_adjusted) : '—'}</td>
+            <td>${(row.cost_own_route !== null && row.cost_own_route !== undefined) || (row.cost_gls_adjusted !== null && row.cost_gls_adjusted !== undefined) ? formatMoney(diff) : '—'}</td>
+            <td><span class="rent-badge ${meta.cls}">${meta.label}</span></td>
+            <td><span class="rent-note">${esc(note || 'OK')}</span></td>
+          </tr>`;
+        }).join('')}
+      </tbody>
+      <tfoot>
+        <tr>
+          <td colspan="7"><b>Totales</b></td>
+          <td><b>${formatMoney(rentabilityData.total_cost_own_all || 0)}</b></td>
+          <td><b>${formatMoney(rentabilityData.total_cost_gls_all || 0)}</b></td>
+          <td><b>${formatMoney(rentabilityData.potential_savings || 0)}</b></td>
+          <td colspan="2"></td>
+        </tr>
+      </tfoot>
+    </table>
+  </div>`;
+}
+
+function rentCard(label, value) {
+  return `<div class="rent-card">
+    <div class="rent-card-label">${esc(label)}</div>
+    <div class="rent-card-value">${esc(String(value))}</div>
+  </div>`;
+}
+
 async function confirmRoutes() {
   if (!fleetRoutes?.routes?.length) return;
   for (const r of fleetRoutes.routes) {
@@ -1982,7 +2603,7 @@ function renderHojasList() {
   const { hojas, rutas_sin_hoja } = hojasData;
   const isComercial = typeof APP_USER !== 'undefined' && APP_USER.role === 'comercial';
 
-  if (!hojas.length && !rutas_sin_hoja.length) {
+  if (!hojas.length && !rutas_sin_hoja.length && !isComercial) {
     el.innerHTML = '<div class="empty"><div class="empty-icon">📋</div>No hay hojas de ruta para esta fecha</div>';
     return;
   }
@@ -1990,6 +2611,7 @@ function renderHojasList() {
   let html = '';
 
   if (isComercial) {
+    html += renderComercialQuickSearchSection();
     // ── Vista comercial: rutas disponibles como tarjetas grandes + hojas creadas ──
     if (rutas_sin_hoja.length) {
       html += '<div style="padding:12px 14px 6px;font-size:11px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:1px">Crear hoja de ruta</div>';
@@ -2005,7 +2627,9 @@ function renderHojasList() {
     if (hojas.length) {
       html += '<div style="padding:12px 14px 6px;font-size:11px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px">Mis hojas de hoy</div>';
       hojas.forEach(h => {
-        const numLineas = h.lineas ? h.lineas.length : (h.num_lineas || 0);
+        const numLineas = getHojaSummaryLineCount(h);
+        const totalCarros = numVal(h.total_carros);
+        const totalCajas = numVal(h.total_cajas);
         html += `<div class="hr-card" onclick="openHojaDetail(${h.id})">
           <div class="hr-card-top">
             <div class="hr-card-ruta">${esc(h.ruta_name)}</div>
@@ -2013,15 +2637,17 @@ function renderHojasList() {
           </div>
           <div class="hr-card-bottom">
             <span>${numLineas} clientes</span>
-            <span>${parseFloat(h.total_cc || 0).toFixed(1)} CC</span>
+            <span>${formatQty(totalCarros)} carros</span>
+            <span>${formatQty(totalCajas)} cajas</span>
           </div>
         </div>`;
       });
     }
   } else {
     // ── Vista admin/logistica ──
-    const totalClientes = hojas.reduce((s, h) => s + (h.lineas ? h.lineas.length : (h.num_lineas || 0)), 0);
-    const totalCC = hojas.reduce((s, h) => s + parseFloat(h.total_cc || 0), 0);
+    const totalClientes = hojas.reduce((s, h) => s + getHojaSummaryLineCount(h), 0);
+    const totalCarros = hojas.reduce((s, h) => s + numVal(h.total_carros), 0);
+    const totalCajas = hojas.reduce((s, h) => s + numVal(h.total_cajas), 0);
     const porEstado = {};
     hojas.forEach(h => { porEstado[h.estado] = (porEstado[h.estado] || 0) + 1; });
     const estadoResumen = Object.entries(porEstado).map(([e, n]) => `${n} ${e}`).join(', ');
@@ -2029,11 +2655,12 @@ function renderHojasList() {
     html += `<div style="padding:8px 10px;background:var(--surface);border:1px solid var(--border);border-radius:8px;margin-bottom:10px;font-size:11px;display:flex;gap:14px;flex-wrap:wrap">
       <span><b>${hojas.length}</b> hojas</span>
       <span><b>${totalClientes}</b> clientes</span>
-      <span><b>${totalCC.toFixed(1)}</b> CC</span>
+      <span><b>${formatQty(totalCarros)}</b> carros</span>
+      <span><b>${formatQty(totalCajas)}</b> cajas</span>
       <span style="color:var(--text-dim)">${estadoResumen}</span>
     </div>`;
     hojas.forEach(h => {
-      const numLineas = h.lineas ? h.lineas.length : (h.num_lineas || 0);
+      const numLineas = getHojaSummaryLineCount(h);
       html += `<div class="hr-card" onclick="openHojaDetail(${h.id})">
         <div class="hr-card-top">
           <div class="hr-card-ruta">${esc(h.ruta_name)}</div>
@@ -2042,7 +2669,8 @@ function renderHojasList() {
         <div class="hr-card-bottom">
           <span>${esc(h.responsable || '—')}</span>
           <span>${numLineas} clientes</span>
-          <span>${parseFloat(h.total_cc || 0).toFixed(1)} CC</span>
+          <span>${formatQty(numVal(h.total_carros))} carros</span>
+          <span>${formatQty(numVal(h.total_cajas))} cajas</span>
         </div>
       </div>`;
     });
@@ -2110,6 +2738,11 @@ async function openHojaDetail(id) {
     currentHoja = await api('hojas-ruta/' + id);
   } catch (e) { return showToast('Error: ' + e.message); }
 
+  hrClientSearchQuery = '';
+  if (hrClientSearchTimer) {
+    clearTimeout(hrClientSearchTimer);
+    hrClientSearchTimer = null;
+  }
   hrOsrmGeometry = null;
   hrRouteDistance = null;
   hrRouteDuration = null;
@@ -2119,12 +2752,19 @@ async function openHojaDetail(id) {
 
   document.getElementById('hrListView').style.display = 'none';
   document.getElementById('hrDetailView').style.display = 'flex';
+  const hrClientSearch = document.getElementById('hrClientSearch');
+  if (hrClientSearch) hrClientSearch.value = '';
   renderHojaDetail();
   drawHojaOnMap();
 }
 
 function closeHojaDetail() {
   currentHoja = null;
+  hrClientSearchQuery = '';
+  if (hrClientSearchTimer) {
+    clearTimeout(hrClientSearchTimer);
+    hrClientSearchTimer = null;
+  }
   hrOsrmGeometry = null;
   hrRouteDistance = null;
   hrRouteDuration = null;
@@ -2133,15 +2773,57 @@ function closeHojaDetail() {
   drawMap();
 }
 
+function setHojaClientSearch(value) {
+  hrClientSearchQuery = value || '';
+  if (hrClientSearchTimer) clearTimeout(hrClientSearchTimer);
+  hrClientSearchTimer = setTimeout(() => {
+    hrClientSearchTimer = null;
+    renderHojaLineas();
+  }, 120);
+}
+
+function getFilteredHojaLineas(hoja, isComercialView) {
+  const allLineas = hoja?.lineas || [];
+  const query = (hrClientSearchQuery || '').trim().toLowerCase();
+  if (!isComercialView || !query) return allLineas;
+
+  return allLineas.filter(l => {
+    const haystack = [l.client_name, l.client_address, l.zona, l.comercial_name]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
+    return haystack.includes(query);
+  });
+}
+
+function renderHojaLineas() {
+  renderHojaDetail();
+}
+
 function renderHojaDetail() {
   if (!currentHoja) return;
   const h = currentHoja;
+  const isComercialView = typeof APP_USER !== 'undefined' && APP_USER.role === 'comercial';
+  const addLineaBtn = document.getElementById('btnAddLinea');
+  const calcBtn = document.getElementById('btnCalcGlsCosts');
+  const calcStatus = document.getElementById('hrGlsCalcStatus');
 
   document.getElementById('hrDetailTitle').textContent = h.ruta_name + ' — ' + h.fecha;
   const badge = document.getElementById('hrDetailEstado');
-  badge.textContent = h.estado;
-  badge.className = 'hr-estado-badge hr-estado-' + h.estado;
-  document.getElementById('hrEstadoSel').value = h.estado;
+  if (badge) {
+    badge.textContent = h.estado;
+    badge.className = 'hr-estado-badge hr-estado-' + h.estado;
+  }
+  const estadoSel = document.getElementById('hrEstadoSel');
+  if (estadoSel) estadoSel.value = h.estado;
+  if (addLineaBtn) addLineaBtn.style.display = isComercialView ? 'none' : '';
+  if (calcBtn) calcBtn.style.display = isComercialView ? 'none' : '';
+  if (calcStatus) {
+    calcStatus.textContent = !isComercialView && (h.lineas || []).some(hasLineaCostData)
+      ? 'Costes GLS calculados'
+      : '';
+  }
+  renderHojaVehicleSearch();
   const vehicleSel = document.getElementById('hrVehicleSel');
   if (vehicleSel) {
     const options = ['<option value="">Vehiculo...</option>'];
@@ -2155,13 +2837,23 @@ function renderHojaDetail() {
     vehicleSel.disabled = !vehicles.length;
   }
 
-  const lineas = h.lineas || [];
-  document.getElementById('hrTotalClientes').textContent = lineas.length;
-  document.getElementById('hrTotalCC').textContent = lineas.reduce((s, l) => s + parseFloat(l.cc_aprox || 0), 0).toFixed(1);
+  const allLineas = isComercialView ? (h.lineas || []) : getHojaActiveLineas(h);
+  const query = (hrClientSearchQuery || '').trim();
+  const lineas = getFilteredHojaLineas({ ...h, lineas: allLineas }, isComercialView);
+  document.getElementById('hrTotalClientes').textContent = allLineas.length;
+  document.getElementById('hrTotalCarros').textContent = formatQty(allLineas.reduce((s, l) => s + numVal(l.carros), 0));
+  document.getElementById('hrTotalCajas').textContent = formatQty(allLineas.reduce((s, l) => s + numVal(l.cajas), 0));
+
+  if (!lineas.length && isComercialView && query) {
+    document.getElementById('hrLineasList').innerHTML = '<div class="empty"><div class="empty-icon">📋</div>No hay clientes para esa busqueda.</div>';
+    return;
+  }
 
   const el = document.getElementById('hrLineasList');
   if (!lineas.length) {
-    el.innerHTML = '<div class="empty"><div class="empty-icon">📋</div>Sin clientes. Pulsa "+ Cliente" para añadir.</div>';
+    el.innerHTML = isComercialView
+      ? '<div class="empty"><div class="empty-icon">📋</div>No hay clientes asociados a esta ruta para tus comerciales.</div>'
+      : '<div class="empty"><div class="empty-icon">📋</div>Sin clientes. Pulsa "+ Cliente" para añadir.</div>';
     return;
   }
 
@@ -2172,27 +2864,52 @@ function renderHojaDetail() {
     const estadoIcon = l.estado === 'entregado' ? '&#10004;' : l.estado === 'cancelado' ? '&#10008;' : l.estado === 'no_entregado' ? '!' : '';
     const cl = clients.find(c => c.id === parseInt(l.client_id));
     const contado = cl?.al_contado ? '<span style="color:var(--danger);font-size:9px;font-weight:700;flex-shrink:0">CTD</span>' : '';
-    html += `<div class="hr-linea ${estadoCls}" data-id="${l.id}" onclick="openEditLineaModal(${l.id})">
-      <span class="hr-linea-handle" data-sortable-handle>&#9776;</span>
+    const rowOnClick = isComercialView ? '' : ` onclick="openEditLineaModal(${l.id})"`;
+    const handleHtml = isComercialView ? '' : '<span class="hr-linea-handle" data-sortable-handle>&#9776;</span>';
+    const cantidadHtml = isComercialView
+      ? `<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+          <input type="number" value="${numVal(l.carros) > 0 ? formatQty(l.carros) : ''}" min="0" step="1" placeholder="Carros" onclick="event.stopPropagation()" onchange="updateHojaLineaCantidad(${l.id}, 'carros', this.value)" style="width:88px;text-align:right;padding:4px 6px;font-size:11px;border-radius:6px">
+          <input type="number" value="${numVal(l.cajas) > 0 ? formatQty(l.cajas) : ''}" min="0" step="1" placeholder="Cajas" onclick="event.stopPropagation()" onchange="updateHojaLineaCantidad(${l.id}, 'cajas', this.value)" style="width:88px;text-align:right;padding:4px 6px;font-size:11px;border-radius:6px">
+        </div>`
+      : `<span class="hr-linea-cc">${esc(formatLineaUnits(l))}</span>`;
+    const meta = glsRecommendationMeta(l.gls_recommendation);
+    const note = friendlyGlsNote(l.gls_notes);
+    const costHtml = !isComercialView && hasLineaCostData(l)
+      ? `<div class="hr-linea-costs">
+          <span class="hr-linea-cost-item">Km ${l.detour_km !== null ? esc(formatQty(l.detour_km)) : '—'}</span>
+          <span class="hr-linea-cost-item">Propio ${l.cost_own_route !== null ? esc(formatMoney(l.cost_own_route)) : '—'}</span>
+          <span class="hr-linea-cost-item">GLS ${l.cost_gls_adjusted !== null ? esc(formatMoney(l.cost_gls_adjusted)) : '—'}</span>
+          <span class="hr-linea-cost-item reco-${meta.cls}">${esc(meta.label)}</span>
+          ${note ? `<span class="hr-linea-cost-item reco-unavailable">${esc(note)}</span>` : ''}
+        </div>`
+      : '';
+    html += `<div class="hr-linea ${estadoCls}" data-id="${l.id}"${rowOnClick}>
+      ${handleHtml}
       <span class="hr-linea-num">${num}</span>
       <div class="hr-linea-body">
         <div class="hr-linea-row1">
           <span class="hr-linea-name">${esc(l.client_name)}</span>
           ${contado}
-          <span class="hr-linea-cc">${parseFloat(l.cc_aprox || 0) > 0 ? parseFloat(l.cc_aprox).toFixed(1) + ' CC' : ''}</span>
+          ${cantidadHtml}
           <span class="hr-linea-estado">${estadoIcon}</span>
         </div>
         <div class="hr-linea-row2">
           <span class="hr-linea-zona">${esc(l.zona || '')}</span>
           <span class="hr-linea-com">${esc(l.comercial_name || '')}</span>
         </div>
+        ${costHtml}
       </div>
     </div>`;
   });
   el.innerHTML = html;
 
   // Init Sortable drag&drop
-  if (hrSortable) hrSortable.destroy();
+  if (hrSortable) {
+    hrSortable.destroy();
+    hrSortable = null;
+  }
+  if (isComercialView) return;
+
   hrSortable = new Sortable(el, {
     handle: '.hr-linea-handle',
     animation: 150,
@@ -2209,6 +2926,54 @@ function renderHojaDetail() {
   });
 }
 
+async function updateHojaLineaCantidad(lineaId, field, value) {
+  if (!currentHoja || !lineaId) return;
+  try {
+    currentHoja = await api('hojas-ruta/' + currentHoja.id + '/lineas/' + lineaId, 'PUT', {
+      [field]: numVal(value),
+    });
+    renderHojaDetail();
+  } catch (e) {
+    showToast('Error guardando cantidad: ' + e.message);
+  }
+}
+
+async function calculateHojaGlsCosts(force = true) {
+  if (!currentHoja) return;
+
+  const btn = document.getElementById('btnCalcGlsCosts');
+  const status = document.getElementById('hrGlsCalcStatus');
+  const previousText = btn ? btn.textContent : '';
+
+  try {
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = 'Calculando...';
+    }
+    if (status) status.textContent = 'Calculando comparativa GLS...';
+
+    await api('gls-costs/calculate', 'POST', {
+      hoja_ruta_id: currentHoja.id,
+      force: force ? 1 : 0,
+    });
+
+    currentHoja = await api('hojas-ruta/' + currentHoja.id);
+    renderHojaDetail();
+    if (document.getElementById('vr')?.style.display === 'flex') {
+      await loadRentabilityReport();
+    }
+    showToast('Costes GLS calculados');
+  } catch (e) {
+    if (status) status.textContent = 'Error GLS: ' + e.message;
+    showToast('Error GLS: ' + e.message);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = previousText || 'Calcular costes GLS';
+    }
+  }
+}
+
 async function changeHojaEstado(estado) {
   if (!currentHoja) return;
   const prevEstado = currentHoja.estado;
@@ -2216,7 +2981,7 @@ async function changeHojaEstado(estado) {
   if (estado === 'cerrada' && !currentHoja.vehicle_id) {
     showToast('Asigna un vehiculo antes de cerrar la ruta');
     if (estadoSel) estadoSel.value = prevEstado;
-    document.getElementById('hrVehicleSel')?.focus();
+    document.getElementById('hrVehicleSearch')?.focus();
     return;
   }
   try {
@@ -2230,14 +2995,94 @@ async function changeHojaEstado(estado) {
   }
 }
 
+function getHojaVehicleLabel(vehicle) {
+  if (!vehicle) return '';
+  const suffix = parseInt(vehicle.active) ? '' : ' [INACTIVO]';
+  return vehicle.name + (vehicle.plate ? ' · ' + vehicle.plate : '') + suffix;
+}
+
+function findVehicleBySearchValue(value) {
+  const normalized = (value || '').trim().toLowerCase();
+  if (!normalized) return null;
+  const exact = vehicles.find(v => getHojaVehicleLabel(v).toLowerCase() === normalized);
+  if (exact) return exact;
+
+  const partialMatches = vehicles.filter(v => getHojaVehicleLabel(v).toLowerCase().includes(normalized));
+  return partialMatches.length === 1 ? partialMatches[0] : null;
+}
+
+function renderHojaVehicleSearch() {
+  const input = document.getElementById('hrVehicleSearch');
+  const hidden = document.getElementById('hrVehicleId');
+  const list = document.getElementById('hrVehicleOptions');
+  if (!input || !hidden || !list) return;
+
+  list.innerHTML = vehicles.map(v => `<option value="${esc(getHojaVehicleLabel(v))}"></option>`).join('');
+
+  const selectedVehicle = currentHoja?.vehicle_id
+    ? vehicles.find(v => parseInt(v.id, 10) === parseInt(currentHoja.vehicle_id, 10))
+    : null;
+
+  input.value = selectedVehicle ? getHojaVehicleLabel(selectedVehicle) : '';
+  hidden.value = selectedVehicle ? String(selectedVehicle.id) : '';
+  input.disabled = !vehicles.length;
+}
+
+function syncHojaVehicleSearch(value) {
+  const hidden = document.getElementById('hrVehicleId');
+  if (!hidden) return;
+
+  const trimmed = (value || '').trim();
+  if (!trimmed) {
+    hidden.value = '';
+    return;
+  }
+
+  const matchedVehicle = findVehicleBySearchValue(trimmed);
+  hidden.value = matchedVehicle ? String(matchedVehicle.id) : '';
+}
+
+async function submitHojaVehicleSearch() {
+  if (!currentHoja) return;
+
+  const input = document.getElementById('hrVehicleSearch');
+  const hidden = document.getElementById('hrVehicleId');
+  if (!input || !hidden) return;
+
+  const searchValue = input.value.trim();
+  if (!searchValue) {
+    await changeHojaVehicle('');
+    return;
+  }
+
+  const matchedVehicle = hidden.value
+    ? vehicles.find(v => parseInt(v.id, 10) === parseInt(hidden.value, 10))
+    : findVehicleBySearchValue(searchValue);
+
+  if (!matchedVehicle) {
+    showToast('Selecciona un vehiculo de la lista');
+    renderHojaVehicleSearch();
+    input.focus();
+    input.select();
+    return;
+  }
+
+  if (parseInt(currentHoja.vehicle_id || 0, 10) === parseInt(matchedVehicle.id, 10)) {
+    input.value = getHojaVehicleLabel(matchedVehicle);
+    hidden.value = String(matchedVehicle.id);
+    return;
+  }
+
+  await changeHojaVehicle(String(matchedVehicle.id));
+}
+
 async function changeHojaVehicle(vehicleId) {
   if (!currentHoja) return;
   const normalizedVehicleId = vehicleId ? parseInt(vehicleId, 10) : null;
-  const vehicleSel = document.getElementById('hrVehicleSel');
 
   if (currentHoja.estado === 'cerrada' && !normalizedVehicleId) {
     showToast('Una ruta cerrada debe tener vehiculo asignado');
-    if (vehicleSel) vehicleSel.value = currentHoja.vehicle_id ? String(currentHoja.vehicle_id) : '';
+    renderHojaVehicleSearch();
     return;
   }
 
@@ -2247,7 +3092,7 @@ async function changeHojaVehicle(vehicleId) {
     renderHojaDetail();
     showToast(normalizedVehicleId ? 'Vehiculo asignado' : 'Vehiculo quitado');
   } catch (e) {
-    if (vehicleSel) vehicleSel.value = currentHoja.vehicle_id ? String(currentHoja.vehicle_id) : '';
+    renderHojaVehicleSearch();
     showToast('Error: ' + e.message);
   }
 }
@@ -2273,10 +3118,15 @@ async function fetchHojaOSRMRoute() {
   hrRouteDuration = null;
   document.getElementById('hrRouteInfo').textContent = '';
 
-  if (!currentHoja || !currentHoja.lineas?.length) return;
+  if (!currentHoja) return;
 
-  const lineas = currentHoja.lineas;
+  const lineas = getHojaActiveLineas(currentHoja);
+  if (!lineas.length) return;
   const waypoints = [];
+  const routeDelegation = getHojaRouteDelegation(lineas);
+  const depotPoint = routeDelegation
+    ? { x: parseFloat(routeDelegation.x), y: parseFloat(routeDelegation.y) }
+    : null;
 
   // Buscar la delegación más común entre los clientes de la hoja
   const delCount = {};
@@ -2323,6 +3173,58 @@ async function fetchHojaOSRMRoute() {
   }
 }
 
+// Override para que la ruta incluya salida y vuelta a delegacion.
+async function fetchHojaOSRMRoute() {
+  hrOsrmGeometry = null;
+  hrRouteDistance = null;
+  hrRouteDuration = null;
+  document.getElementById('hrRouteInfo').textContent = '';
+
+  if (!currentHoja) return;
+
+  const lineas = getHojaActiveLineas(currentHoja);
+  if (!lineas.length) return;
+
+  const routeDelegation = getHojaRouteDelegation(lineas);
+  const depotPoint = routeDelegation
+    ? { x: parseFloat(routeDelegation.x), y: parseFloat(routeDelegation.y) }
+    : null;
+  const waypoints = [];
+
+  if (depotPoint) {
+    waypoints.push(depotPoint);
+  }
+
+  lineas.forEach(l => {
+    const lat = parseFloat(l.client_x);
+    const lng = parseFloat(l.client_y);
+    if (lat && lng) waypoints.push({ x: lat, y: lng });
+  });
+
+  if (depotPoint) {
+    waypoints.push(depotPoint);
+  }
+
+  if (waypoints.length < 2) return;
+
+  try {
+    const result = await fetchOSRMRoute(waypoints);
+    hrOsrmGeometry = result.geometry;
+    hrRouteDistance = result.distance;
+    hrRouteDuration = result.duration;
+
+    const km = result.distance.toFixed(1);
+    const h = Math.floor(result.duration);
+    const m = Math.round((result.duration - h) * 60);
+    const timeStr = h > 0 ? h + 'h ' + m + 'min' : m + ' min';
+    document.getElementById('hrRouteInfo').textContent = km + ' km · ' + timeStr;
+    showToast('Ruta: ' + km + ' km, ' + timeStr);
+  } catch (e) {
+    document.getElementById('hrRouteInfo').textContent = 'Error ruta';
+    console.warn('OSRM error:', e);
+  }
+}
+
 async function duplicarHoja() {
   if (!currentHoja) return;
   const fecha = prompt('Fecha para la nueva hoja (YYYY-MM-DD):', todayStr());
@@ -2338,6 +3240,10 @@ async function duplicarHoja() {
 // ── Modal añadir líneas ──
 
 function openAddLineaModal() {
+  if (typeof APP_USER !== 'undefined' && APP_USER.role === 'comercial') {
+    showToast('Tus clientes de la ruta se cargan automaticamente');
+    return;
+  }
   if (!currentHoja) return;
   const comWrap = document.getElementById('hrLineaComercialWrap');
   const comSel = document.getElementById('hrLineaComercial');
@@ -2350,7 +3256,8 @@ function openAddLineaModal() {
       comSel.innerHTML = '<option value="">—</option>' + comerciales.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
     });
   }
-  document.getElementById('hrLineaCC').value = '';
+  document.getElementById('hrLineaCarros').value = '';
+  document.getElementById('hrLineaCajas').value = '';
   document.getElementById('hrLineaObs').value = '';
   document.getElementById('hrLineaSearch').value = '';
   lineaSelectedClients = new Set();
@@ -2365,7 +3272,7 @@ function filterLineaClients(q) {
   const userComercialIds = getUserComercialIds();
   q = q.toLowerCase();
 
-  let visibleClients = clients.filter(c => c.active && !existingIds.has(c.id));
+  let visibleClients = clients.filter(c => c.active);
   if (typeof APP_USER !== 'undefined' && APP_USER.role === 'comercial') {
     visibleClients = userComercialIds.length
       ? visibleClients.filter(c => c.comercial_id && userComercialIds.includes(c.comercial_id))
@@ -2387,20 +3294,24 @@ function filterLineaClients(q) {
   }
 
   el.innerHTML = filtered.map(c => {
-    const checked = lineaSelectedClients.has(c.id) ? 'checked' : '';
+    const alreadyIn = existingIds.has(c.id);
+    const checked = alreadyIn || lineaSelectedClients.has(c.id) ? 'checked' : '';
+    const disabled = alreadyIn ? 'disabled' : '';
+    const dimStyle = alreadyIn ? 'opacity:0.5;' : '';
     const isRuta = c.ruta_id == rutaId;
     const badge = isRuta ? ' <span class="pill ruta" style="font-size:9px;vertical-align:middle">Ruta</span>' : '';
+    const inHojaBadge = alreadyIn ? ' <span style="font-size:9px;background:#2563eb;color:#fff;padding:1px 5px;border-radius:3px;vertical-align:middle">En hoja</span>' : '';
     const contadoChecked = c.al_contado ? 'checked' : '';
     const addr = c.addr ? '<div style="font-size:10px;color:var(--text-dim);margin-top:2px;word-break:break-word">' + esc(c.addr) + '</div>' : '';
-    return '<div class="hr-add-client-item" onclick="toggleLineaClient(' + c.id + ', this)">' +
-      '<input type="checkbox" ' + checked + ' onclick="event.stopPropagation();toggleLineaClient(' + c.id + ', this.parentElement)" style="flex-shrink:0;width:16px;height:16px;margin-top:2px">' +
+    return '<div class="hr-add-client-item" style="' + dimStyle + '" ' + (alreadyIn ? '' : 'onclick="toggleLineaClient(' + c.id + ', this)"') + '>' +
+      '<input type="checkbox" ' + checked + ' ' + disabled + ' ' + (alreadyIn ? '' : 'onclick="event.stopPropagation();toggleLineaClient(' + c.id + ', this.parentElement)"') + ' style="flex-shrink:0;width:16px;height:16px;margin-top:2px">' +
       '<div style="flex:1;min-width:0;overflow:hidden">' +
-        '<div style="font-weight:600;font-size:12px;word-break:break-word">' + esc(c.name) + badge + '</div>' +
+        '<div style="font-weight:600;font-size:12px;word-break:break-word">' + esc(c.name) + badge + inHojaBadge + '</div>' +
         addr +
       '</div>' +
-      '<label onclick="event.stopPropagation()" style="display:flex;align-items:center;gap:4px;flex-shrink:0;cursor:pointer;font-size:9px;color:var(--danger);font-weight:700;white-space:nowrap;margin-top:2px">' +
+      (alreadyIn ? '' : '<label onclick="event.stopPropagation()" style="display:flex;align-items:center;gap:4px;flex-shrink:0;cursor:pointer;font-size:9px;color:var(--danger);font-weight:700;white-space:nowrap;margin-top:2px">' +
         '<input type="checkbox" ' + contadoChecked + ' onchange="toggleContado(' + c.id + ', this.checked)" style="width:13px;height:13px;accent-color:var(--danger)"> CTD' +
-      '</label>' +
+      '</label>') +
     '</div>';
   }).join('');
 }
@@ -2420,7 +3331,8 @@ async function addLineasToHoja() {
   const comercialId = document.getElementById('hrLineaComercial').value || null;
   const userComercialIds = getUserComercialIds();
   const defaultUserComercialId = userComercialIds.length === 1 ? userComercialIds[0] : null;
-  const cc = document.getElementById('hrLineaCC').value || 0;
+  const carros = document.getElementById('hrLineaCarros').value || 0;
+  const cajas = document.getElementById('hrLineaCajas').value || 0;
   const obs = document.getElementById('hrLineaObs').value || '';
 
   try {
@@ -2429,7 +3341,8 @@ async function addLineasToHoja() {
       await api('hojas-ruta/' + currentHoja.id + '/lineas', 'POST', {
         client_id: clientId,
         comercial_id: comercialId ? parseInt(comercialId) : (client?.comercial_id || defaultUserComercialId || null),
-        cc_aprox: parseFloat(cc) || 0,
+        carros: numVal(carros),
+        cajas: numVal(cajas),
         zona: client?.addr || '',
         observaciones: obs,
       });
@@ -2461,7 +3374,8 @@ function openEditLineaModal(lineaId) {
 
   document.getElementById('hrEditLineaId').value = lineaId;
   document.getElementById('hrEditLineaTitle').textContent = linea.client_name;
-  document.getElementById('hrEditCC').value = linea.cc_aprox || '';
+  document.getElementById('hrEditCarros').value = numVal(linea.carros) > 0 ? formatQty(linea.carros) : '';
+  document.getElementById('hrEditCajas').value = numVal(linea.cajas) > 0 ? formatQty(linea.cajas) : '';
   document.getElementById('hrEditZona').value = linea.zona || '';
   document.getElementById('hrEditObs').value = linea.observaciones || '';
   document.getElementById('hrEditEstado').value = linea.estado || 'pendiente';
@@ -2475,7 +3389,8 @@ async function saveEditLinea() {
   try {
     currentHoja = await api('hojas-ruta/' + currentHoja.id + '/lineas/' + lineaId, 'PUT', {
       comercial_id: document.getElementById('hrEditComercial').value || null,
-      cc_aprox: parseFloat(document.getElementById('hrEditCC').value) || 0,
+      carros: numVal(document.getElementById('hrEditCarros').value),
+      cajas: numVal(document.getElementById('hrEditCajas').value),
       zona: document.getElementById('hrEditZona').value,
       observaciones: document.getElementById('hrEditObs').value,
       estado: document.getElementById('hrEditEstado').value,
@@ -2507,9 +3422,10 @@ function drawHojaOnMap() {
   hrMapMarkers = [];
   if (hrMapLine) { map.removeLayer(hrMapLine); hrMapLine = null; }
 
-  if (!currentHoja || !currentHoja.lineas?.length) return;
+  if (!currentHoja) return;
 
-  const lineas = currentHoja.lineas;
+  const lineas = getHojaActiveLineas(currentHoja);
+  if (!lineas.length) return;
   const points = [];
 
   // Marcador de delegación si hay ruta OSRM
@@ -2529,8 +3445,8 @@ function drawHojaOnMap() {
     if (!lat || !lng) return;
 
     const num = l.orden_descarga || (i + 1);
-    const cc = parseFloat(l.cc_aprox || 0);
-    const tooltip = l.client_name + (cc > 0 ? ' (' + cc.toFixed(1) + ' CC)' : '');
+    const units = formatLineaUnits(l);
+    const tooltip = l.client_name + (units ? ' (' + units + ')' : '');
     const marker = L.marker([lat, lng], { icon: clientIcon('#8e8b30', num) })
       .bindTooltip(tooltip, { direction: 'top', offset: [0, -12] })
       .addTo(map);
@@ -2551,27 +3467,95 @@ function drawHojaOnMap() {
 }
 
 // ── Impresión ──
+// Override para mostrar salida y vuelta a delegacion tambien en el fallback del mapa.
+function drawHojaOnMap() {
+  // Restaurar markers generales que se habían ocultado
+  hrMapMarkers.forEach(m => map.removeLayer(m));
+  hrMapMarkers = [];
+  if (hrMapLine) { map.removeLayer(hrMapLine); hrMapLine = null; }
+
+  if (!currentHoja) { drawMap(); return; }
+
+  const lineas = getHojaActiveLineas(currentHoja);
+  if (!lineas.length) return;
+
+  const routeDelegation = getHojaRouteDelegation(lineas);
+  const depotLat = routeDelegation ? parseFloat(routeDelegation.x) : NaN;
+  const depotLng = routeDelegation ? parseFloat(routeDelegation.y) : NaN;
+  const points = [];
+
+  if (Number.isFinite(depotLat) && Number.isFinite(depotLng)) {
+    const dm = L.marker([depotLat, depotLng], { icon: delegationIcon('D'), zIndexOffset: 1000 })
+      .bindTooltip(routeDelegation.name || 'Delegacion', { permanent: true, direction: 'bottom', offset: [0, 10], className: 'delegation-tooltip' })
+      .addTo(map);
+    hrMapMarkers.push(dm);
+    points.push([depotLat, depotLng]);
+  }
+
+  lineas.forEach((l, i) => {
+    const lat = parseFloat(l.client_x);
+    const lng = parseFloat(l.client_y);
+    if (!lat || !lng) return;
+
+    const num = l.orden_descarga || (i + 1);
+    const units = formatLineaUnits(l);
+    const tooltip = l.client_name + (units ? ' (' + units + ')' : '');
+    // Ocultar el marker general de este cliente si existe
+    if (clientMarkerMap[l.client_id]) {
+      map.removeLayer(clientMarkerMap[l.client_id]);
+    }
+    const marker = L.marker([lat, lng], { icon: clientIcon('#2563eb', num), zIndexOffset: 900 })
+      .bindTooltip(tooltip, { direction: 'top', offset: [0, -12] })
+      .addTo(map);
+    hrMapMarkers.push(marker);
+    points.push([lat, lng]);
+  });
+
+  if (Number.isFinite(depotLat) && Number.isFinite(depotLng)) {
+    points.push([depotLat, depotLng]);
+  }
+
+  if (hrOsrmGeometry && hrOsrmGeometry.length > 1) {
+    hrMapLine = L.polyline(hrOsrmGeometry, { color: '#e63946', weight: 5, opacity: 0.9 }).addTo(map);
+    map.fitBounds(hrMapLine.getBounds().pad(0.1));
+  } else if (points.length > 1) {
+    hrMapLine = L.polyline(points, { color: '#e63946', weight: 4, opacity: 0.85, dashArray: '8,6' }).addTo(map);
+    map.fitBounds(L.latLngBounds(points).pad(0.15));
+  } else if (points.length) {
+    map.fitBounds(L.latLngBounds(points).pad(0.15));
+  }
+}
+
 function printHoja() {
   if (!currentHoja) return;
   const h = currentHoja;
-  const lineas = h.lineas || [];
+  const lineas = getHojaActiveLineas(h);
+  const hasCostColumns = lineas.some(l => l.cost_own_route !== null || l.cost_gls_adjusted !== null || l.gls_recommendation);
+  const externalizable = lineas.filter(l => l.gls_recommendation === 'externalize' && l.cost_own_route !== null && l.cost_gls_adjusted !== null);
 
   let rows = lineas.map((l, i) => {
     const num = l.orden_descarga || (i + 1);
     const cl = clients.find(c => c.id === parseInt(l.client_id));
     const contado = cl?.al_contado ? ' <span style="color:red;font-weight:700">[CTD]</span>' : '';
+    const meta = glsRecommendationMeta(l.gls_recommendation);
     return `<tr>
       <td style="text-align:center">${num}</td>
       <td><b>${esc(l.client_name)}</b>${contado}</td>
       <td>${esc(l.zona || '')}</td>
       <td>${esc(l.comercial_name || '')}</td>
-      <td style="text-align:center">${parseFloat(l.cc_aprox || 0) > 0 ? parseFloat(l.cc_aprox).toFixed(1) : ''}</td>
+      <td style="text-align:center">${numVal(l.carros) > 0 ? formatQty(l.carros) : ''}</td>
+      <td style="text-align:center">${numVal(l.cajas) > 0 ? formatQty(l.cajas) : ''}</td>
+      ${hasCostColumns ? `<td style="text-align:right">${l.cost_own_route !== null ? esc(formatMoney(l.cost_own_route)) : '—'}</td>` : ''}
+      ${hasCostColumns ? `<td style="text-align:right">${l.cost_gls_adjusted !== null ? esc(formatMoney(l.cost_gls_adjusted)) : '—'}</td>` : ''}
+      ${hasCostColumns ? `<td>${esc(meta.label)}</td>` : ''}
       <td></td>
       <td>${esc(l.observaciones || '')}</td>
     </tr>`;
   }).join('');
 
-  const totalCC = lineas.reduce((s, l) => s + parseFloat(l.cc_aprox || 0), 0).toFixed(1);
+  const totalCarros = formatQty(lineas.reduce((s, l) => s + numVal(l.carros), 0));
+  const totalCajas = formatQty(lineas.reduce((s, l) => s + numVal(l.cajas), 0));
+  const totalPotentialSavings = externalizable.reduce((sum, line) => sum + Math.max(0, numVal(line.cost_own_route) - numVal(line.cost_gls_adjusted)), 0);
 
   const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Hoja de Ruta - ${esc(h.ruta_name)}</title>
   <style>
@@ -2589,10 +3573,15 @@ function printHoja() {
   <h1>${esc(h.ruta_name)}</h1>
   <h2>${h.fecha} — ${esc(h.responsable || '')}</h2>
   <table>
-    <thead><tr><th>Ord</th><th>Cliente</th><th>Zona</th><th>Com.</th><th>CC</th><th>Entregado</th><th>Observaciones</th></tr></thead>
+    <thead><tr><th>Ord</th><th>Cliente</th><th>Zona</th><th>Com.</th><th>Carros</th><th>Cajas</th>${hasCostColumns ? '<th>Coste propio</th><th>Coste GLS</th><th>Decision</th>' : ''}<th>Entregado</th><th>Observaciones</th></tr></thead>
     <tbody>${rows}</tbody>
   </table>
-  <div class="totals">TOTALES: ${totalCC} CC &middot; ${lineas.length} clientes</div>
+  <div class="totals">TOTALES: ${totalCarros} carros &middot; ${totalCajas} cajas &middot; ${lineas.length} clientes</div>
+  ${hasCostColumns && externalizable.length ? `<div style="margin-top:16px;font-size:11px">
+    <div style="font-weight:700;margin-bottom:6px">CLIENTES CANDIDATOS A EXTERNALIZAR</div>
+    ${externalizable.map(line => `<div>- ${esc(line.client_name)} - ahorro potencial ${esc(formatMoney(Math.max(0, numVal(line.cost_own_route) - numVal(line.cost_gls_adjusted))))} / envio</div>`).join('')}
+    <div style="margin-top:6px;font-weight:700">Total ahorro potencial diario: ${esc(formatMoney(totalPotentialSavings))}</div>
+  </div>` : ''}
   <div class="firma"><div>Firma conductor</div><div>Firma almacen</div></div>
   <script>window.print();<\/script>
   </body></html>`;
@@ -2767,6 +3756,12 @@ window.addEventListener('DOMContentLoaded', async () => {
   setInterval(tickClock, 60000);
 
   document.getElementById('hrDate').value = todayStr();
+  const rentDateInput = document.getElementById('rentDate');
+  if (rentDateInput) rentDateInput.value = todayStr();
+  const recalcBtn = document.getElementById('btnRecalculateRentability');
+  if (recalcBtn && (typeof APP_USER === 'undefined' || APP_USER.role !== 'admin')) {
+    recalcBtn.style.display = 'none';
+  }
 
   if (typeof APP_USER !== 'undefined' && APP_USER.role === 'comercial') {
     await loadClients();

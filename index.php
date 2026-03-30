@@ -97,6 +97,16 @@ $router->get('api/routes/(\d+)', 'RouteController@show');
 $router->get('api/settings', 'SettingController@getSettings');
 $router->put('api/settings', 'SettingController@updateSettings');
 
+// API — GLS + comparativa de costes
+$router->get('api/gls-config', 'GlsCostController@getConfig');
+$router->put('api/gls-config', 'GlsCostController@updateConfig');
+$router->post('api/gls-config/test', 'GlsCostController@testConnection');
+$router->post('api/gls-costs/calculate', 'GlsCostController@calculateForHoja');
+$router->get('api/gls-costs/hoja/(\d+)', 'GlsCostController@getCostsForHoja');
+$router->get('api/gls-costs/client/(\d+)', 'GlsCostController@getClientHistory');
+$router->get('api/gls-costs/daily-report', 'GlsCostController@getDailyReport');
+$router->post('api/gls-costs/recalculate', 'GlsCostController@recalculateAll');
+
 // API — Dashboard stats
 $router->get('api/stats', 'RouteController@stats');
 

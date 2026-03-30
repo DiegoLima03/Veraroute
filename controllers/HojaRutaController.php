@@ -4,6 +4,7 @@ require_once __DIR__ . '/../core/Controller.php';
 require_once __DIR__ . '/../core/Auth.php';
 require_once __DIR__ . '/../models/HojaRuta.php';
 require_once __DIR__ . '/../models/Client.php';
+require_once __DIR__ . '/../models/DistanceCache.php';
 
 class HojaRutaController extends Controller
 {
@@ -21,8 +22,50 @@ class HojaRutaController extends Controller
         $rutaId = isset($_GET['ruta_id']) ? (int) $_GET['ruta_id'] : null;
         $userId = Auth::isComercial() ? Auth::currentUser()['id'] : null;
 
-        $hojas = $this->model->getByFecha($fecha, $rutaId, $userId);
-        $rutasSinHoja = $this->model->getRutasSinHoja($fecha);
+        if (Auth::isComercial()) {
+            $allowedIds = Auth::comercialIds();
+            $allowedRutaIds = $this->model->getRutaIdsForComerciales($allowedIds);
+
+            if ($rutaId && !in_array($rutaId, $allowedRutaIds, true)) {
+                $hojas = [];
+                $rutasSinHoja = [];
+            } else {
+                $hojas = [];
+                $rutasSinHojaMap = [];
+                foreach ($this->model->getRutasSinHoja($fecha) as $ruta) {
+                    if (in_array((int) $ruta['id'], $allowedRutaIds, true)) {
+                        $rutasSinHojaMap[(int) $ruta['id']] = $ruta;
+                    }
+                }
+
+                foreach ($this->model->getByFecha($fecha, $rutaId, null) as $hoja) {
+                    if (!in_array((int) $hoja['ruta_id'], $allowedRutaIds, true)) {
+                        continue;
+                    }
+
+                    $this->model->prefillRouteClientsForComerciales((int) $hoja['id'], $allowedIds);
+                    $hoja = $this->model->getById((int) $hoja['id']);
+                    $hoja = $this->filterHojaForComercial($hoja, $allowedIds);
+
+                    if ($this->hojaHasComercialActivity($hoja)) {
+                        $hojas[] = $hoja;
+                        unset($rutasSinHojaMap[(int) $hoja['ruta_id']]);
+                    } else {
+                        $rutasSinHojaMap[(int) $hoja['ruta_id']] = [
+                            'id' => (int) $hoja['ruta_id'],
+                            'name' => $hoja['ruta_name'],
+                            'active' => 1,
+                        ];
+                    }
+                }
+
+                $rutasSinHoja = array_values($rutasSinHojaMap);
+                usort($rutasSinHoja, fn ($a, $b) => strcmp((string) $a['name'], (string) $b['name']));
+            }
+        } else {
+            $hojas = $this->model->getByFecha($fecha, $rutaId, $userId);
+            $rutasSinHoja = $this->model->getRutasSinHoja($fecha);
+        }
 
         $this->json([
             'hojas'         => $hojas,
@@ -35,6 +78,19 @@ class HojaRutaController extends Controller
     {
         $hoja = $this->model->getById((int) $id);
         if (!$hoja) $this->json(['error' => 'Hoja no encontrada'], 404);
+
+        if (Auth::isComercial()) {
+            $allowedIds = Auth::comercialIds();
+            $allowedRutaIds = $this->model->getRutaIdsForComerciales($allowedIds);
+            if (!in_array((int) $hoja['ruta_id'], $allowedRutaIds, true)) {
+                $this->json(['error' => 'No tienes acceso a esta ruta'], 403);
+            }
+
+            $this->model->prefillRouteClientsForComerciales((int) $id, $allowedIds);
+            $hoja = $this->model->getById((int) $id);
+            $hoja = $this->filterHojaForComercial($hoja, $allowedIds);
+        }
+
         $this->json($hoja);
     }
 
@@ -49,6 +105,9 @@ class HojaRutaController extends Controller
         try {
             $data['user_id'] = Auth::currentUser()['id'] ?? null;
             $id = $this->model->create($data);
+            if (Auth::isComercial()) {
+                $this->model->prefillRouteClientsForComerciales($id, Auth::comercialIds());
+            }
             $this->json($this->model->getById($id), 201);
         } catch (\Exception $e) {
             if (strpos($e->getMessage(), 'Duplicate') !== false) {
@@ -134,6 +193,7 @@ class HojaRutaController extends Controller
             $data['comercial_id'] = $clientComercialId;
         }
 
+        $data = $this->normalizeLineaUnits($data);
         $data['hoja_ruta_id'] = (int) $id;
         $lineaId = $this->model->addLinea((int) $id, $data);
         $this->json($this->model->getById((int) $id), 201);
@@ -143,6 +203,35 @@ class HojaRutaController extends Controller
     public function updateLinea($id, $lineaId)
     {
         $data = $this->getInput();
+        $linea = $this->model->getLineaById((int) $lineaId);
+        if (!$linea || (int) $linea['hoja_ruta_id'] !== (int) $id) {
+            $this->json(['error' => 'Linea no encontrada'], 404);
+        }
+
+        if (Auth::isComercial()) {
+            $allowedIds = Auth::comercialIds();
+            $lineaComercialId = !empty($linea['comercial_id']) ? (int) $linea['comercial_id'] : null;
+
+            if (!$lineaComercialId || !in_array($lineaComercialId, $allowedIds, true)) {
+                $this->json(['error' => 'No puedes editar una linea de otro comercial'], 403);
+            }
+
+            $data = [
+                'carros' => isset($data['carros']) ? (float) $data['carros'] : (float) ($linea['carros'] ?? 0),
+                'cajas' => isset($data['cajas']) ? (float) $data['cajas'] : (float) ($linea['cajas'] ?? 0),
+            ];
+        }
+
+        if (array_key_exists('carros', $data) || array_key_exists('cajas', $data)) {
+            if (!array_key_exists('carros', $data)) {
+                $data['carros'] = (float) ($linea['carros'] ?? 0);
+            }
+            if (!array_key_exists('cajas', $data)) {
+                $data['cajas'] = (float) ($linea['cajas'] ?? 0);
+            }
+        }
+
+        $data = $this->normalizeLineaUnits($data);
         $this->model->updateLinea((int) $lineaId, $data);
         $this->json($this->model->getById((int) $id));
     }
@@ -173,7 +262,6 @@ class HojaRutaController extends Controller
 
         $lineas = $hoja['lineas'];
         if (count($lineas) < 2) {
-            // Con 0-1 paradas no hay nada que optimizar
             if (count($lineas) === 1) {
                 $this->model->reorder((int) $id, [(int) $lineas[0]['id']]);
             }
@@ -181,55 +269,68 @@ class HojaRutaController extends Controller
             return;
         }
 
-        // Obtener delegacion del primer cliente o la por defecto
-        $firstClient = $lineas[0];
+        // Obtener delegacion de referencia para salida y regreso
         $delegation = $this->getDelegationForHoja($hoja);
 
-        // Construir waypoints: delegacion + clientes
-        $waypoints = [];
+        // Construir puntos: [0] = delegacion, [1..N] = clientes
+        $points = [];
+        $hasDepot = false;
         if ($delegation) {
-            $waypoints[] = ['lat' => (float) $delegation['x'], 'lng' => (float) $delegation['y']];
+            $points[] = ['lat' => (float) $delegation['x'], 'lng' => (float) $delegation['y']];
+            $hasDepot = true;
         }
+
+        $clientWaypoints = [];
+        $noCoordLineaIds = [];
         foreach ($lineas as $l) {
             if ($l['client_x'] && $l['client_y']) {
-                $waypoints[] = [
+                $wp = [
                     'lat'      => (float) $l['client_x'],
                     'lng'      => (float) $l['client_y'],
                     'linea_id' => (int) $l['id'],
                 ];
+                $points[] = $wp;
+                $clientWaypoints[] = $wp;
+            } else {
+                $noCoordLineaIds[] = (int) $l['id'];
             }
         }
 
-        // Nearest-neighbor desde la delegacion
-        $clientWaypoints = array_filter($waypoints, fn($w) => isset($w['linea_id']));
-        $clientWaypoints = array_values($clientWaypoints);
+        // Construir matriz de distancias/duraciones reales via OSRM
+        $distCache = new DistanceCache();
+        $matrix = $distCache->buildMatrix($points);
+        $durations = $matrix['durations'];
 
-        $current = $delegation
-            ? ['lat' => (float) $delegation['x'], 'lng' => (float) $delegation['y']]
-            : ['lat' => (float) $clientWaypoints[0]['lat'], 'lng' => (float) $clientWaypoints[0]['lng']];
+        // Nearest-neighbor usando duraciones reales
+        $depotIdx = $hasDepot ? 0 : null;
+        $n = count($points);
+        $clientIndices = $hasDepot ? range(1, $n - 1) : range(0, $n - 1);
 
-        $ordered = [];
-        $remaining = $clientWaypoints;
+        $currentIdx = $depotIdx ?? $clientIndices[0];
+        $remaining = $clientIndices;
+        $orderedIndices = [];
 
         while (count($remaining) > 0) {
             $bestIdx = 0;
-            $bestDist = PHP_FLOAT_MAX;
-            foreach ($remaining as $i => $wp) {
-                $d = $this->haversine($current['lat'], $current['lng'], $wp['lat'], $wp['lng']);
-                if ($d < $bestDist) {
-                    $bestDist = $d;
-                    $bestIdx = $i;
+            $bestTime = PHP_FLOAT_MAX;
+            foreach ($remaining as $ri => $ptIdx) {
+                $t = $durations[$currentIdx][$ptIdx];
+                if ($t < $bestTime) {
+                    $bestTime = $t;
+                    $bestIdx = $ri;
                 }
             }
-            $ordered[] = $remaining[$bestIdx];
-            $current = $remaining[$bestIdx];
+            $orderedIndices[] = $remaining[$bestIdx];
+            $currentIdx = $remaining[$bestIdx];
             array_splice($remaining, $bestIdx, 1);
         }
 
-        // 2-opt improvement
-        $ordered = $this->twoOpt($ordered, $delegation);
+        // 2-opt improvement usando duraciones reales
+        $orderedIndices = $this->twoOptMatrix($orderedIndices, $durations, $depotIdx);
 
-        $lineaIds = array_map(fn($w) => $w['linea_id'], $ordered);
+        // Mapear indices de vuelta a linea_ids, clientes sin coordenadas van al final
+        $lineaIds = array_map(fn($idx) => $points[$idx]['linea_id'], $orderedIndices);
+        $lineaIds = array_merge($lineaIds, $noCoordLineaIds);
         $this->model->reorder((int) $id, $lineaIds);
 
         $this->json($this->model->getById((int) $id));
@@ -280,6 +381,69 @@ class HojaRutaController extends Controller
         return $this->model->getDelegationForHoja((int) $hoja['id']);
     }
 
+    private function filterHojaForComercial(array $hoja, array $allowedIds): array
+    {
+        $allowedIds = array_values(array_filter(array_map('intval', $allowedIds)));
+        $hoja['lineas'] = array_values(array_filter(
+            $hoja['lineas'] ?? [],
+            fn ($linea) => !empty($linea['comercial_id']) && in_array((int) $linea['comercial_id'], $allowedIds, true)
+        ));
+        $hoja['num_lineas'] = count($hoja['lineas']);
+        $hoja['total_carros'] = array_reduce(
+            $hoja['lineas'],
+            fn ($carry, $linea) => $carry + (float) ($linea['carros'] ?? 0),
+            0.0
+        );
+        $hoja['total_cajas'] = array_reduce(
+            $hoja['lineas'],
+            fn ($carry, $linea) => $carry + (float) ($linea['cajas'] ?? 0),
+            0.0
+        );
+        $hoja['total_cc'] = array_reduce(
+            $hoja['lineas'],
+            fn ($carry, $linea) => $carry + (float) (($linea['carros'] ?? 0) + ($linea['cajas'] ?? 0)),
+            0.0
+        );
+
+        return $hoja;
+    }
+
+    private function hojaHasComercialActivity(array $hoja): bool
+    {
+        foreach ($hoja['lineas'] ?? [] as $linea) {
+            if ((float) ($linea['carros'] ?? 0) > 0 || (float) ($linea['cajas'] ?? 0) > 0) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function normalizeLineaUnits(array $data): array
+    {
+        $hasCarros = array_key_exists('carros', $data);
+        $hasCajas = array_key_exists('cajas', $data);
+
+        if (!$hasCarros && !$hasCajas && array_key_exists('cc_aprox', $data)) {
+            $data['cajas'] = (float) $data['cc_aprox'];
+            $hasCajas = true;
+        }
+
+        if ($hasCarros) {
+            $data['carros'] = max(0, (float) $data['carros']);
+        }
+
+        if ($hasCajas) {
+            $data['cajas'] = max(0, (float) $data['cajas']);
+        }
+
+        if ($hasCarros || $hasCajas || array_key_exists('cc_aprox', $data)) {
+            $data['cc_aprox'] = (float) ($data['carros'] ?? 0) + (float) ($data['cajas'] ?? 0);
+        }
+
+        return $data;
+    }
+
     private function haversine(float $lat1, float $lng1, float $lat2, float $lng2): float
     {
         $r = 6371;
@@ -303,15 +467,15 @@ class HojaRutaController extends Controller
             $iter++;
 
             for ($i = 0; $i < $n - 1; $i++) {
-                for ($j = $i + 2; $j < $n; $j++) {
-                    $d1 = $this->segDist($route, $i, $i + 1, $delegation)
-                        + $this->segDist($route, $j, ($j + 1) % $n, $delegation);
-                    $d2 = $this->segDist($route, $i, $j, $delegation)
-                        + $this->segDist($route, $i + 1, ($j + 1) % $n, $delegation);
+                for ($j = $i + 1; $j < $n; $j++) {
+                    $d1 = $this->segDist($route, $i - 1, $i, $delegation)
+                        + $this->segDist($route, $j, $j + 1, $delegation);
+                    $d2 = $this->segDist($route, $i - 1, $j, $delegation)
+                        + $this->segDist($route, $i, $j + 1, $delegation);
 
                     if ($d2 < $d1 - 0.001) {
-                        $reversed = array_reverse(array_slice($route, $i + 1, $j - $i));
-                        array_splice($route, $i + 1, $j - $i, $reversed);
+                        $reversed = array_reverse(array_slice($route, $i, $j - $i + 1));
+                        array_splice($route, $i, $j - $i + 1, $reversed);
                         $improved = true;
                     }
                 }
@@ -333,5 +497,46 @@ class HojaRutaController extends Controller
             return 0;
         }
         return $this->haversine($route[$a]['lat'], $route[$a]['lng'], $route[$b]['lat'], $route[$b]['lng']);
+    }
+
+    /**
+     * 2-opt improvement usando matriz de duraciones reales (OSRM).
+     * $route = array de indices en la matriz de puntos.
+     * $durations = float[][] matriz NxN de duraciones.
+     * $depotIdx = indice del depot en la matriz (o null).
+     */
+    private function twoOptMatrix(array $route, array $durations, ?int $depotIdx): array
+    {
+        $n = count($route);
+        if ($n < 3) return $route;
+
+        $improved = true;
+        $maxIter = 50;
+        $iter = 0;
+
+        while ($improved && $iter < $maxIter) {
+            $improved = false;
+            $iter++;
+
+            for ($i = 0; $i < $n - 1; $i++) {
+                for ($j = $i + 1; $j < $n; $j++) {
+                    $prevI = $i === 0 ? $depotIdx : $route[$i - 1];
+                    $nextJ = $j === $n - 1 ? $depotIdx : $route[$j + 1];
+
+                    $d1 = ($prevI !== null ? $durations[$prevI][$route[$i]] : 0)
+                         + ($nextJ !== null ? $durations[$route[$j]][$nextJ] : 0);
+                    $d2 = ($prevI !== null ? $durations[$prevI][$route[$j]] : 0)
+                         + ($nextJ !== null ? $durations[$route[$i]][$nextJ] : 0);
+
+                    if ($d2 < $d1 - 0.1) {
+                        $reversed = array_reverse(array_slice($route, $i, $j - $i + 1));
+                        array_splice($route, $i, $j - $i + 1, $reversed);
+                        $improved = true;
+                    }
+                }
+            }
+        }
+
+        return $route;
     }
 }

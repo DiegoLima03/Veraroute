@@ -46,8 +46,15 @@
 <div class="main" style="grid-template-columns:1fr">
   <div class="panel" style="max-width:100%;width:100%">
     <input type="hidden" id="rDate" value="">
-    <input type="hidden" id="hrDate" value="">
     <span id="bhr" style="display:none">0</span>
+
+    <div class="date-bar">
+      <div class="date-label">Fecha</div>
+      <input type="date" id="hrDate" onchange="onHrDateChange()">
+      <button class="btn btn-secondary btn-sm" onclick="hrDateNav(-1)" title="Dia anterior">&larr;</button>
+      <button class="btn btn-secondary btn-sm" onclick="setHrToday()">Hoy</button>
+      <button class="btn btn-secondary btn-sm" onclick="hrDateNav(1)" title="Dia siguiente">&rarr;</button>
+    </div>
 
     <!-- Vista listado (principal) -->
     <div id="hrListView" style="display:flex;flex-direction:column;flex:1;overflow:hidden">
@@ -61,23 +68,17 @@
       <div class="panel-header" style="gap:8px">
         <button class="btn btn-secondary btn-sm" onclick="closeHojaDetail()">&larr; Volver</button>
         <div class="panel-title" id="hrDetailTitle" style="flex:1">—</div>
-        <span class="hr-estado-badge" id="hrDetailEstado"></span>
       </div>
       <div style="padding:8px 14px;border-bottom:1px solid var(--border);display:flex;gap:6px;flex-wrap:wrap;background:var(--surface);flex-shrink:0">
-        <button class="btn btn-primary btn-sm" onclick="openAddLineaModal()">+ Cliente</button>
-        <button class="btn btn-secondary btn-sm" onclick="printHoja()">Imprimir</button>
-        <select id="hrVehicleSel" onchange="changeHojaVehicle(this.value)" style="width:auto;min-width:170px;padding:4px 8px;font-size:10px;border-radius:6px">
-          <option value="">Vehiculo...</option>
-        </select>
-        <select id="hrEstadoSel" onchange="changeHojaEstado(this.value)" style="width:auto;padding:4px 8px;font-size:10px;border-radius:6px">
-          <option value="borrador">Borrador</option>
-          <option value="cerrada">Cerrada</option>
-        </select>
+        <div style="display:flex;align-items:center;gap:4px;min-width:260px;flex:1 1 360px">
+          <input id="hrClientSearch" type="search" placeholder="Buscar cliente..." autocomplete="off" oninput="setHojaClientSearch(this.value)" style="min-width:0;width:100%;padding:4px 8px;font-size:10px;border-radius:6px">
+        </div>
       </div>
       <div class="scroll-list" id="hrLineasList" style="flex:1"></div>
       <div style="padding:8px 14px;border-top:1px solid var(--border);background:var(--surface);font-size:11px;display:flex;gap:16px;flex-shrink:0">
         <span><b id="hrTotalClientes">0</b> clientes</span>
-        <span><b id="hrTotalCC">0</b> CC</span>
+        <span><b id="hrTotalCarros">0</b> carros</span>
+        <span><b id="hrTotalCajas">0</b> cajas</span>
         <span id="hrRouteInfo" style="margin-left:auto;color:var(--accent);font-weight:700"></span>
       </div>
     </div>
@@ -94,6 +95,7 @@
       <button class="tab" id="tab-hr" onclick="switchTab('hr')">Hojas Ruta <span class="tab-badge" id="bhr">0</span></button>
       <button class="tab" id="tab-f" onclick="switchTab('f')">Flota</button>
       <button class="tab" id="tab-h" onclick="switchTab('h')">Historial</button>
+      <button class="tab" id="tab-r" onclick="switchTab('r')">Rentabilidad</button>
       <?php if ($u['role'] === 'admin'): ?>
       <button class="tab" id="tab-u" onclick="switchTab('u')">Usuarios</button>
       <?php endif; ?>
@@ -148,17 +150,20 @@
           <span class="hr-estado-badge" id="hrDetailEstado"></span>
         </div>
         <div style="padding:8px 14px;border-bottom:1px solid var(--border);display:flex;gap:6px;flex-wrap:wrap;background:var(--surface);flex-shrink:0">
-          <button class="btn btn-primary btn-sm" onclick="openAddLineaModal()">+ Cliente</button>
+          <button class="btn btn-primary btn-sm" id="btnAddLinea" onclick="openAddLineaModal()">+ Cliente</button>
           <button class="btn btn-secondary btn-sm" onclick="autoOrdenarHoja()">Auto-ordenar</button>
           <button class="btn btn-secondary btn-sm" onclick="printHoja()">Imprimir</button>
           <button class="btn btn-secondary btn-sm" onclick="duplicarHoja()">Duplicar</button>
-          <select id="hrVehicleSel" onchange="changeHojaVehicle(this.value)" style="width:auto;min-width:170px;padding:4px 8px;font-size:10px;border-radius:6px">
-            <option value="">Vehiculo...</option>
-          </select>
+          <button class="btn btn-secondary btn-sm" id="btnCalcGlsCosts" onclick="calculateHojaGlsCosts()">Calcular costes GLS</button>
+          <span id="hrGlsCalcStatus" style="align-self:center;font-size:10px;color:var(--text-dim)"></span>
+          <div style="display:flex;align-items:center;gap:4px;min-width:220px;flex:0 1 280px">
+            <input id="hrVehicleSearch" type="search" list="hrVehicleOptions" placeholder="Buscar vehiculo..." autocomplete="off" oninput="syncHojaVehicleSearch(this.value)" onchange="submitHojaVehicleSearch()" onkeydown="if(event.key==='Enter'){event.preventDefault();submitHojaVehicleSearch()}" style="min-width:0;padding:4px 8px;font-size:10px;border-radius:6px">
+            <input type="hidden" id="hrVehicleId" value="">
+            <datalist id="hrVehicleOptions"></datalist>
+          </div>
           <select id="hrEstadoSel" onchange="changeHojaEstado(this.value)" style="width:auto;padding:4px 8px;font-size:10px;border-radius:6px">
             <option value="borrador">Borrador</option>
             <option value="cerrada">Cerrada</option>
-            <option value="planificada">Planificada</option>
             <option value="en_reparto">En reparto</option>
             <option value="completada">Completada</option>
           </select>
@@ -166,7 +171,8 @@
         <div class="scroll-list" id="hrLineasList" style="flex:1"></div>
         <div style="padding:8px 14px;border-top:1px solid var(--border);background:var(--surface);font-size:11px;display:flex;gap:16px;flex-shrink:0">
           <span><b id="hrTotalClientes">0</b> clientes</span>
-          <span><b id="hrTotalCC">0</b> CC</span>
+          <span><b id="hrTotalCarros">0</b> carros</span>
+          <span><b id="hrTotalCajas">0</b> cajas</span>
           <span id="hrRouteInfo" style="margin-left:auto;color:var(--accent);font-weight:700"></span>
         </div>
       </div>
@@ -206,6 +212,29 @@
       <div id="dashboardPanel" style="padding:10px;font-size:11px;overflow-y:auto;flex:0.5"></div>
     </div>
 
+    <!-- RENTABILIDAD -->
+    <div id="vr" style="display:none;flex-direction:column;flex:1;overflow:hidden">
+      <div class="panel-header">
+        <div class="panel-title">Comparativa ruta propia vs GLS</div>
+        <div style="display:flex;gap:6px;align-items:center">
+          <span id="rentabilityStatus" style="font-size:10px;color:var(--text-dim)"></span>
+          <button class="btn btn-secondary btn-sm" onclick="loadRentabilityReport()">Actualizar</button>
+          <button class="btn btn-primary btn-sm" id="btnRecalculateRentability" onclick="recalculateRentability()">Calcular / Recalcular</button>
+        </div>
+      </div>
+      <div class="date-bar" style="gap:6px;flex-wrap:wrap">
+        <div class="date-label">Fecha</div>
+        <input type="date" id="rentDate" onchange="onRentabilityDateChange()">
+        <button class="btn btn-secondary btn-sm" onclick="rentabilityDateNav(-1)" title="Dia anterior">&larr;</button>
+        <button class="btn btn-secondary btn-sm" onclick="setRentabilityToday()">Hoy</button>
+        <button class="btn btn-secondary btn-sm" onclick="rentabilityDateNav(1)" title="Dia siguiente">&rarr;</button>
+      </div>
+      <div class="scroll-list" style="display:flex;flex-direction:column;gap:10px">
+        <div id="rentabilitySummary" class="rent-summary-grid"></div>
+        <div id="rentabilityTableWrap" class="rent-table-wrap"></div>
+      </div>
+    </div>
+
     <?php if ($u['role'] === 'admin'): ?>
     <!-- USUARIOS -->
     <div id="vu" style="display:none;flex-direction:column;flex:1;overflow:hidden">
@@ -217,7 +246,7 @@
     </div>
     <?php endif; ?>
 
-    <div class="optimize-bar">
+    <div class="optimize-bar" style="display:none">
       <button class="btn btn-primary" onclick="optimizeFleetRoutes()">Optimizar rutas</button>
       <button class="btn btn-secondary" onclick="clearRoute()" title="Limpiar">Limpiar</button>
       <button class="icon-btn" onclick="openSettingsModal()" title="Configuracion">&#9881;</button>
@@ -265,7 +294,12 @@
         <div class="ff"><label>Nombre *</label><input id="cName" placeholder="Farmacia Central, Supermercado..."></div>
         <div class="fg">
           <div><label>Direccion / Referencia</label><input id="cAddr" placeholder="Calle, numero..."></div>
+          <div><label>Codigo postal (GLS)</label><input id="cPostcode" placeholder="ej. 36700" maxlength="10" oninput="updateClientPostcodeHint()"></div>
+        </div>
+        <div class="ff" id="cPostcodeHint" style="font-size:10px;color:var(--text-dim)">Sin codigo postal no se puede cotizar GLS.</div>
+        <div class="fg">
           <div><label>Telefono</label><input id="cPhone" placeholder="600 000 000"></div>
+          <div></div>
         </div>
         <div class="ff"><label>Notas internas</label><textarea id="cNotes" placeholder="Instrucciones de entrega, acceso, contacto..."></textarea></div>
         <div class="fg">
@@ -287,6 +321,10 @@
       <div class="msection">
         <div class="msec-title">Horario semanal</div>
         <div id="cScheduleGrid" style="font-size:12px"></div>
+      </div>
+      <div class="msection">
+        <div class="msec-title">Historial GLS</div>
+        <div id="cGlsHistory" style="font-size:11px;color:var(--text-dim)">Sin historial de comparativa GLS todavia.</div>
       </div>
     </div>
     <div class="mfoot">
@@ -403,6 +441,34 @@
         <div id="templateList" style="max-height:150px;overflow-y:auto"></div>
         <button class="add-item" onclick="saveCurrentAsTemplate()" id="btnSaveTemplate" style="display:none">+ Guardar ruta actual como plantilla</button>
       </div>
+      <div class="msection" id="glsSettingsSection">
+        <div class="msec-title">Integracion GLS</div>
+        <div class="fg">
+          <div><label>Usuario API MyGLS</label><input id="glsApiUser" placeholder="usuario API"></div>
+          <div><label>Contrasena API MyGLS</label><input id="glsApiPassword" type="password" placeholder="contrasena API"></div>
+        </div>
+        <div class="fg">
+          <div><label>Entorno</label><select id="glsApiEnv"><option value="test">Test</option><option value="production">Produccion</option></select></div>
+          <div><label>Base URL API</label><input id="glsApiBaseUrl" placeholder="https://host-real-gls"></div>
+        </div>
+        <div class="fg">
+          <div><label>CP origen</label><input id="glsOriginPostcode" placeholder="36780"></div>
+          <div><label>Pais origen</label><input id="glsOriginCountry" value="ES" maxlength="2"></div>
+        </div>
+        <div class="fg">
+          <div><label>Multiplicador de precio</label><input id="glsPriceMultiplier" type="number" min="0.1" max="2" step="0.01" value="1.00"></div>
+          <div><label>Servicio por defecto</label><input id="glsDefaultService" value="BusinessParcel"></div>
+        </div>
+        <div class="fg">
+          <div><label>Peso por carro (kg)</label><input id="glsWeightPerCarro" type="number" min="0" step="0.1" value="5.0"></div>
+          <div><label>Peso por caja (kg)</label><input id="glsWeightPerCaja" type="number" min="0" step="0.1" value="2.5"></div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <button class="btn btn-secondary btn-sm" type="button" onclick="toggleGlsPassword()">Mostrar / ocultar</button>
+          <button class="btn btn-secondary btn-sm" type="button" id="btnGlsTest" onclick="testGlsConnection()">Probar conexion</button>
+          <span id="glsTestStatus" style="font-size:10px;color:var(--text-dim)"></span>
+        </div>
+      </div>
     </div>
     <div class="mfoot">
       <button class="btn btn-secondary" onclick="closeSettingsModal()">Cancelar</button>
@@ -442,7 +508,8 @@
       <div id="hrLineaClientList" style="max-height:200px;overflow-y:auto;overflow-x:hidden;margin-bottom:10px"></div>
       <div class="fg">
         <div id="hrLineaComercialWrap"><label>Comercial</label><select id="hrLineaComercial"><option value="">—</option></select></div>
-        <div><label>CC Aprox</label><input type="number" id="hrLineaCC" step="0.25" min="0" placeholder="0.50"></div>
+        <div><label>Carros</label><input type="number" id="hrLineaCarros" step="1" min="0" placeholder="0"></div>
+        <div><label>Cajas</label><input type="number" id="hrLineaCajas" step="1" min="0" placeholder="0"></div>
       </div>
       <div class="ff"><label>Observaciones</label><input id="hrLineaObs" placeholder="Direccion, llamar antes..."></div>
     </div>
@@ -464,7 +531,8 @@
       <input type="hidden" id="hrEditLineaId">
       <div class="fg">
         <div id="hrEditComercialWrap"><label>Comercial</label><select id="hrEditComercial"><option value="">—</option></select></div>
-        <div><label>CC Aprox</label><input type="number" id="hrEditCC" step="0.25" min="0"></div>
+        <div><label>Carros</label><input type="number" id="hrEditCarros" step="1" min="0"></div>
+        <div><label>Cajas</label><input type="number" id="hrEditCajas" step="1" min="0"></div>
       </div>
       <div class="ff"><label>Zona</label><input id="hrEditZona"></div>
       <div class="ff"><label>Observaciones</label><input id="hrEditObs"></div>

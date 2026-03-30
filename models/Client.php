@@ -43,11 +43,12 @@ class Client extends Model
     public function create(array $data)
     {
         $this->query(
-            'INSERT INTO clients (name, address, phone, notes, x, y, open_time, close_time, open_time_2, close_time_2, comercial_id, ruta_id, al_contado)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            'INSERT INTO clients (name, address, postcode, phone, notes, x, y, open_time, close_time, open_time_2, close_time_2, comercial_id, ruta_id, al_contado)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
             [
                 $data['name'],
                 $data['address'] ?? '',
+                $data['postcode'] ?? '',
                 $data['phone'] ?? '',
                 $data['notes'] ?? '',
                 $data['x'],
@@ -67,11 +68,12 @@ class Client extends Model
     public function update(int $id, array $data)
     {
         $this->query(
-            'UPDATE clients SET name = ?, address = ?, phone = ?, notes = ?, x = ?, y = ?, open_time = ?, close_time = ?, open_time_2 = ?, close_time_2 = ?, comercial_id = ?, ruta_id = ?, al_contado = ?
+            'UPDATE clients SET name = ?, address = ?, postcode = ?, phone = ?, notes = ?, x = ?, y = ?, open_time = ?, close_time = ?, open_time_2 = ?, close_time_2 = ?, comercial_id = ?, ruta_id = ?, al_contado = ?
              WHERE id = ?',
             [
                 $data['name'],
                 $data['address'] ?? '',
+                $data['postcode'] ?? '',
                 $data['phone'] ?? '',
                 $data['notes'] ?? '',
                 $data['x'],

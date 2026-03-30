@@ -247,7 +247,6 @@ textarea { resize: none; height: 54px; }
 .hr-estado-badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; }
 .hr-estado-borrador { background: var(--surface2); color: var(--text-dim); border: 1px solid var(--border); }
 .hr-estado-cerrada { background: rgba(212,168,48,0.15); color: var(--accent2); border: 1px solid rgba(212,168,48,0.3); }
-.hr-estado-planificada { background: rgba(52,152,219,0.12); color: #2471a3; border: 1px solid rgba(52,152,219,0.3); }
 .hr-estado-en_reparto { background: rgba(230,126,34,0.12); color: #e67e22; border: 1px solid rgba(230,126,34,0.3); }
 .hr-estado-completada { background: var(--accent-soft); color: var(--accent); border: 1px solid rgba(142,139,48,0.3); }
 
@@ -268,6 +267,12 @@ textarea { resize: none; height: 54px; }
 .hr-linea-com { color: var(--accent2); font-size: 10px; font-weight: 600; }
 .hr-linea-cc { color: var(--accent); font-weight: 700; flex-shrink: 0; }
 .hr-linea-estado { font-size: 10px; flex-shrink: 0; }
+.hr-linea-costs { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+.hr-linea-cost-item { padding: 2px 7px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface2); color: var(--text-dim); font-size: 10px; white-space: nowrap; }
+.hr-linea-cost-item.reco-own { border-color: rgba(142,139,48,0.3); color: var(--accent); background: var(--accent-soft); }
+.hr-linea-cost-item.reco-externalize { border-color: rgba(230,126,34,0.3); color: #e67e22; background: rgba(230,126,34,0.1); }
+.hr-linea-cost-item.reco-break_even { border-color: rgba(52,152,219,0.3); color: #2471a3; background: rgba(52,152,219,0.1); }
+.hr-linea-cost-item.reco-unavailable { border-color: rgba(133,114,94,0.3); color: var(--text-dim); background: var(--surface2); }
 
 .hr-sin-hoja { padding: 8px 12px; background: var(--surface2); border: 1px dashed var(--border); border-radius: 8px; margin-bottom: 4px; display: flex; align-items: center; justify-content: space-between; font-size: 11px; color: var(--text-dim); }
 
@@ -276,6 +281,29 @@ textarea { resize: none; height: 54px; }
 .hr-add-client-item input[type=checkbox] { flex-shrink: 0; margin-top: 3px; width: 16px; height: 16px; }
 .hr-add-client-name { font-weight: 600; font-size: 12px; line-height: 1.3; word-break: break-word; }
 .hr-add-client-zona { font-size: 10px; color: var(--text-dim); margin-top: 2px; line-height: 1.2; word-break: break-word; }
+
+.rent-summary-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.rent-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; box-shadow: 0 2px 6px rgba(16,24,14,0.06); }
+.rent-card-label { font-size: 10px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
+.rent-card-value { font-size: 18px; font-weight: 800; color: var(--text-bright); }
+.rent-table-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; box-shadow: 0 2px 6px rgba(16,24,14,0.06); }
+.rent-table-scroll { overflow: auto; }
+.rent-table { width: 100%; border-collapse: collapse; min-width: 980px; }
+.rent-table th, .rent-table td { padding: 8px 10px; border-bottom: 1px solid rgba(133,114,94,0.2); font-size: 11px; text-align: left; vertical-align: middle; }
+.rent-table th { background: var(--surface2); color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.8px; font-size: 9px; cursor: pointer; white-space: nowrap; }
+.rent-table tr:hover td { background: rgba(142,139,48,0.04); }
+.rent-row-own td { background: rgba(142,139,48,0.04); }
+.rent-row-externalize td { background: rgba(230,126,34,0.05); }
+.rent-row-unavailable td { background: rgba(133,114,94,0.05); }
+.rent-badge { display: inline-flex; align-items: center; gap: 4px; border-radius: 999px; padding: 2px 8px; font-size: 10px; font-weight: 700; border: 1px solid var(--border); background: var(--surface2); color: var(--text-dim); white-space: nowrap; }
+.rent-badge.own { background: var(--accent-soft); color: var(--accent); border-color: rgba(142,139,48,0.3); }
+.rent-badge.externalize { background: rgba(230,126,34,0.1); color: #e67e22; border-color: rgba(230,126,34,0.3); }
+.rent-badge.break_even { background: rgba(52,152,219,0.1); color: #2471a3; border-color: rgba(52,152,219,0.3); }
+.rent-badge.unavailable { background: var(--surface2); color: var(--text-dim); border-color: rgba(133,114,94,0.3); }
+.rent-note { font-size: 10px; color: var(--text-dim); }
+.history-table { width: 100%; border-collapse: collapse; }
+.history-table th, .history-table td { padding: 6px 8px; border-bottom: 1px solid rgba(133,114,94,0.2); font-size: 11px; text-align: left; }
+.history-table th { background: var(--surface2); color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.8px; font-size: 9px; }
 
 /* Responsive movil */
 @media (max-width: 768px) {
@@ -290,6 +318,7 @@ textarea { resize: none; height: 54px; }
   .hr-linea { padding: 10px; font-size: 12px; }
   .hr-linea-handle { font-size: 14px; padding: 4px; }
   .hr-linea-num { width: 24px; height: 24px; font-size: 10px; }
+  .rent-summary-grid { grid-template-columns: 1fr 1fr; }
 }
 
 /* Print */

@@ -95,7 +95,6 @@
       <button class="tab" id="tab-hr" onclick="switchTab('hr')">Hojas Ruta <span class="tab-badge" id="bhr">0</span></button>
       <button class="tab" id="tab-f" onclick="switchTab('f')">Flota</button>
       <button class="tab" id="tab-h" onclick="switchTab('h')">Historial</button>
-      <button class="tab" id="tab-r" onclick="switchTab('r')">Rentabilidad</button>
       <?php if ($u['role'] === 'admin'): ?>
       <button class="tab" id="tab-u" onclick="switchTab('u')">Usuarios</button>
       <?php endif; ?>
@@ -153,8 +152,9 @@
           <button class="btn btn-primary btn-sm" id="btnAddLinea" onclick="openAddLineaModal()">+ Cliente</button>
           <button class="btn btn-secondary btn-sm" onclick="autoOrdenarHoja()">Auto-ordenar</button>
           <button class="btn btn-secondary btn-sm" onclick="printHoja()">Imprimir</button>
+          <button class="btn btn-secondary btn-sm" onclick="exportHojaHtml()">Email HTML</button>
           <button class="btn btn-secondary btn-sm" onclick="duplicarHoja()">Duplicar</button>
-          <button class="btn btn-secondary btn-sm" id="btnCalcGlsCosts" onclick="calculateHojaGlsCosts()">Calcular costes GLS</button>
+          <button class="btn btn-secondary btn-sm" id="btnCalcGlsCosts" onclick="calculateHojaGlsCosts()">Calcular paqueteria</button>
           <span id="hrGlsCalcStatus" style="align-self:center;font-size:10px;color:var(--text-dim)"></span>
           <div style="display:flex;align-items:center;gap:4px;min-width:220px;flex:0 1 280px">
             <input id="hrVehicleSearch" type="search" list="hrVehicleOptions" placeholder="Buscar vehiculo..." autocomplete="off" oninput="syncHojaVehicleSearch(this.value)" onchange="submitHojaVehicleSearch()" onkeydown="if(event.key==='Enter'){event.preventDefault();submitHojaVehicleSearch()}" style="min-width:0;padding:4px 8px;font-size:10px;border-radius:6px">
@@ -168,6 +168,7 @@
             <option value="completada">Completada</option>
           </select>
         </div>
+        <div id="hrGlsSummary" class="hr-gls-summary" style="display:none"></div>
         <div class="scroll-list" id="hrLineasList" style="flex:1"></div>
         <div style="padding:8px 14px;border-top:1px solid var(--border);background:var(--surface);font-size:11px;display:flex;gap:16px;flex-shrink:0">
           <span><b id="hrTotalClientes">0</b> clientes</span>
@@ -210,29 +211,6 @@
         <button class="btn btn-secondary btn-sm" onclick="loadDashboard()">Actualizar</button>
       </div>
       <div id="dashboardPanel" style="padding:10px;font-size:11px;overflow-y:auto;flex:0.5"></div>
-    </div>
-
-    <!-- RENTABILIDAD -->
-    <div id="vr" style="display:none;flex-direction:column;flex:1;overflow:hidden">
-      <div class="panel-header">
-        <div class="panel-title">Comparativa ruta propia vs GLS</div>
-        <div style="display:flex;gap:6px;align-items:center">
-          <span id="rentabilityStatus" style="font-size:10px;color:var(--text-dim)"></span>
-          <button class="btn btn-secondary btn-sm" onclick="loadRentabilityReport()">Actualizar</button>
-          <button class="btn btn-primary btn-sm" id="btnRecalculateRentability" onclick="recalculateRentability()">Calcular / Recalcular</button>
-        </div>
-      </div>
-      <div class="date-bar" style="gap:6px;flex-wrap:wrap">
-        <div class="date-label">Fecha</div>
-        <input type="date" id="rentDate" onchange="onRentabilityDateChange()">
-        <button class="btn btn-secondary btn-sm" onclick="rentabilityDateNav(-1)" title="Dia anterior">&larr;</button>
-        <button class="btn btn-secondary btn-sm" onclick="setRentabilityToday()">Hoy</button>
-        <button class="btn btn-secondary btn-sm" onclick="rentabilityDateNav(1)" title="Dia siguiente">&rarr;</button>
-      </div>
-      <div class="scroll-list" style="display:flex;flex-direction:column;gap:10px">
-        <div id="rentabilitySummary" class="rent-summary-grid"></div>
-        <div id="rentabilityTableWrap" class="rent-table-wrap"></div>
-      </div>
     </div>
 
     <?php if ($u['role'] === 'admin'): ?>
@@ -294,17 +272,20 @@
         <div class="ff"><label>Nombre *</label><input id="cName" placeholder="Farmacia Central, Supermercado..."></div>
         <div class="fg">
           <div><label>Direccion / Referencia</label><input id="cAddr" placeholder="Calle, numero..."></div>
-          <div><label>Codigo postal (GLS)</label><input id="cPostcode" placeholder="ej. 36700" maxlength="10" oninput="updateClientPostcodeHint()"></div>
+          <div><label>Codigo postal</label><input id="cPostcode" placeholder="ej. 36700" maxlength="10" oninput="updateClientPostcodeHint()"></div>
         </div>
-        <div class="ff" id="cPostcodeHint" style="font-size:10px;color:var(--text-dim)">Sin codigo postal no se puede cotizar GLS.</div>
+        <div class="ff" id="cPostcodeHint" style="font-size:10px;color:var(--text-dim)">Sin codigo postal no se puede cotizar paqueteria.</div>
         <div class="fg">
           <div><label>Telefono</label><input id="cPhone" placeholder="600 000 000"></div>
           <div></div>
         </div>
         <div class="ff"><label>Notas internas</label><textarea id="cNotes" placeholder="Instrucciones de entrega, acceso, contacto..."></textarea></div>
-        <div class="fg">
-          <div><label>Ruta</label><select id="cRuta"><option value="">Sin ruta</option></select></div>
-          <div style="display:flex;align-items:center;gap:6px;padding-top:16px"><input type="checkbox" id="cContado" style="width:auto"><label for="cContado" style="margin:0;cursor:pointer">Al contado</label></div>
+        <div class="ff">
+          <label>Rutas <span style="font-weight:400;text-transform:none;letter-spacing:0">(puede tener varias)</span></label>
+          <div id="cRutasGrid" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px"></div>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;margin-top:4px">
+          <input type="checkbox" id="cContado" style="width:auto"><label for="cContado" style="margin:0;cursor:pointer">Al contado</label>
         </div>
         <div class="ff">
           <label>Comercial asignado</label>
@@ -323,13 +304,14 @@
         <div id="cScheduleGrid" style="font-size:12px"></div>
       </div>
       <div class="msection">
-        <div class="msec-title">Historial GLS</div>
-        <div id="cGlsHistory" style="font-size:11px;color:var(--text-dim)">Sin historial de comparativa GLS todavia.</div>
+        <div class="msec-title">Historial paqueteria</div>
+        <div id="cGlsHistory" style="font-size:11px;color:var(--text-dim)">Sin historial de comparativa todavia.</div>
       </div>
     </div>
     <div class="mfoot">
       <button class="btn btn-danger" id="cDeleteBtn" onclick="deleteFromModal()" style="display:none">Eliminar</button>
-      <button class="btn btn-danger" id="cToggleBtn" onclick="toggleFromModal()" style="margin-right:auto;display:none">Desactivar</button>
+      <button class="btn btn-danger" id="cToggleBtn" onclick="toggleFromModal()" style="display:none">Desactivar</button>
+      <button class="btn btn-secondary" id="cDuplicateBtn" onclick="duplicateFromModal()" style="margin-right:auto;display:none">Duplicar</button>
       <button class="btn btn-secondary" onclick="closeCModal()">Cancelar</button>
       <button class="btn btn-primary" onclick="saveClient()">Guardar cliente</button>
     </div>
@@ -441,38 +423,90 @@
         <div id="templateList" style="max-height:150px;overflow-y:auto"></div>
         <button class="add-item" onclick="saveCurrentAsTemplate()" id="btnSaveTemplate" style="display:none">+ Guardar ruta actual como plantilla</button>
       </div>
-      <div class="msection" id="glsSettingsSection">
-        <div class="msec-title">Integracion GLS</div>
+      <div class="msection" id="shippingSettingsSection">
+        <div class="msec-title">Paqueteria por tablas</div>
         <div class="fg">
-          <div><label>Usuario API MyGLS</label><input id="glsApiUser" placeholder="usuario API"></div>
-          <div><label>Contrasena API MyGLS</label><input id="glsApiPassword" type="password" placeholder="contrasena API"></div>
+          <div><label>CP origen</label><input id="shipOriginPostcode" placeholder="36780"></div>
+          <div><label>Pais origen</label><input id="shipOriginCountry" value="ES" maxlength="2"></div>
         </div>
         <div class="fg">
-          <div><label>Entorno</label><select id="glsApiEnv"><option value="test">Test</option><option value="production">Produccion</option></select></div>
-          <div><label>Base URL API</label><input id="glsApiBaseUrl" placeholder="https://host-real-gls"></div>
+          <div><label>Peso por carro (kg)</label><input id="shipWeightPerCarro" type="number" min="0" step="0.1" value="5.0"></div>
+          <div><label>Peso por caja (kg)</label><input id="shipWeightPerCaja" type="number" min="0" step="0.1" value="2.5"></div>
+        </div>
+        <div class="msec-title" style="margin-top:14px">Variables de calculo</div>
+        <div class="fg">
+          <div><label>Bultos por carro</label><input id="shipParcelsPerCarro" type="number" min="0" step="0.01" value="1.00"></div>
+          <div><label>Bultos por caja</label><input id="shipParcelsPerCaja" type="number" min="0" step="0.01" value="1.00"></div>
         </div>
         <div class="fg">
-          <div><label>CP origen</label><input id="glsOriginPostcode" placeholder="36780"></div>
-          <div><label>Pais origen</label><input id="glsOriginCountry" value="ES" maxlength="2"></div>
+          <div><label>Volumen por carro (m3)</label><input id="shipVolumePerCarro" type="number" min="0" step="0.01" value="0"></div>
+          <div><label>Volumen por caja (m3)</label><input id="shipVolumePerCaja" type="number" min="0" step="0.01" value="0"></div>
         </div>
-        <div class="fg">
-          <div><label>Multiplicador de precio</label><input id="glsPriceMultiplier" type="number" min="0.1" max="2" step="0.01" value="1.00"></div>
-          <div><label>Servicio por defecto</label><input id="glsDefaultService" value="BusinessParcel"></div>
+        <div style="display:flex;align-items:center;gap:6px;margin-top:8px">
+          <input type="checkbox" id="shipUseVolumetric" style="width:auto">
+          <label for="shipUseVolumetric" style="margin:0;cursor:pointer">Usar peso volumetrico segun divisor del transportista</label>
         </div>
-        <div class="fg">
-          <div><label>Peso por carro (kg)</label><input id="glsWeightPerCarro" type="number" min="0" step="0.1" value="5.0"></div>
-          <div><label>Peso por caja (kg)</label><input id="glsWeightPerCaja" type="number" min="0" step="0.1" value="2.5"></div>
+        <div style="font-size:10px;color:var(--text-dim);margin-top:4px">
+          Estas variables alimentan el peso facturable y el numero de bultos antes de consultar la tabla de tarifas. Si activas el volumetrico, el sistema usara el volumen en m3 multiplicado por el factor del transportista.
         </div>
-        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-          <button class="btn btn-secondary btn-sm" type="button" onclick="toggleGlsPassword()">Mostrar / ocultar</button>
-          <button class="btn btn-secondary btn-sm" type="button" id="btnGlsTest" onclick="testGlsConnection()">Probar conexion</button>
-          <span id="glsTestStatus" style="font-size:10px;color:var(--text-dim)"></span>
+      </div>
+      <div class="msection" id="shippingRatesSection">
+        <div class="msec-title">Tabla de tarifas</div>
+        <div id="shippingRatesList" style="max-height:220px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:6px;background:var(--surface2)"></div>
+        <div style="display:flex;justify-content:flex-end;margin-top:8px">
+          <button class="btn btn-primary btn-sm" type="button" onclick="openShippingRateModal()">+ Tarifa</button>
         </div>
       </div>
     </div>
     <div class="mfoot">
       <button class="btn btn-secondary" onclick="closeSettingsModal()">Cancelar</button>
       <button class="btn btn-primary" onclick="saveSettings()">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL TARIFA PAQUETERIA -->
+<div class="overlay" id="shippingRateModal">
+  <div class="modal" style="width:560px">
+    <div class="mhead">
+      <div class="mtitle" id="shippingRateModalTitle">Nueva tarifa</div>
+      <button class="mclose" onclick="closeShippingRateModal()">x</button>
+    </div>
+    <div class="mbody">
+      <input type="hidden" id="shippingRateId">
+      <div class="fg">
+        <div><label>Codigo transportista *</label><input id="shippingCarrierCode" placeholder="GLS, SEUR..."></div>
+        <div><label>Nombre transportista *</label><input id="shippingCarrierName" placeholder="GLS, SEUR..."></div>
+      </div>
+      <div class="fg">
+        <div><label>Servicio</label><input id="shippingServiceName" placeholder="24H, Economy..."></div>
+        <div><label>Pais *</label><input id="shippingCountryCode" value="ES" maxlength="2"></div>
+      </div>
+      <div class="fg">
+        <div><label>Prefijo postal</label><input id="shippingPostcodePrefix" placeholder="36 o 2800"></div>
+        <div><label>Prioridad</label><input type="number" id="shippingPriority" value="100" step="1"></div>
+      </div>
+      <div class="fg">
+        <div><label>Peso minimo (kg) *</label><input type="number" id="shippingWeightMin" value="0" min="0" step="0.01"></div>
+        <div><label>Peso maximo (kg) *</label><input type="number" id="shippingWeightMax" value="1" min="0" step="0.01"></div>
+      </div>
+      <div class="fg">
+        <div><label>Bultos min</label><input type="number" id="shippingParcelMin" min="0" step="1" placeholder="Opcional"></div>
+        <div><label>Bultos max</label><input type="number" id="shippingParcelMax" min="0" step="1" placeholder="Opcional"></div>
+      </div>
+      <div class="fg">
+        <div><label>Precio EUR *</label><input type="number" id="shippingPrice" min="0" step="0.0001"></div>
+        <div style="display:flex;align-items:center;gap:6px;padding-top:18px">
+          <input type="checkbox" id="shippingActive" checked style="width:auto">
+          <label for="shippingActive" style="margin:0;cursor:pointer">Activa</label>
+        </div>
+      </div>
+      <div class="ff"><label>Notas</label><input id="shippingNotes" placeholder="Observaciones opcionales"></div>
+    </div>
+    <div class="mfoot">
+      <button class="btn btn-danger" id="shippingDeleteBtn" onclick="deleteShippingRate()" style="display:none;margin-right:auto">Eliminar</button>
+      <button class="btn btn-secondary" onclick="closeShippingRateModal()">Cancelar</button>
+      <button class="btn btn-primary" onclick="saveShippingRate()">Guardar</button>
     </div>
   </div>
 </div>

@@ -135,7 +135,7 @@ textarea { resize: none; height: 54px; }
 /* MODAL */
 .overlay { position: fixed; inset: 0; background: rgba(16,24,14,0.5); backdrop-filter: blur(5px); z-index: 100; display: none; align-items: center; justify-content: center; padding: 20px; }
 .overlay.open { display: flex; }
-.modal { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; width: 480px; max-width: 100%; max-height: 90vh; overflow-y: auto; box-shadow: 0 14px 30px rgba(16, 24, 14, 0.24); }
+.modal { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; width: 620px; max-width: 100%; max-height: 90vh; overflow-y: auto; box-shadow: 0 14px 30px rgba(16, 24, 14, 0.24); }
 .modal::-webkit-scrollbar { width: 3px; }
 .modal::-webkit-scrollbar-thumb { background: var(--border); }
 .mhead { padding: 16px 18px 12px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
@@ -273,6 +273,14 @@ textarea { resize: none; height: 54px; }
 .hr-linea-cost-item.reco-externalize { border-color: rgba(230,126,34,0.3); color: #e67e22; background: rgba(230,126,34,0.1); }
 .hr-linea-cost-item.reco-break_even { border-color: rgba(52,152,219,0.3); color: #2471a3; background: rgba(52,152,219,0.1); }
 .hr-linea-cost-item.reco-unavailable { border-color: rgba(133,114,94,0.3); color: var(--text-dim); background: var(--surface2); }
+.hr-gls-summary { padding: 10px 14px; border-bottom: 1px solid rgba(133,114,94,0.18); background: linear-gradient(180deg, rgba(142,139,48,0.06), rgba(255,255,255,0)); }
+.hr-gls-summary-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.hr-gls-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; box-shadow: 0 2px 6px rgba(16,24,14,0.06); }
+.hr-gls-card-label { font-size: 10px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
+.hr-gls-card-value { font-size: 17px; font-weight: 800; color: var(--text-bright); }
+.hr-gls-card-value.warn { color: #e67e22; }
+.hr-gls-card-value.ok { color: var(--accent); }
+.hr-gls-summary-note { margin-top: 8px; font-size: 10px; color: var(--text-dim); }
 
 .hr-sin-hoja { padding: 8px 12px; background: var(--surface2); border: 1px dashed var(--border); border-radius: 8px; margin-bottom: 4px; display: flex; align-items: center; justify-content: space-between; font-size: 11px; color: var(--text-dim); }
 
@@ -318,6 +326,7 @@ textarea { resize: none; height: 54px; }
   .hr-linea { padding: 10px; font-size: 12px; }
   .hr-linea-handle { font-size: 14px; padding: 4px; }
   .hr-linea-num { width: 24px; height: 24px; font-size: 10px; }
+  .hr-gls-summary-grid { grid-template-columns: 1fr 1fr; }
   .rent-summary-grid { grid-template-columns: 1fr 1fr; }
 }
 

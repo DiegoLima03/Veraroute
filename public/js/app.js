@@ -59,7 +59,10 @@ let hrQuickSaveTimers = {};
 let lineaSelectedClients = new Set();
 let hrMapMarkers = [];
 let hrMapLine = null;
+let hrGlsAutoCalcTimer = null;
+let hrGlsAutoCalcRunning = false;
 let glsConfigState = null;
+let shippingRates = [];
 let rentabilityData = null;
 let rentabilitySortKey = 'savings';
 let rentabilitySortDir = 'desc';
@@ -159,7 +162,7 @@ function getHojaRouteDelegation(lineas) {
 function glsRecommendationMeta(recommendation) {
   const rec = recommendation || 'unavailable';
   if (rec === 'own_route') return { cls: 'own', label: 'Ruta propia' };
-  if (rec === 'externalize') return { cls: 'externalize', label: 'Externalizar GLS' };
+  if (rec === 'externalize') return { cls: 'externalize', label: 'Enviar por paqueteria' };
   if (rec === 'break_even') return { cls: 'break_even', label: 'Empate tecnico' };
   return { cls: 'unavailable', label: 'No calculable' };
 }
@@ -170,6 +173,7 @@ function friendlyGlsNote(note) {
   if (value === 'postcode_missing') return 'Falta codigo postal';
   if (value === 'missing_coords') return 'Faltan coordenadas';
   if (value === 'vehicle_cost_missing') return 'Falta coste por km del vehiculo';
+  if (value === 'carrier_rate_missing') return 'No hay tarifa cargada para ese destino o peso';
   if (value.startsWith('gls_error:')) return value.substring('gls_error:'.length).trim() || 'Error GLS';
   return value;
 }
@@ -653,6 +657,7 @@ async function loadClients() {
       active: c.active !== undefined ? !!parseInt(c.active) : true,
       ruta_id: c.ruta_id ? parseInt(c.ruta_id) : null,
       ruta_name: c.ruta_name || '',
+      rutas: (c.rutas || []).map(r => ({ id: parseInt(r.id), name: r.name })),
       delegation_id: c.delegation_id ? parseInt(c.delegation_id) : null,
       comercial_id: c.comercial_id ? parseInt(c.comercial_id) : null,
       comercial_name: c.comercial_name || '',
@@ -699,22 +704,17 @@ function switchTab(t) {
   document.getElementById('vhr').style.display = t === 'hr' ? 'flex' : 'none';
   document.getElementById('vf').style.display = t === 'f' ? 'flex' : 'none';
   document.getElementById('vh').style.display = t === 'h' ? 'flex' : 'none';
-  const vr = document.getElementById('vr');
-  if (vr) vr.style.display = t === 'r' ? 'flex' : 'none';
   const vu = document.getElementById('vu');
   if (vu) vu.style.display = t === 'u' ? 'flex' : 'none';
   document.getElementById('tab-c').classList.toggle('active', t === 'c');
   document.getElementById('tab-hr').classList.toggle('active', t === 'hr');
   document.getElementById('tab-f').classList.toggle('active', t === 'f');
   document.getElementById('tab-h').classList.toggle('active', t === 'h');
-  const tabR = document.getElementById('tab-r');
-  if (tabR) tabR.classList.toggle('active', t === 'r');
   const tabU = document.getElementById('tab-u');
   if (tabU) tabU.classList.toggle('active', t === 'u');
   document.querySelector('.optimize-bar').style.display = 'none';
   if (t === 'f') renderFleetLists();
   if (t === 'h') { loadHistory(); loadDashboard(); }
-  if (t === 'r') loadRentabilityReport();
   if (t === 'hr') loadHojasRuta();
   if (t === 'u') loadUsers();
 }
@@ -849,11 +849,15 @@ async function openClientModal(id = null) {
   document.getElementById('cNotes').value = c?.notes || '';
   document.getElementById('cX').value    = c?.x ?? '';
   document.getElementById('cY').value    = c?.y ?? '';
-  // Ruta select
-  const rutaSel = document.getElementById('cRuta');
-  if (rutaSel) {
-    rutaSel.innerHTML = '<option value="">Sin ruta</option>' + rutas.map(r => '<option value="' + r.id + '"' + (c?.ruta_id == r.id ? ' selected' : '') + '>' + r.name + '</option>').join('');
-  }
+  // Rutas checkboxes (N:M)
+  const clientRutaIds = c ? c.rutas.map(r => r.id) : [];
+  const rutasGrid = document.getElementById('cRutasGrid');
+  rutasGrid.innerHTML = rutas.map(r => {
+    const checked = clientRutaIds.includes(r.id) ? 'checked' : '';
+    return '<label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:11px;padding:3px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);white-space:nowrap">' +
+      '<input type="checkbox" class="cRutaCb" value="' + r.id + '" ' + checked + ' style="width:auto;margin:0"> ' + esc(r.name) +
+    '</label>';
+  }).join('');
   await loadComerciales();
   const comSel = document.getElementById('cComercial');
   if (comSel) {
@@ -868,14 +872,17 @@ async function openClientModal(id = null) {
 
   const toggleBtn = document.getElementById('cToggleBtn');
   const deleteBtn = document.getElementById('cDeleteBtn');
+  const duplicateBtn = document.getElementById('cDuplicateBtn');
   if (c) {
     toggleBtn.style.display = '';
     toggleBtn.textContent = c.active ? 'Desactivar' : 'Activar';
     toggleBtn.className = 'btn ' + (c.active ? 'btn-danger' : 'btn-success');
     deleteBtn.style.display = '';
+    duplicateBtn.style.display = '';
   } else {
     toggleBtn.style.display = 'none';
     deleteBtn.style.display = 'none';
+    duplicateBtn.style.display = 'none';
   }
 
   document.getElementById('cModal').classList.add('open');
@@ -890,6 +897,20 @@ async function toggleFromModal() {
     const toggleBtn = document.getElementById('cToggleBtn');
     toggleBtn.textContent = c.active ? 'Desactivar' : 'Activar';
     toggleBtn.className = 'btn ' + (c.active ? 'btn-danger' : 'btn-success');
+  }
+}
+async function duplicateFromModal() {
+  const id = parseInt(document.getElementById('cId').value);
+  if (!id) return;
+  try {
+    const newClient = await api('clients/' + id + '/duplicate', 'POST');
+    showToast('Cliente duplicado como "' + newClient.name + '"');
+    closeCModal();
+    await loadClients();
+    refreshAll();
+    openClientModal(newClient.id);
+  } catch (e) {
+    showToast('Error duplicando: ' + e.message);
   }
 }
 async function deleteFromModal() {
@@ -919,8 +940,8 @@ function updateClientPostcodeHint() {
   const value = (document.getElementById('cPostcode')?.value || '').trim();
   if (!hint) return;
   hint.textContent = value
-    ? 'Este codigo postal se usara para cotizar GLS.'
-    : 'Sin codigo postal no se puede cotizar GLS.';
+    ? 'Este codigo postal se usara para cotizar paqueteria.'
+    : 'Sin codigo postal no se puede cotizar paqueteria.';
   hint.style.color = value ? 'var(--accent)' : 'var(--text-dim)';
 }
 
@@ -929,15 +950,15 @@ async function loadClientGlsHistory(id) {
   if (!el) return;
 
   if (!id) {
-    el.innerHTML = 'Sin historial de comparativa GLS todavia.';
+    el.innerHTML = 'Sin historial de comparativa todavia.';
     return;
   }
 
-  el.innerHTML = '<div class="rent-note">Cargando historial GLS...</div>';
+  el.innerHTML = '<div class="rent-note">Cargando historial de paqueteria...</div>';
   try {
-    const rows = await api('gls-costs/client/' + id);
+    const rows = await api('shipping-costs/client/' + id);
     if (!rows.length) {
-      el.innerHTML = 'Sin historial de comparativa GLS todavia.';
+      el.innerHTML = 'Sin historial de comparativa todavia.';
       return;
     }
 
@@ -950,7 +971,7 @@ async function loadClientGlsHistory(id) {
             <th>Cajas</th>
             <th>Km</th>
             <th>Propio</th>
-            <th>GLS</th>
+            <th>Paqueteria</th>
             <th>Decision</th>
           </tr>
         </thead>
@@ -971,7 +992,7 @@ async function loadClientGlsHistory(id) {
       </table>
     </div>`;
   } catch (e) {
-    el.innerHTML = '<div class="rent-note">No se pudo cargar el historial GLS.</div>';
+    el.innerHTML = '<div class="rent-note">No se pudo cargar el historial de paqueteria.</div>';
   }
 }
 
@@ -985,7 +1006,7 @@ async function saveClient() {
 
   // Use Monday as fallback for open_time/close_time
   const mon = schedule[0] || [];
-  const rutaVal = document.getElementById('cRuta')?.value;
+  const rutaIds = Array.from(document.querySelectorAll('.cRutaCb:checked')).map(cb => parseInt(cb.value));
   const comercialVal = document.getElementById('cComercial')?.value;
   const data = {
     name,
@@ -999,7 +1020,8 @@ async function saveClient() {
     open_time_2: mon[1]?.open_time || '',
     close_time_2: mon[1]?.close_time || '',
     comercial_id: comercialVal ? parseInt(comercialVal, 10) : null,
-    ruta_id: rutaVal ? parseInt(rutaVal) : null,
+    ruta_id: rutaIds.length ? rutaIds[0] : null,
+    ruta_ids: rutaIds,
     al_contado: document.getElementById('cContado').checked ? 1 : 0,
   };
 
@@ -1169,7 +1191,7 @@ function renderClientList() {
       '<div class="pills">' +
         '<span class="pill ' + (isOpen ? 'open' : 'closed') + '">' + (isOpen ? 'ABIERTO' : 'CERRADO') + ' ' + clientHoursText(c, todayDb) + '</span>' +
         (hasOrd ? '<span class="pill has-ord">PEDIDO</span>' : '') +
-        (c.ruta_name ? '<span class="pill" style="border-color:' + getRutaColor(c.ruta_id) + '44;color:' + getRutaColor(c.ruta_id) + ';background:' + getRutaColor(c.ruta_id) + '18">' + c.ruta_name + '</span>' : '') +
+        (c.rutas && c.rutas.length ? c.rutas.map(r => '<span class="pill" style="border-color:' + getRutaColor(r.id) + '44;color:' + getRutaColor(r.id) + ';background:' + getRutaColor(r.id) + '18">' + r.name + '</span>').join('') : '') +
         (!c.active ? '<span class="pill closed">INACTIVO</span>' : '') +
       '</div>' +
     '</div>';
@@ -2014,18 +2036,24 @@ async function openSettingsModal() {
   try {
     const requests = [api('settings')];
     if (typeof APP_USER !== 'undefined' && APP_USER.role === 'admin') {
-      requests.push(api('gls-config').catch(() => null));
+      requests.push(api('shipping-config').catch(() => null));
+      requests.push(api('shipping-rates').catch(() => []));
     }
 
-    const [s, gls] = await Promise.all(requests);
+    const results = await Promise.all(requests);
+    const s = results[0];
+    const shippingConfig = typeof APP_USER !== 'undefined' && APP_USER.role === 'admin' ? (results[1] || null) : null;
+    const rateRows = typeof APP_USER !== 'undefined' && APP_USER.role === 'admin' ? (results[2] || []) : [];
     document.getElementById('sLunchDur').value = s.lunch_duration_min || 60;
     document.getElementById('sLunchEarly').value = s.lunch_earliest || '12:00';
     document.getElementById('sLunchLate').value = s.lunch_latest || '15:30';
     document.getElementById('sBaseUnload').value = s.base_unload_min || 5;
     document.getElementById('sSpeed').value = s.default_speed_kmh || 50;
 
-    glsConfigState = gls;
-    applyGlsConfigToForm(gls);
+    glsConfigState = shippingConfig;
+    shippingRates = Array.isArray(rateRows) ? rateRows : [];
+    applyShippingConfigToForm(shippingConfig);
+    renderShippingRatesList();
   } catch (e) { /* usa valores por defecto del form */ }
 
   // Mostrar boton de guardar plantilla si hay rutas
@@ -2046,18 +2074,16 @@ async function saveSettings() {
     });
 
     if (typeof APP_USER !== 'undefined' && APP_USER.role === 'admin') {
-      const passwordInput = document.getElementById('glsApiPassword').value;
-      await api('gls-config', 'PUT', {
-        api_user: document.getElementById('glsApiUser').value.trim(),
-        api_password: passwordInput || '***',
-        api_env: document.getElementById('glsApiEnv').value,
-        api_base_url: document.getElementById('glsApiBaseUrl').value.trim(),
-        origin_postcode: document.getElementById('glsOriginPostcode').value.trim(),
-        origin_country: document.getElementById('glsOriginCountry').value.trim().toUpperCase(),
-        price_multiplier: document.getElementById('glsPriceMultiplier').value,
-        default_weight_per_carro_kg: document.getElementById('glsWeightPerCarro').value,
-        default_weight_per_caja_kg: document.getElementById('glsWeightPerCaja').value,
-        default_service: document.getElementById('glsDefaultService').value.trim() || 'BusinessParcel',
+      await api('shipping-config', 'PUT', {
+        origin_postcode: document.getElementById('shipOriginPostcode').value.trim(),
+        origin_country: document.getElementById('shipOriginCountry').value.trim().toUpperCase(),
+        default_weight_per_carro_kg: document.getElementById('shipWeightPerCarro').value,
+        default_weight_per_caja_kg: document.getElementById('shipWeightPerCaja').value,
+        default_parcels_per_carro: document.getElementById('shipParcelsPerCarro').value,
+        default_parcels_per_caja: document.getElementById('shipParcelsPerCaja').value,
+        default_volume_per_carro_cm3: document.getElementById('shipVolumePerCarro').value,
+        default_volume_per_caja_cm3: document.getElementById('shipVolumePerCaja').value,
+        use_volumetric_weight: document.getElementById('shipUseVolumetric').checked ? 1 : 0,
       });
     }
 
@@ -2066,81 +2092,169 @@ async function saveSettings() {
   } catch (e) { showToast('Error: ' + e.message); }
 }
 
-function applyGlsConfigToForm(gls) {
+function applyShippingConfigToForm(gls) {
   const isAdmin = typeof APP_USER !== 'undefined' && APP_USER.role === 'admin';
   const defaults = gls || {
-    api_user: '',
-    api_password: '',
-    api_env: 'test',
-    api_base_url: '',
     origin_postcode: '',
     origin_country: 'ES',
-    price_multiplier: '1.0000',
     default_weight_per_carro_kg: '5.00',
     default_weight_per_caja_kg: '2.50',
-    default_service: 'BusinessParcel',
+    default_parcels_per_carro: '1.00',
+    default_parcels_per_caja: '1.00',
+    default_volume_per_carro_cm3: '0.00',
+    default_volume_per_caja_cm3: '0.00',
+    use_volumetric_weight: 0,
   };
 
-  document.getElementById('glsApiUser').value = defaults.api_user || '';
-  document.getElementById('glsApiPassword').value = defaults.api_password || '';
-  document.getElementById('glsApiEnv').value = defaults.api_env || 'test';
-  document.getElementById('glsApiBaseUrl').value = defaults.api_base_url || '';
-  document.getElementById('glsOriginPostcode').value = defaults.origin_postcode || '';
-  document.getElementById('glsOriginCountry').value = defaults.origin_country || 'ES';
-  document.getElementById('glsPriceMultiplier').value = defaults.price_multiplier || '1.0000';
-  document.getElementById('glsWeightPerCarro').value = defaults.default_weight_per_carro_kg || '5.00';
-  document.getElementById('glsWeightPerCaja').value = defaults.default_weight_per_caja_kg || '2.50';
-  document.getElementById('glsDefaultService').value = defaults.default_service || 'BusinessParcel';
+  document.getElementById('shipOriginPostcode').value = defaults.origin_postcode || '';
+  document.getElementById('shipOriginCountry').value = defaults.origin_country || 'ES';
+  document.getElementById('shipWeightPerCarro').value = defaults.default_weight_per_carro_kg || '5.00';
+  document.getElementById('shipWeightPerCaja').value = defaults.default_weight_per_caja_kg || '2.50';
+  document.getElementById('shipParcelsPerCarro').value = defaults.default_parcels_per_carro || '1.00';
+  document.getElementById('shipParcelsPerCaja').value = defaults.default_parcels_per_caja || '1.00';
+  document.getElementById('shipVolumePerCarro').value = defaults.default_volume_per_carro_cm3 || '0.00';
+  document.getElementById('shipVolumePerCaja').value = defaults.default_volume_per_caja_cm3 || '0.00';
+  document.getElementById('shipUseVolumetric').checked = !!parseInt(defaults.use_volumetric_weight || 0, 10);
 
-  const section = document.getElementById('glsSettingsSection');
-  if (section) section.style.display = isAdmin ? '' : 'none';
+  const settingsSection = document.getElementById('shippingSettingsSection');
+  if (settingsSection) settingsSection.style.display = isAdmin ? '' : 'none';
+  const ratesSection = document.getElementById('shippingRatesSection');
+  if (ratesSection) ratesSection.style.display = isAdmin ? '' : 'none';
 
-  ['glsApiUser', 'glsApiPassword', 'glsApiEnv', 'glsApiBaseUrl', 'glsOriginPostcode', 'glsOriginCountry', 'glsPriceMultiplier', 'glsWeightPerCarro', 'glsWeightPerCaja', 'glsDefaultService']
+  ['shipOriginPostcode', 'shipOriginCountry', 'shipWeightPerCarro', 'shipWeightPerCaja', 'shipParcelsPerCarro', 'shipParcelsPerCaja', 'shipVolumePerCarro', 'shipVolumePerCaja', 'shipUseVolumetric']
     .forEach(id => {
       const el = document.getElementById(id);
       if (el) el.disabled = !isAdmin;
     });
-
-  const testBtn = document.getElementById('btnGlsTest');
-  if (testBtn) testBtn.disabled = !isAdmin;
-
-  const status = document.getElementById('glsTestStatus');
-  if (status) {
-    status.textContent = isAdmin ? '' : '';
-    status.style.color = 'var(--text-dim)';
-  }
 }
 
-function toggleGlsPassword() {
-  const input = document.getElementById('glsApiPassword');
-  if (!input) return;
-  input.type = input.type === 'password' ? 'text' : 'password';
-}
+function renderShippingRatesList() {
+  const el = document.getElementById('shippingRatesList');
+  if (!el) return;
 
-async function testGlsConnection() {
   if (typeof APP_USER === 'undefined' || APP_USER.role !== 'admin') {
-    showToast('Solo admin puede probar la conexion GLS');
+    el.innerHTML = '<div style="padding:8px;color:var(--text-dim);font-size:11px">Solo admin puede editar tarifas.</div>';
     return;
   }
 
-  const status = document.getElementById('glsTestStatus');
-  const btn = document.getElementById('btnGlsTest');
-  if (status) status.textContent = 'Probando conexion GLS...';
-  if (btn) btn.disabled = true;
+  if (!shippingRates.length) {
+    el.innerHTML = '<div style="padding:8px;color:var(--text-dim);font-size:11px">Sin tarifas cargadas todavia.</div>';
+    return;
+  }
+
+  el.innerHTML = shippingRates.map(rate => {
+    const prefix = rate.postcode_prefix ? `CP ${esc(rate.postcode_prefix)}*` : 'Todos los CP';
+    const parcels = (rate.parcel_min !== null || rate.parcel_max !== null)
+      ? ` · bultos ${rate.parcel_min ?? 0}-${rate.parcel_max ?? '∞'}`
+      : '';
+    const service = rate.service_name ? ` · ${esc(rate.service_name)}` : '';
+    const status = parseInt(rate.active, 10) ? '<span class="pill open">Activa</span>' : '<span class="pill closed">Inactiva</span>';
+    return `<div class="client-card" style="padding:8px 10px;margin-bottom:6px;cursor:default">
+      <div class="card-top">
+        <div class="cname">${esc(rate.carrier_name)} <span style="font-size:10px;color:var(--text-dim)">(${esc(rate.carrier_code)})</span></div>
+        <div class="card-actions" style="opacity:1">
+          <button class="icon-btn" onclick="openShippingRateModal(${rate.id})" title="Editar">&#9998;</button>
+          <button class="icon-btn danger" onclick="deleteShippingRate(${rate.id})" title="Eliminar">&times;</button>
+        </div>
+      </div>
+      <div class="card-sub">
+        <span>${prefix}</span>
+        <span>${esc(formatQty(rate.weight_min_kg))}-${esc(formatQty(rate.weight_max_kg))} kg${parcels}</span>
+        <span>${esc(formatMoney(rate.price))}</span>
+      </div>
+      <div class="pills">
+        ${status}
+        <span class="pill">${esc(rate.country_code || 'ES')}${service}</span>
+        <span class="pill">Prioridad ${esc(String(rate.priority ?? 100))}</span>
+      </div>
+      ${rate.notes ? `<div class="card-sub" style="padding-left:0;margin-top:6px">${esc(rate.notes)}</div>` : ''}
+    </div>`;
+  }).join('');
+}
+
+function openShippingRateModal(rateId = null) {
+  const rate = rateId ? shippingRates.find(r => parseInt(r.id, 10) === parseInt(rateId, 10)) : null;
+  document.getElementById('shippingRateModalTitle').textContent = rate ? 'Editar tarifa' : 'Nueva tarifa';
+  document.getElementById('shippingRateId').value = rate ? rate.id : '';
+  document.getElementById('shippingCarrierCode').value = rate?.carrier_code || '';
+  document.getElementById('shippingCarrierName').value = rate?.carrier_name || '';
+  document.getElementById('shippingServiceName').value = rate?.service_name || '';
+  document.getElementById('shippingCountryCode').value = rate?.country_code || 'ES';
+  document.getElementById('shippingPostcodePrefix').value = rate?.postcode_prefix || '';
+  document.getElementById('shippingWeightMin').value = rate ? formatQty(rate.weight_min_kg) : '0';
+  document.getElementById('shippingWeightMax').value = rate ? formatQty(rate.weight_max_kg) : '1';
+  document.getElementById('shippingParcelMin').value = rate?.parcel_min ?? '';
+  document.getElementById('shippingParcelMax').value = rate?.parcel_max ?? '';
+  document.getElementById('shippingPrice').value = rate ? numVal(rate.price) : '';
+  document.getElementById('shippingPriority').value = rate?.priority ?? 100;
+  document.getElementById('shippingActive').checked = rate ? !!parseInt(rate.active, 10) : true;
+  document.getElementById('shippingNotes').value = rate?.notes || '';
+  document.getElementById('shippingDeleteBtn').style.display = rate ? '' : 'none';
+  document.getElementById('shippingRateModal').classList.add('open');
+}
+
+function closeShippingRateModal() {
+  document.getElementById('shippingRateModal').classList.remove('open');
+}
+
+async function saveShippingRate() {
+  const rateId = document.getElementById('shippingRateId').value;
+  const payload = {
+    carrier_code: document.getElementById('shippingCarrierCode').value.trim().toUpperCase(),
+    carrier_name: document.getElementById('shippingCarrierName').value.trim(),
+    service_name: document.getElementById('shippingServiceName').value.trim(),
+    country_code: document.getElementById('shippingCountryCode').value.trim().toUpperCase(),
+    postcode_prefix: document.getElementById('shippingPostcodePrefix').value.trim(),
+    weight_min_kg: document.getElementById('shippingWeightMin').value,
+    weight_max_kg: document.getElementById('shippingWeightMax').value,
+    parcel_min: document.getElementById('shippingParcelMin').value,
+    parcel_max: document.getElementById('shippingParcelMax').value,
+    price: document.getElementById('shippingPrice').value,
+    priority: document.getElementById('shippingPriority').value,
+    active: document.getElementById('shippingActive').checked ? 1 : 0,
+    notes: document.getElementById('shippingNotes').value.trim(),
+  };
 
   try {
-    const result = await api('gls-config/test', 'POST', {});
-    if (status) {
-      status.textContent = `Conexion OK - ${formatMoney(result.price_raw)} (${result.service || 'GLS'}) - ${result.response_time_ms} ms`;
-      status.style.color = 'var(--accent)';
+    const saved = rateId
+      ? await api('shipping-rates/' + rateId, 'PUT', payload)
+      : await api('shipping-rates', 'POST', payload);
+
+    if (rateId) {
+      shippingRates = shippingRates.map(rate => parseInt(rate.id, 10) === parseInt(rateId, 10) ? saved : rate);
+    } else {
+      shippingRates.push(saved);
     }
+
+    shippingRates.sort((a, b) => {
+      const activeCmp = parseInt(b.active, 10) - parseInt(a.active, 10);
+      if (activeCmp !== 0) return activeCmp;
+      const carrierCmp = (a.carrier_name || '').localeCompare(b.carrier_name || '', 'es');
+      if (carrierCmp !== 0) return carrierCmp;
+      return numVal(a.weight_min_kg) - numVal(b.weight_min_kg);
+    });
+
+    renderShippingRatesList();
+    closeShippingRateModal();
+    showToast(rateId ? 'Tarifa actualizada' : 'Tarifa creada');
   } catch (e) {
-    if (status) {
-      status.textContent = 'Error GLS: ' + e.message;
-      status.style.color = 'var(--danger)';
-    }
-  } finally {
-    if (btn) btn.disabled = false;
+    showToast('Error: ' + e.message);
+  }
+}
+
+async function deleteShippingRate(rateId = null) {
+  const id = rateId || document.getElementById('shippingRateId').value;
+  if (!id) return;
+  if (!confirm('Eliminar esta tarifa?')) return;
+
+  try {
+    await api('shipping-rates/' + id, 'DELETE');
+    shippingRates = shippingRates.filter(rate => parseInt(rate.id, 10) !== parseInt(id, 10));
+    renderShippingRatesList();
+    closeShippingRateModal();
+    showToast('Tarifa eliminada');
+  } catch (e) {
+    showToast('Error: ' + e.message);
   }
 }
 
@@ -2357,7 +2471,7 @@ async function loadRentabilityReport() {
   if (status) status.textContent = '';
 
   try {
-    rentabilityData = await api('gls-costs/daily-report?date=' + getRentabilityDate());
+    rentabilityData = await api('shipping-costs/daily-report?date=' + getRentabilityDate());
     renderRentabilityPanel();
   } catch (e) {
     rentabilityData = null;
@@ -2368,19 +2482,19 @@ async function loadRentabilityReport() {
 
 async function recalculateRentability(force = true) {
   if (typeof APP_USER !== 'undefined' && APP_USER.role !== 'admin') {
-    showToast('Solo admin puede recalcular toda la comparativa GLS');
+    showToast('Solo admin puede recalcular toda la comparativa de paqueteria');
     return;
   }
 
   const status = document.getElementById('rentabilityStatus');
-  if (status) status.textContent = 'Recalculando costes GLS...';
+  if (status) status.textContent = 'Recalculando costes de paqueteria...';
   try {
-    await api('gls-costs/recalculate', 'POST', { date: getRentabilityDate(), force: force ? 1 : 0 });
+    await api('shipping-costs/recalculate', 'POST', { date: getRentabilityDate(), force: force ? 1 : 0 });
     await loadRentabilityReport();
-    showToast('Comparativa GLS recalculada');
+    showToast('Comparativa de paqueteria recalculada');
   } catch (e) {
     if (status) status.textContent = 'Error al recalcular';
-    showToast('Error GLS: ' + e.message);
+    showToast('Error paqueteria: ' + e.message);
   }
 }
 
@@ -2462,7 +2576,7 @@ function renderRentabilityPanel() {
           <th onclick="setRentabilitySort('cajas')">Cajas</th>
           <th onclick="setRentabilitySort('detour_km')">Km desvio</th>
           <th onclick="setRentabilitySort('cost_own_route')">Coste propio</th>
-          <th onclick="setRentabilitySort('cost_gls_adjusted')">Coste GLS</th>
+          <th onclick="setRentabilitySort('cost_gls_adjusted')">Coste paqueteria</th>
           <th onclick="setRentabilitySort('savings')">Dif.</th>
           <th onclick="setRentabilitySort('recommendation')">Recomendacion</th>
           <th>Estado</th>
@@ -2743,6 +2857,10 @@ async function openHojaDetail(id) {
     clearTimeout(hrClientSearchTimer);
     hrClientSearchTimer = null;
   }
+  if (hrGlsAutoCalcTimer) {
+    clearTimeout(hrGlsAutoCalcTimer);
+    hrGlsAutoCalcTimer = null;
+  }
   hrOsrmGeometry = null;
   hrRouteDistance = null;
   hrRouteDuration = null;
@@ -2756,6 +2874,9 @@ async function openHojaDetail(id) {
   if (hrClientSearch) hrClientSearch.value = '';
   renderHojaDetail();
   drawHojaOnMap();
+  if (!(typeof APP_USER !== 'undefined' && APP_USER.role === 'comercial')) {
+    scheduleHojaGlsAutoCalc(false, 250);
+  }
 }
 
 function closeHojaDetail() {
@@ -2764,6 +2885,10 @@ function closeHojaDetail() {
   if (hrClientSearchTimer) {
     clearTimeout(hrClientSearchTimer);
     hrClientSearchTimer = null;
+  }
+  if (hrGlsAutoCalcTimer) {
+    clearTimeout(hrGlsAutoCalcTimer);
+    hrGlsAutoCalcTimer = null;
   }
   hrOsrmGeometry = null;
   hrRouteDistance = null;
@@ -2800,7 +2925,104 @@ function renderHojaLineas() {
   renderHojaDetail();
 }
 
-function renderHojaDetail() {
+function getHojaGlsSummary(hoja) {
+  const lineas = getHojaActiveLineas(hoja);
+  const ownRoute = lineas.filter(l => l.gls_recommendation === 'own_route').length;
+  const externalize = lineas.filter(l => l.gls_recommendation === 'externalize').length;
+  const breakEven = lineas.filter(l => l.gls_recommendation === 'break_even').length;
+  const unavailable = lineas.filter(l => l.gls_recommendation === 'unavailable' || (!l.gls_recommendation && !hasLineaCostData(l))).length;
+  const savings = lineas.reduce((sum, line) => {
+    if (line.gls_recommendation !== 'externalize') return sum;
+    if (line.cost_own_route === null || line.cost_gls_adjusted === null) return sum;
+    return sum + Math.max(0, numVal(line.cost_own_route) - numVal(line.cost_gls_adjusted));
+  }, 0);
+
+  return {
+    total: lineas.length,
+    ownRoute,
+    externalize,
+    breakEven,
+    unavailable,
+    savings,
+  };
+}
+
+function renderHojaGlsSummary(hoja, isComercialView) {
+  const el = document.getElementById('hrGlsSummary');
+  if (!el) return;
+
+  if (isComercialView || !hoja) {
+    el.style.display = 'none';
+    el.innerHTML = '';
+    return;
+  }
+
+  const summary = getHojaGlsSummary(hoja);
+  let note = 'La comparativa se refresca sola al cambiar clientes, orden o vehiculo.';
+  if (!summary.total) {
+    note = 'Anade carros o cajas para que la hoja compare ruta propia frente a paqueteria.';
+  } else if (!hoja.vehicle_id) {
+    note = 'Asigna un vehiculo para poder medir el coste real de la ruta propia.';
+  } else if (hrGlsAutoCalcRunning) {
+    note = 'Actualizando automaticamente la comparativa de paqueteria...';
+  } else if (summary.unavailable > 0) {
+    note = 'Hay clientes sin codigo postal o con datos incompletos; se marcan como no calculables.';
+  }
+
+  el.style.display = 'block';
+  el.innerHTML = `<div class="hr-gls-summary-grid">
+      <div class="hr-gls-card">
+        <div class="hr-gls-card-label">Clientes cargados</div>
+        <div class="hr-gls-card-value">${esc(String(summary.total))}</div>
+      </div>
+      <div class="hr-gls-card">
+        <div class="hr-gls-card-label">Compensa ruta propia</div>
+        <div class="hr-gls-card-value ok">${esc(String(summary.ownRoute))}</div>
+      </div>
+      <div class="hr-gls-card">
+        <div class="hr-gls-card-label">Compensa paqueteria</div>
+        <div class="hr-gls-card-value warn">${esc(String(summary.externalize))}</div>
+      </div>
+      <div class="hr-gls-card">
+        <div class="hr-gls-card-label">Ahorro potencial</div>
+        <div class="hr-gls-card-value">${esc(formatMoney(summary.savings))}</div>
+      </div>
+    </div>
+    <div class="hr-gls-summary-note">${esc(note)}${summary.breakEven ? ` Empate tecnico: ${summary.breakEven}.` : ''}</div>`;
+}
+
+function scheduleHojaGlsAutoCalc(force = false, delay = 500) {
+  if (!currentHoja || (typeof APP_USER !== 'undefined' && APP_USER.role === 'comercial')) return;
+
+  if (hrGlsAutoCalcTimer) {
+    clearTimeout(hrGlsAutoCalcTimer);
+    hrGlsAutoCalcTimer = null;
+  }
+
+  const lineas = getHojaActiveLineas(currentHoja);
+  const status = document.getElementById('hrGlsCalcStatus');
+  if (!lineas.length) {
+    if (status) status.textContent = 'Anade carga real para comparar paqueteria';
+    renderHojaGlsSummary(currentHoja, false);
+    return;
+  }
+
+  if (!currentHoja.vehicle_id) {
+    if (status) status.textContent = 'Asigna vehiculo para comparar paqueteria';
+    renderHojaGlsSummary(currentHoja, false);
+    return;
+  }
+
+  if (hrGlsAutoCalcRunning) return;
+
+  if (status) status.textContent = 'Actualizando comparativa de paqueteria...';
+  hrGlsAutoCalcTimer = setTimeout(() => {
+    hrGlsAutoCalcTimer = null;
+    calculateHojaGlsCosts(force, { showToast: false, background: true });
+  }, delay);
+}
+
+function renderHojaDetailLegacy() {
   if (!currentHoja) return;
   const h = currentHoja;
   const isComercialView = typeof APP_USER !== 'undefined' && APP_USER.role === 'comercial';
@@ -2819,12 +3041,20 @@ function renderHojaDetail() {
   if (addLineaBtn) addLineaBtn.style.display = isComercialView ? 'none' : '';
   if (calcBtn) calcBtn.style.display = isComercialView ? 'none' : '';
   if (calcStatus) {
-    calcStatus.textContent = !isComercialView && (h.lineas || []).some(hasLineaCostData)
-      ? 'Costes GLS calculados'
-      : '';
+    if (isComercialView) {
+      calcStatus.textContent = '';
+    } else if (!getHojaActiveLineas(h).length) {
+      calcStatus.textContent = 'Anade carga real para comparar paqueteria';
+    } else if (!h.vehicle_id) {
+      calcStatus.textContent = 'Asigna vehiculo para comparar paqueteria';
+    } else if ((h.lineas || []).some(hasLineaCostData)) {
+      calcStatus.textContent = hrGlsAutoCalcRunning ? 'Actualizando comparativa de paqueteria...' : 'Comparativa de paqueteria al dia';
+    } else {
+      calcStatus.textContent = 'Comparativa pendiente';
+    }
   }
+  renderHojaGlsSummary(h, isComercialView);
   renderHojaVehicleSearch();
-  const vehicleSel = document.getElementById('hrVehicleSel');
   if (vehicleSel) {
     const options = ['<option value="">Vehiculo...</option>'];
     vehicles.forEach(v => {
@@ -2834,10 +3064,8 @@ function renderHojaDetail() {
     });
     vehicleSel.innerHTML = options.join('');
     vehicleSel.value = h.vehicle_id ? String(h.vehicle_id) : '';
-    vehicleSel.disabled = !vehicles.length;
   }
-
-  const allLineas = isComercialView ? (h.lineas || []) : getHojaActiveLineas(h);
+  const allLineas = h.lineas || [];
   const query = (hrClientSearchQuery || '').trim();
   const lineas = getFilteredHojaLineas({ ...h, lineas: allLineas }, isComercialView);
   document.getElementById('hrTotalClientes').textContent = allLineas.length;
@@ -2871,14 +3099,15 @@ function renderHojaDetail() {
           <input type="number" value="${numVal(l.carros) > 0 ? formatQty(l.carros) : ''}" min="0" step="1" placeholder="Carros" onclick="event.stopPropagation()" onchange="updateHojaLineaCantidad(${l.id}, 'carros', this.value)" style="width:88px;text-align:right;padding:4px 6px;font-size:11px;border-radius:6px">
           <input type="number" value="${numVal(l.cajas) > 0 ? formatQty(l.cajas) : ''}" min="0" step="1" placeholder="Cajas" onclick="event.stopPropagation()" onchange="updateHojaLineaCantidad(${l.id}, 'cajas', this.value)" style="width:88px;text-align:right;padding:4px 6px;font-size:11px;border-radius:6px">
         </div>`
-      : `<span class="hr-linea-cc">${esc(formatLineaUnits(l))}</span>`;
+      : `<span class="hr-linea-cc"${hojaLineaHasCarga(l) ? '' : ' style="color:var(--text-dim)"'}>${esc(hojaLineaHasCarga(l) ? formatLineaUnits(l) : 'Sin carga')}</span>`;
+    const carrierLabel = esc(l.gls_service || 'Paqueteria');
     const meta = glsRecommendationMeta(l.gls_recommendation);
     const note = friendlyGlsNote(l.gls_notes);
     const costHtml = !isComercialView && hasLineaCostData(l)
       ? `<div class="hr-linea-costs">
           <span class="hr-linea-cost-item">Km ${l.detour_km !== null ? esc(formatQty(l.detour_km)) : '—'}</span>
           <span class="hr-linea-cost-item">Propio ${l.cost_own_route !== null ? esc(formatMoney(l.cost_own_route)) : '—'}</span>
-          <span class="hr-linea-cost-item">GLS ${l.cost_gls_adjusted !== null ? esc(formatMoney(l.cost_gls_adjusted)) : '—'}</span>
+          <span class="hr-linea-cost-item">${carrierLabel} ${l.cost_gls_adjusted !== null ? esc(formatMoney(l.cost_gls_adjusted)) : '—'}</span>
           <span class="hr-linea-cost-item reco-${meta.cls}">${esc(meta.label)}</span>
           ${note ? `<span class="hr-linea-cost-item reco-unavailable">${esc(note)}</span>` : ''}
         </div>`
@@ -2926,6 +3155,131 @@ function renderHojaDetail() {
   });
 }
 
+function renderHojaDetail() {
+  if (!currentHoja) return;
+  const h = currentHoja;
+  const isComercialView = typeof APP_USER !== 'undefined' && APP_USER.role === 'comercial';
+  const addLineaBtn = document.getElementById('btnAddLinea');
+  const calcBtn = document.getElementById('btnCalcGlsCosts');
+  const calcStatus = document.getElementById('hrGlsCalcStatus');
+
+  document.getElementById('hrDetailTitle').textContent = h.ruta_name + ' - ' + h.fecha;
+  const badge = document.getElementById('hrDetailEstado');
+  if (badge) {
+    badge.textContent = h.estado;
+    badge.className = 'hr-estado-badge hr-estado-' + h.estado;
+  }
+  const estadoSel = document.getElementById('hrEstadoSel');
+  if (estadoSel) estadoSel.value = h.estado;
+  if (addLineaBtn) addLineaBtn.style.display = isComercialView ? 'none' : '';
+  if (calcBtn) calcBtn.style.display = isComercialView ? 'none' : '';
+
+  if (calcStatus) {
+    if (isComercialView) {
+      calcStatus.textContent = '';
+    } else if (!getHojaActiveLineas(h).length) {
+      calcStatus.textContent = 'Anade carga real para comparar paqueteria';
+    } else if (!h.vehicle_id) {
+      calcStatus.textContent = 'Asigna vehiculo para comparar paqueteria';
+    } else if ((h.lineas || []).some(hasLineaCostData)) {
+      calcStatus.textContent = hrGlsAutoCalcRunning ? 'Actualizando comparativa de paqueteria...' : 'Comparativa de paqueteria al dia';
+    } else {
+      calcStatus.textContent = 'Comparativa pendiente';
+    }
+  }
+
+  renderHojaGlsSummary(h, isComercialView);
+  renderHojaVehicleSearch();
+
+  const allLineas = h.lineas || [];
+  const query = (hrClientSearchQuery || '').trim();
+  const lineas = getFilteredHojaLineas({ ...h, lineas: allLineas }, isComercialView);
+  document.getElementById('hrTotalClientes').textContent = allLineas.length;
+  document.getElementById('hrTotalCarros').textContent = formatQty(allLineas.reduce((s, l) => s + numVal(l.carros), 0));
+  document.getElementById('hrTotalCajas').textContent = formatQty(allLineas.reduce((s, l) => s + numVal(l.cajas), 0));
+
+  if (!lineas.length && isComercialView && query) {
+    document.getElementById('hrLineasList').innerHTML = '<div class="empty"><div class="empty-icon">&#128203;</div>No hay clientes para esa busqueda.</div>';
+    return;
+  }
+
+  const el = document.getElementById('hrLineasList');
+  if (!lineas.length) {
+    el.innerHTML = isComercialView
+      ? '<div class="empty"><div class="empty-icon">&#128203;</div>No hay clientes asociados a esta ruta para tus comerciales.</div>'
+      : '<div class="empty"><div class="empty-icon">&#128203;</div>Sin clientes. Pulsa "+ Cliente" para anadir.</div>';
+    return;
+  }
+
+  let html = '';
+  lineas.forEach((l, i) => {
+    const num = l.orden_descarga || (i + 1);
+    const estadoCls = l.estado === 'entregado' || l.estado === 'cancelado' ? l.estado : '';
+    const estadoIcon = l.estado === 'entregado' ? '&#10004;' : l.estado === 'cancelado' ? '&#10008;' : l.estado === 'no_entregado' ? '!' : '';
+    const cl = clients.find(c => c.id === parseInt(l.client_id, 10));
+    const contado = cl?.al_contado ? '<span style="color:var(--danger);font-size:9px;font-weight:700;flex-shrink:0">CTD</span>' : '';
+    const rowOnClick = isComercialView ? '' : ` onclick="openEditLineaModal(${l.id})"`;
+    const handleHtml = isComercialView ? '' : '<span class="hr-linea-handle" data-sortable-handle>&#9776;</span>';
+    const cantidadHtml = isComercialView
+      ? `<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+          <input type="number" value="${numVal(l.carros) > 0 ? formatQty(l.carros) : ''}" min="0" step="1" placeholder="Carros" onclick="event.stopPropagation()" onchange="updateHojaLineaCantidad(${l.id}, 'carros', this.value)" style="width:88px;text-align:right;padding:4px 6px;font-size:11px;border-radius:6px">
+          <input type="number" value="${numVal(l.cajas) > 0 ? formatQty(l.cajas) : ''}" min="0" step="1" placeholder="Cajas" onclick="event.stopPropagation()" onchange="updateHojaLineaCantidad(${l.id}, 'cajas', this.value)" style="width:88px;text-align:right;padding:4px 6px;font-size:11px;border-radius:6px">
+        </div>`
+      : `<span class="hr-linea-cc"${hojaLineaHasCarga(l) ? '' : ' style="color:var(--text-dim)"'}>${esc(hojaLineaHasCarga(l) ? formatLineaUnits(l) : 'Sin carga')}</span>`;
+    const meta = glsRecommendationMeta(l.gls_recommendation);
+    const note = friendlyGlsNote(l.gls_notes);
+    const costHtml = !isComercialView && hasLineaCostData(l)
+      ? `<div class="hr-linea-costs">
+          <span class="hr-linea-cost-item">Km ${l.detour_km !== null ? esc(formatQty(l.detour_km)) : '-'}</span>
+          <span class="hr-linea-cost-item">Propio ${l.cost_own_route !== null ? esc(formatMoney(l.cost_own_route)) : '-'}</span>
+          <span class="hr-linea-cost-item">${esc(l.gls_service || 'Paqueteria')} ${l.cost_gls_adjusted !== null ? esc(formatMoney(l.cost_gls_adjusted)) : '-'}</span>
+          <span class="hr-linea-cost-item reco-${meta.cls}">${esc(meta.label)}</span>
+          ${note ? `<span class="hr-linea-cost-item reco-unavailable">${esc(note)}</span>` : ''}
+        </div>`
+      : '';
+    html += `<div class="hr-linea ${estadoCls}" data-id="${l.id}"${rowOnClick}>
+      ${handleHtml}
+      <span class="hr-linea-num">${num}</span>
+      <div class="hr-linea-body">
+        <div class="hr-linea-row1">
+          <span class="hr-linea-name">${esc(l.client_name)}</span>
+          ${contado}
+          ${cantidadHtml}
+          <span class="hr-linea-estado">${estadoIcon}</span>
+        </div>
+        <div class="hr-linea-row2">
+          <span class="hr-linea-zona">${esc(l.zona || '')}</span>
+          <span class="hr-linea-com">${esc(l.comercial_name || '')}</span>
+        </div>
+        ${costHtml}
+      </div>
+    </div>`;
+  });
+  el.innerHTML = html;
+
+  if (hrSortable) {
+    hrSortable.destroy();
+    hrSortable = null;
+  }
+  if (isComercialView) return;
+
+  hrSortable = new Sortable(el, {
+    handle: '.hr-linea-handle',
+    animation: 150,
+    ghostClass: 'sortable-ghost',
+    onEnd: async function () {
+      const ids = Array.from(el.querySelectorAll('.hr-linea')).map(e => parseInt(e.dataset.id, 10));
+      try {
+        currentHoja = await api('hojas-ruta/' + currentHoja.id + '/reordenar', 'PUT', { linea_ids: ids });
+        renderHojaDetail();
+        await fetchHojaOSRMRoute();
+        drawHojaOnMap();
+        scheduleHojaGlsAutoCalc(false, 250);
+      } catch (e) { showToast('Error al reordenar: ' + e.message); }
+    }
+  });
+}
+
 async function updateHojaLineaCantidad(lineaId, field, value) {
   if (!currentHoja || !lineaId) return;
   try {
@@ -2933,43 +3287,65 @@ async function updateHojaLineaCantidad(lineaId, field, value) {
       [field]: numVal(value),
     });
     renderHojaDetail();
+    scheduleHojaGlsAutoCalc(false, 250);
   } catch (e) {
     showToast('Error guardando cantidad: ' + e.message);
   }
 }
 
-async function calculateHojaGlsCosts(force = true) {
+async function calculateHojaGlsCosts(force = true, opts = {}) {
   if (!currentHoja) return;
 
+  const { showToast: shouldToast = true, background = false } = opts;
+  const hojaId = currentHoja.id;
   const btn = document.getElementById('btnCalcGlsCosts');
   const status = document.getElementById('hrGlsCalcStatus');
   const previousText = btn ? btn.textContent : '';
 
+  if (hrGlsAutoCalcTimer) {
+    clearTimeout(hrGlsAutoCalcTimer);
+    hrGlsAutoCalcTimer = null;
+  }
+
   try {
+    hrGlsAutoCalcRunning = true;
     if (btn) {
       btn.disabled = true;
       btn.textContent = 'Calculando...';
     }
-    if (status) status.textContent = 'Calculando comparativa GLS...';
+    if (status) {
+      status.textContent = background
+        ? 'Actualizando comparativa de paqueteria...'
+        : 'Calculando comparativa de paqueteria...';
+    }
+    renderHojaGlsSummary(currentHoja, false);
 
-    await api('gls-costs/calculate', 'POST', {
-      hoja_ruta_id: currentHoja.id,
+    await api('shipping-costs/calculate', 'POST', {
+      hoja_ruta_id: hojaId,
       force: force ? 1 : 0,
     });
 
-    currentHoja = await api('hojas-ruta/' + currentHoja.id);
-    renderHojaDetail();
-    if (document.getElementById('vr')?.style.display === 'flex') {
-      await loadRentabilityReport();
+    const refreshedHoja = await api('hojas-ruta/' + hojaId);
+    hrGlsAutoCalcRunning = false;
+    if (currentHoja && parseInt(currentHoja.id, 10) === parseInt(hojaId, 10)) {
+      currentHoja = refreshedHoja;
+      renderHojaDetail();
+    } else if (currentHoja) {
+      scheduleHojaGlsAutoCalc(false, 250);
     }
-    showToast('Costes GLS calculados');
+    if (shouldToast) showToast('Costes de paqueteria calculados');
   } catch (e) {
-    if (status) status.textContent = 'Error GLS: ' + e.message;
-    showToast('Error GLS: ' + e.message);
+    hrGlsAutoCalcRunning = false;
+    if (status) status.textContent = 'Error paqueteria: ' + e.message;
+    if (currentHoja && parseInt(currentHoja.id, 10) === parseInt(hojaId, 10)) {
+      renderHojaGlsSummary(currentHoja, false);
+    }
+    if (shouldToast) showToast('Error paqueteria: ' + e.message);
   } finally {
+    hrGlsAutoCalcRunning = false;
     if (btn) {
       btn.disabled = false;
-      btn.textContent = previousText || 'Calcular costes GLS';
+      btn.textContent = previousText || 'Calcular paqueteria';
     }
   }
 }
@@ -3090,6 +3466,7 @@ async function changeHojaVehicle(vehicleId) {
     currentHoja = await api('hojas-ruta/' + currentHoja.id, 'PUT', { vehicle_id: normalizedVehicleId });
     await loadHojasRuta();
     renderHojaDetail();
+    scheduleHojaGlsAutoCalc(false, 250);
     showToast(normalizedVehicleId ? 'Vehiculo asignado' : 'Vehiculo quitado');
   } catch (e) {
     renderHojaVehicleSearch();
@@ -3109,6 +3486,7 @@ async function autoOrdenarHoja() {
     // Obtener ruta real OSRM
     await fetchHojaOSRMRoute();
     drawHojaOnMap();
+    scheduleHojaGlsAutoCalc(false, 250);
   } catch (e) { showToast('Error: ' + e.message); }
 }
 
@@ -3279,9 +3657,10 @@ function filterLineaClients(q) {
       : [];
   }
 
-  // Primero clientes de la ruta, luego el resto
-  const rutaClients = visibleClients.filter(c => c.ruta_id == rutaId);
-  const otherClients = visibleClients.filter(c => c.ruta_id != rutaId);
+  // Primero clientes que tengan la ruta de la hoja (N:M), luego el resto
+  const clientHasRuta = c => c.rutas && c.rutas.some(r => r.id == rutaId);
+  const rutaClients = visibleClients.filter(c => clientHasRuta(c) && !existingIds.has(c.id));
+  const otherClients = visibleClients.filter(c => !clientHasRuta(c) && !existingIds.has(c.id));
 
   let filtered = [...rutaClients, ...otherClients];
   if (q) filtered = filtered.filter(c => c.name.toLowerCase().includes(q) || (c.addr || '').toLowerCase().includes(q));
@@ -3298,7 +3677,7 @@ function filterLineaClients(q) {
     const checked = alreadyIn || lineaSelectedClients.has(c.id) ? 'checked' : '';
     const disabled = alreadyIn ? 'disabled' : '';
     const dimStyle = alreadyIn ? 'opacity:0.5;' : '';
-    const isRuta = c.ruta_id == rutaId;
+    const isRuta = c.rutas && c.rutas.some(r => r.id == rutaId);
     const badge = isRuta ? ' <span class="pill ruta" style="font-size:9px;vertical-align:middle">Ruta</span>' : '';
     const inHojaBadge = alreadyIn ? ' <span style="font-size:9px;background:#2563eb;color:#fff;padding:1px 5px;border-radius:3px;vertical-align:middle">En hoja</span>' : '';
     const contadoChecked = c.al_contado ? 'checked' : '';
@@ -3351,6 +3730,7 @@ async function addLineasToHoja() {
     currentHoja = await api('hojas-ruta/' + currentHoja.id);
     renderHojaDetail();
     drawHojaOnMap();
+    scheduleHojaGlsAutoCalc(false, 250);
     showToast(lineaSelectedClients.size + ' cliente(s) añadido(s)');
   } catch (e) { showToast('Error: ' + e.message); }
 }
@@ -3398,6 +3778,7 @@ async function saveEditLinea() {
     closeEditLineaModal();
     renderHojaDetail();
     drawHojaOnMap();
+    scheduleHojaGlsAutoCalc(false, 250);
   } catch (e) { showToast('Error: ' + e.message); }
 }
 
@@ -3410,6 +3791,7 @@ async function removeLineaFromModal() {
     closeEditLineaModal();
     renderHojaDetail();
     drawHojaOnMap();
+    scheduleHojaGlsAutoCalc(false, 250);
     showToast('Cliente quitado');
   } catch (e) { showToast('Error: ' + e.message); }
 }
@@ -3573,7 +3955,7 @@ function printHoja() {
   <h1>${esc(h.ruta_name)}</h1>
   <h2>${h.fecha} — ${esc(h.responsable || '')}</h2>
   <table>
-    <thead><tr><th>Ord</th><th>Cliente</th><th>Zona</th><th>Com.</th><th>Carros</th><th>Cajas</th>${hasCostColumns ? '<th>Coste propio</th><th>Coste GLS</th><th>Decision</th>' : ''}<th>Entregado</th><th>Observaciones</th></tr></thead>
+    <thead><tr><th>Ord</th><th>Cliente</th><th>Zona</th><th>Com.</th><th>Carros</th><th>Cajas</th>${hasCostColumns ? '<th>Coste propio</th><th>Coste paqueteria</th><th>Decision</th>' : ''}<th>Entregado</th><th>Observaciones</th></tr></thead>
     <tbody>${rows}</tbody>
   </table>
   <div class="totals">TOTALES: ${totalCarros} carros &middot; ${totalCajas} cajas &middot; ${lineas.length} clientes</div>
@@ -3589,6 +3971,135 @@ function printHoja() {
   const w = window.open('', '_blank');
   w.document.write(html);
   w.document.close();
+}
+
+function exportHojaHtml() {
+  if (!currentHoja) return;
+  const h = currentHoja;
+  const lineas = getHojaActiveLineas(h);
+
+  const totalCarros = formatQty(lineas.reduce((s, l) => s + numVal(l.carros), 0));
+  const totalCajas = formatQty(lineas.reduce((s, l) => s + numVal(l.cajas), 0));
+  const routeInfo = hrRouteDistance ? `${hrRouteDistance} km · ${hrRouteDuration}` : '';
+
+  let rows = lineas.map((l, i) => {
+    const num = l.orden_descarga || (i + 1);
+    const cl = clients.find(c => c.id === parseInt(l.client_id));
+    const contado = cl?.al_contado ? ' <span style="color:#c00;font-weight:700">[CTD]</span>' : '';
+    const carros = numVal(l.carros) > 0 ? formatQty(l.carros) : '';
+    const cajas = numVal(l.cajas) > 0 ? formatQty(l.cajas) : '';
+    const obs = l.observaciones ? esc(l.observaciones) : '';
+    const addr = l.client_address || l.zona || '';
+    return `<tr>
+      <td style="text-align:center;font-weight:700;color:#8e6b00">${num}</td>
+      <td><b>${esc(l.client_name)}</b>${contado}<br><span style="color:#888;font-size:11px">${esc(addr)}</span></td>
+      <td>${esc(l.comercial_name || '')}</td>
+      <td style="text-align:center">${carros}</td>
+      <td style="text-align:center">${cajas}</td>
+      <td style="color:#666">${obs}</td>
+    </tr>`;
+  }).join('');
+
+  const html = `<div style="font-family:'Segoe UI',Tahoma,sans-serif;max-width:700px;margin:0 auto">
+  <h2 style="margin:0 0 2px;color:#46331f;font-size:18px">${esc(h.ruta_name)}</h2>
+  <p style="margin:0 0 12px;color:#888;font-size:13px">${esc(h.fecha)} · ${esc(h.responsable || '')}${routeInfo ? ' · ' + routeInfo : ''}</p>
+  <table style="width:100%;border-collapse:collapse;font-size:12px">
+    <thead><tr style="background:#f5f0e6">
+      <th style="border:1px solid #ddd;padding:6px 8px;text-align:center;font-size:10px">N</th>
+      <th style="border:1px solid #ddd;padding:6px 8px;text-align:left;font-size:10px">CLIENTE</th>
+      <th style="border:1px solid #ddd;padding:6px 8px;text-align:left;font-size:10px">COMERCIAL</th>
+      <th style="border:1px solid #ddd;padding:6px 8px;text-align:center;font-size:10px">CARROS</th>
+      <th style="border:1px solid #ddd;padding:6px 8px;text-align:center;font-size:10px">CAJAS</th>
+      <th style="border:1px solid #ddd;padding:6px 8px;text-align:left;font-size:10px">OBS.</th>
+    </tr></thead>
+    <tbody>${rows}</tbody>
+    <tfoot><tr style="background:#f5f0e6;font-weight:700">
+      <td style="border:1px solid #ddd;padding:6px 8px" colspan="3">TOTAL: ${lineas.length} clientes</td>
+      <td style="border:1px solid #ddd;padding:6px 8px;text-align:center">${totalCarros}</td>
+      <td style="border:1px solid #ddd;padding:6px 8px;text-align:center">${totalCajas}</td>
+      <td style="border:1px solid #ddd;padding:6px 8px"></td>
+    </tr></tfoot>
+  </table>
+</div>`;
+
+  // Preparar datos del mapa
+  const routeDelegation = getHojaRouteDelegation(lineas);
+  const depotLat = routeDelegation ? parseFloat(routeDelegation.x) : null;
+  const depotLng = routeDelegation ? parseFloat(routeDelegation.y) : null;
+  const depotName = routeDelegation ? (routeDelegation.name || 'Delegacion') : null;
+
+  const markers = lineas.map((l, i) => {
+    const num = l.orden_descarga || (i + 1);
+    return { lat: parseFloat(l.client_x), lng: parseFloat(l.client_y), num, name: l.client_name, units: formatLineaUnits(l) };
+  }).filter(m => m.lat && m.lng);
+
+  const routeCoords = hrOsrmGeometry && hrOsrmGeometry.length > 1
+    ? JSON.stringify(hrOsrmGeometry)
+    : JSON.stringify(markers.map(m => [m.lat, m.lng]));
+  const hasOsrm = !!(hrOsrmGeometry && hrOsrmGeometry.length > 1);
+
+  const full = `<!DOCTYPE html><html><head><meta charset="UTF-8">
+<title>${esc(h.ruta_name)} - ${esc(h.fecha)}</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"><\/script>
+<style>
+  * { box-sizing:border-box; }
+  body { font-family:'Segoe UI',Tahoma,sans-serif; margin:0; padding:0; background:#fafaf6; color:#333; }
+  .layout { display:flex; height:100vh; }
+  .left { width:50%; overflow-y:auto; padding:20px; }
+  #map { width:50%; height:100vh; position:fixed; right:0; top:0; }
+  .depot-icon { background:#46331f; color:#fff; border-radius:50%; width:28px; height:28px; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:11px; border:2px solid #fff; box-shadow:0 2px 6px rgba(0,0,0,.3); }
+  .stop-icon { background:#8e6b00; color:#fff; border-radius:50%; width:26px; height:26px; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:11px; border:2px solid #fff; box-shadow:0 2px 6px rgba(0,0,0,.3); }
+  @media print { .layout { display:block; } .left { width:100%; padding:10px; } #map { position:relative; width:100%; height:400px; } }
+  @media (max-width:768px) { .layout { flex-direction:column; } .left { width:100%; } #map { position:relative; width:100%; height:50vh; } }
+</style>
+</head><body>
+<div class="layout">
+<div class="left">${html}</div>
+<div id="map"></div>
+</div>
+<script>
+  var map = L.map('map');
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+    attribution:'&copy; OpenStreetMap &copy; CARTO', maxZoom:19, subdomains:'abcd'
+  }).addTo(map);
+
+  var depot = ${depotLat ? JSON.stringify({lat: depotLat, lng: depotLng, name: depotName}) : 'null'};
+  var stops = ${JSON.stringify(markers)};
+  var routeCoords = ${routeCoords};
+  var hasOsrm = ${hasOsrm};
+  var bounds = [];
+
+  if (depot) {
+    var di = L.divIcon({className:'',html:'<div class="depot-icon">D</div>',iconSize:[28,28],iconAnchor:[14,14]});
+    L.marker([depot.lat,depot.lng],{icon:di,zIndexOffset:1000}).bindTooltip(depot.name,{permanent:true,direction:'bottom',offset:[0,10]}).addTo(map);
+    bounds.push([depot.lat,depot.lng]);
+  }
+
+  stops.forEach(function(s){
+    var si = L.divIcon({className:'',html:'<div class="stop-icon">'+s.num+'</div>',iconSize:[26,26],iconAnchor:[13,13]});
+    var tip = s.name + (s.units ? ' ('+s.units+')' : '');
+    L.marker([s.lat,s.lng],{icon:si}).bindTooltip(tip,{direction:'top',offset:[0,-12]}).addTo(map);
+    bounds.push([s.lat,s.lng]);
+  });
+
+  if (routeCoords.length > 1) {
+    var pts = routeCoords;
+    if (depot && !hasOsrm) { pts = [[depot.lat,depot.lng]].concat(pts).concat([[depot.lat,depot.lng]]); }
+    L.polyline(pts,{color:'#c0392b',weight:4,opacity:0.85}).addTo(map);
+  }
+
+  if (bounds.length) map.fitBounds(bounds,{padding:[30,30]});
+<\/script>
+</body></html>`;
+
+  const blob = new Blob([full], { type: 'text/html' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = (h.ruta_name || 'hoja') + '_' + h.fecha + '.html';
+  a.click();
+  URL.revokeObjectURL(a.href);
+  showToast('HTML descargado');
 }
 
 async function toggleContado(clientId, checked) {
@@ -3783,3 +4294,548 @@ window.addEventListener('DOMContentLoaded', async () => {
     fitMapToMarkers();
   }
 });
+
+let shippingCarriers = [];
+let shippingZones = [];
+let shippingSurcharges = [];
+
+function ensureShippingCatalogUi() {
+  const section = document.getElementById('shippingRatesSection');
+  if (!section || section.dataset.catalogUiReady === '1') return;
+
+  section.dataset.catalogUiReady = '1';
+  section.innerHTML = `
+    <div class="msec-title">Catalogo de paqueteria</div>
+    <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px">
+      <div style="border:1px solid var(--border);border-radius:10px;padding:8px;background:var(--surface2)">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <strong>Transportistas</strong>
+          <button class="btn btn-primary btn-sm" type="button" onclick="openShippingCarrierModal()">+ Transportista</button>
+        </div>
+        <div id="shippingCarriersList" style="max-height:190px;overflow:auto"></div>
+      </div>
+      <div style="border:1px solid var(--border);border-radius:10px;padding:8px;background:var(--surface2)">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <strong>Zonas por CP</strong>
+          <button class="btn btn-primary btn-sm" type="button" onclick="openShippingZoneModal()">+ Zona</button>
+        </div>
+        <div id="shippingZonesList" style="max-height:190px;overflow:auto"></div>
+      </div>
+      <div style="border:1px solid var(--border);border-radius:10px;padding:8px;background:var(--surface2)">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <strong>Tarifas base</strong>
+          <button class="btn btn-primary btn-sm" type="button" onclick="openShippingRateBandModal()">+ Tarifa</button>
+        </div>
+        <div id="shippingRateBandsList" style="max-height:220px;overflow:auto"></div>
+      </div>
+      <div style="border:1px solid var(--border);border-radius:10px;padding:8px;background:var(--surface2)">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <strong>Recargos</strong>
+          <button class="btn btn-primary btn-sm" type="button" onclick="openShippingSurchargeModal()">+ Recargo</button>
+        </div>
+        <div id="shippingSurchargesList" style="max-height:220px;overflow:auto"></div>
+      </div>
+    </div>`;
+
+  ensureShippingCatalogModals();
+}
+
+function ensureShippingCatalogModals() {
+  if (document.getElementById('shippingCarrierModalV2')) return;
+
+  document.body.insertAdjacentHTML('beforeend', `
+    <div class="overlay" id="shippingCarrierModalV2">
+      <div class="modal" style="width:460px">
+        <div class="mhead">
+          <div class="mtitle" id="shippingCarrierModalTitle">Nuevo transportista</div>
+          <button class="mclose" onclick="closeShippingCarrierModal()">x</button>
+        </div>
+        <div class="mbody">
+          <input type="hidden" id="shippingCarrierId">
+          <div class="ff"><label>Nombre *</label><input id="shippingCarrierNombre" placeholder="GLS, SEUR, MRW..."></div>
+          <div class="fg">
+            <div><label>Factor volumetrico</label><input type="number" id="shippingCarrierDivisor" min="1" step="1" value="167"></div>
+            <div><label>Fuel %</label><input type="number" id="shippingCarrierFuel" min="0" step="0.01" value="0"></div>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px;padding-top:8px">
+            <input type="checkbox" id="shippingCarrierActivo" checked style="width:auto">
+            <label for="shippingCarrierActivo" style="margin:0;cursor:pointer">Activo</label>
+          </div>
+        </div>
+        <div class="mfoot">
+          <button class="btn btn-danger" id="shippingCarrierDeleteBtn" onclick="deleteShippingCarrier()" style="display:none;margin-right:auto">Eliminar</button>
+          <button class="btn btn-secondary" onclick="closeShippingCarrierModal()">Cancelar</button>
+          <button class="btn btn-primary" onclick="saveShippingCarrier()">Guardar</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="overlay" id="shippingZoneModalV2">
+      <div class="modal" style="width:480px">
+        <div class="mhead">
+          <div class="mtitle" id="shippingZoneModalTitle">Nueva zona</div>
+          <button class="mclose" onclick="closeShippingZoneModal()">x</button>
+        </div>
+        <div class="mbody">
+          <input type="hidden" id="shippingZoneId">
+          <div class="ff"><label>Transportista *</label><select id="shippingZoneCarrier"></select></div>
+          <div class="fg">
+            <div><label>Prefijo CP *</label><input id="shippingZonePrefix" maxlength="5" placeholder="36"></div>
+            <div><label>Zona *</label><input type="number" id="shippingZoneNumber" min="1" step="1" value="1"></div>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px;padding-top:8px">
+            <input type="checkbox" id="shippingZoneRemote" style="width:auto">
+            <label for="shippingZoneRemote" style="margin:0;cursor:pointer">Destino remoto</label>
+          </div>
+        </div>
+        <div class="mfoot">
+          <button class="btn btn-danger" id="shippingZoneDeleteBtn" onclick="deleteShippingZone()" style="display:none;margin-right:auto">Eliminar</button>
+          <button class="btn btn-secondary" onclick="closeShippingZoneModal()">Cancelar</button>
+          <button class="btn btn-primary" onclick="saveShippingZone()">Guardar</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="overlay" id="shippingRateBandModalV2">
+      <div class="modal" style="width:520px">
+        <div class="mhead">
+          <div class="mtitle" id="shippingRateBandModalTitle">Nueva tarifa</div>
+          <button class="mclose" onclick="closeShippingRateBandModal()">x</button>
+        </div>
+        <div class="mbody">
+          <input type="hidden" id="shippingRateBandId">
+          <div class="fg">
+            <div><label>Transportista *</label><select id="shippingRateCarrier"></select></div>
+            <div><label>Zona *</label><input type="number" id="shippingRateZone" min="1" step="1" value="1"></div>
+          </div>
+          <div class="fg">
+            <div><label>Peso min *</label><input type="number" id="shippingRatePesoMin" min="0" step="0.01" value="0"></div>
+            <div><label>Peso max *</label><input type="number" id="shippingRatePesoMax" min="0" step="0.01" value="1"></div>
+          </div>
+          <div class="fg">
+            <div><label>Precio base *</label><input type="number" id="shippingRatePrecioBase" min="0" step="0.01"></div>
+            <div><label>Vigencia desde *</label><input type="date" id="shippingRateDesde"></div>
+          </div>
+          <div class="ff"><label>Vigencia hasta</label><input type="date" id="shippingRateHasta"></div>
+        </div>
+        <div class="mfoot">
+          <button class="btn btn-danger" id="shippingRateBandDeleteBtn" onclick="deleteShippingRateBand()" style="display:none;margin-right:auto">Eliminar</button>
+          <button class="btn btn-secondary" onclick="closeShippingRateBandModal()">Cancelar</button>
+          <button class="btn btn-primary" onclick="saveShippingRateBand()">Guardar</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="overlay" id="shippingSurchargeModalV2">
+      <div class="modal" style="width:500px">
+        <div class="mhead">
+          <div class="mtitle" id="shippingSurchargeModalTitle">Nuevo recargo</div>
+          <button class="mclose" onclick="closeShippingSurchargeModal()">x</button>
+        </div>
+        <div class="mbody">
+          <input type="hidden" id="shippingSurchargeId">
+          <div class="ff"><label>Transportista *</label><select id="shippingSurchargeCarrier"></select></div>
+          <div class="ff"><label>Tipo *</label><input id="shippingSurchargeTipo" placeholder="remoto, sabado, reembolso..."></div>
+          <div class="fg">
+            <div><label>Importe fijo</label><input type="number" id="shippingSurchargeImporte" min="0" step="0.01"></div>
+            <div><label>Porcentaje</label><input type="number" id="shippingSurchargePct" min="0" step="0.01"></div>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px;padding-top:8px">
+            <input type="checkbox" id="shippingSurchargeActivo" checked style="width:auto">
+            <label for="shippingSurchargeActivo" style="margin:0;cursor:pointer">Activo</label>
+          </div>
+        </div>
+        <div class="mfoot">
+          <button class="btn btn-danger" id="shippingSurchargeDeleteBtn" onclick="deleteShippingSurcharge()" style="display:none;margin-right:auto">Eliminar</button>
+          <button class="btn btn-secondary" onclick="closeShippingSurchargeModal()">Cancelar</button>
+          <button class="btn btn-primary" onclick="saveShippingSurcharge()">Guardar</button>
+        </div>
+      </div>
+    </div>`);
+}
+
+function shippingCarrierOptions(selectedId = '') {
+  const options = ['<option value="">Selecciona...</option>'];
+  shippingCarriers.forEach(carrier => {
+    const selected = String(selectedId) === String(carrier.id) ? ' selected' : '';
+    options.push(`<option value="${carrier.id}"${selected}>${esc(carrier.nombre)}</option>`);
+  });
+  return options.join('');
+}
+
+async function loadShippingCatalog() {
+  const catalog = await api('shipping-rates');
+  shippingCarriers = Array.isArray(catalog.carriers) ? catalog.carriers : [];
+  shippingZones = Array.isArray(catalog.zones) ? catalog.zones : [];
+  shippingRates = Array.isArray(catalog.rates) ? catalog.rates : [];
+  shippingSurcharges = Array.isArray(catalog.surcharges) ? catalog.surcharges : [];
+}
+
+function renderShippingCatalogLists() {
+  renderShippingCarriersListV2();
+  renderShippingZonesListV2();
+  renderShippingRateBandsListV2();
+  renderShippingSurchargesListV2();
+}
+
+function renderShippingCarriersListV2() {
+  const el = document.getElementById('shippingCarriersList');
+  if (!el) return;
+  if (!shippingCarriers.length) {
+    el.innerHTML = '<div style="padding:8px;color:var(--text-dim);font-size:11px">Sin transportistas todavia.</div>';
+    return;
+  }
+  el.innerHTML = shippingCarriers.map(carrier => `
+    <div class="client-card" style="padding:8px 10px;margin-bottom:6px;cursor:default">
+      <div class="card-top">
+        <div class="cname">${esc(carrier.nombre)}</div>
+        <div class="card-actions" style="opacity:1">
+          <button class="icon-btn" onclick="openShippingCarrierModal(${carrier.id})" title="Editar">&#9998;</button>
+        </div>
+      </div>
+      <div class="card-sub">
+        <span>Factor ${esc(String(carrier.divisor_vol))}</span>
+        <span>Fuel ${esc(formatQty(carrier.fuel_pct))}%</span>
+      </div>
+      <div class="pills">
+        <span class="pill ${parseInt(carrier.activo, 10) ? 'open' : 'closed'}">${parseInt(carrier.activo, 10) ? 'Activo' : 'Inactivo'}</span>
+      </div>
+    </div>`).join('');
+}
+
+function renderShippingZonesListV2() {
+  const el = document.getElementById('shippingZonesList');
+  if (!el) return;
+  if (!shippingZones.length) {
+    el.innerHTML = '<div style="padding:8px;color:var(--text-dim);font-size:11px">Sin zonas configuradas.</div>';
+    return;
+  }
+  el.innerHTML = shippingZones.map(zone => `
+    <div class="client-card" style="padding:8px 10px;margin-bottom:6px;cursor:default">
+      <div class="card-top">
+        <div class="cname">${esc(zone.carrier_name)} · CP ${esc(zone.cp_prefix)}</div>
+        <div class="card-actions" style="opacity:1">
+          <button class="icon-btn" onclick="openShippingZoneModal(${zone.id})" title="Editar">&#9998;</button>
+        </div>
+      </div>
+      <div class="card-sub">
+        <span>Zona ${esc(String(zone.zona))}</span>
+        <span>${parseInt(zone.remoto, 10) ? 'Remoto' : 'Normal'}</span>
+      </div>
+    </div>`).join('');
+}
+
+function renderShippingRateBandsListV2() {
+  const el = document.getElementById('shippingRateBandsList');
+  if (!el) return;
+  if (!shippingRates.length) {
+    el.innerHTML = '<div style="padding:8px;color:var(--text-dim);font-size:11px">Sin tarifas base.</div>';
+    return;
+  }
+  el.innerHTML = shippingRates.map(rate => `
+    <div class="client-card" style="padding:8px 10px;margin-bottom:6px;cursor:default">
+      <div class="card-top">
+        <div class="cname">${esc(rate.carrier_name)} · Zona ${esc(String(rate.zona))}</div>
+        <div class="card-actions" style="opacity:1">
+          <button class="icon-btn" onclick="openShippingRateBandModal(${rate.id})" title="Editar">&#9998;</button>
+        </div>
+      </div>
+      <div class="card-sub">
+        <span>${esc(formatQty(rate.peso_min))}-${esc(formatQty(rate.peso_max))} kg</span>
+        <span>${esc(formatMoney(rate.precio_base))}</span>
+      </div>
+      <div class="card-sub" style="padding-left:0">
+        <span>${esc(rate.vigencia_desde)}${rate.vigencia_hasta ? ' a ' + esc(rate.vigencia_hasta) : ' en adelante'}</span>
+      </div>
+    </div>`).join('');
+}
+
+function renderShippingSurchargesListV2() {
+  const el = document.getElementById('shippingSurchargesList');
+  if (!el) return;
+  if (!shippingSurcharges.length) {
+    el.innerHTML = '<div style="padding:8px;color:var(--text-dim);font-size:11px">Sin recargos configurados.</div>';
+    return;
+  }
+  el.innerHTML = shippingSurcharges.map(row => {
+    const amount = row.importe !== null && row.importe !== undefined && row.importe !== '' ? formatMoney(row.importe) : '';
+    const pct = row.porcentaje !== null && row.porcentaje !== undefined && row.porcentaje !== '' ? formatQty(row.porcentaje) + '%' : '';
+    return `
+      <div class="client-card" style="padding:8px 10px;margin-bottom:6px;cursor:default">
+        <div class="card-top">
+          <div class="cname">${esc(row.carrier_name)} · ${esc(row.tipo)}</div>
+          <div class="card-actions" style="opacity:1">
+            <button class="icon-btn" onclick="openShippingSurchargeModal(${row.id})" title="Editar">&#9998;</button>
+          </div>
+        </div>
+        <div class="card-sub">
+          <span>${amount || '-'}</span>
+          <span>${pct || '-'}</span>
+        </div>
+        <div class="pills">
+          <span class="pill ${parseInt(row.activo, 10) ? 'open' : 'closed'}">${parseInt(row.activo, 10) ? 'Activo' : 'Inactivo'}</span>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+function openShippingCarrierModal(id = null) {
+  ensureShippingCatalogModals();
+  const carrier = id ? shippingCarriers.find(row => parseInt(row.id, 10) === parseInt(id, 10)) : null;
+  document.getElementById('shippingCarrierModalTitle').textContent = carrier ? 'Editar transportista' : 'Nuevo transportista';
+  document.getElementById('shippingCarrierId').value = carrier?.id || '';
+  document.getElementById('shippingCarrierNombre').value = carrier?.nombre || '';
+  document.getElementById('shippingCarrierDivisor').value = carrier?.divisor_vol || 167;
+  document.getElementById('shippingCarrierFuel').value = carrier?.fuel_pct || 0;
+  document.getElementById('shippingCarrierActivo').checked = carrier ? !!parseInt(carrier.activo, 10) : true;
+  document.getElementById('shippingCarrierDeleteBtn').style.display = carrier ? '' : 'none';
+  document.getElementById('shippingCarrierModalV2').classList.add('open');
+}
+
+function closeShippingCarrierModal() {
+  document.getElementById('shippingCarrierModalV2')?.classList.remove('open');
+}
+
+async function saveShippingCarrier() {
+  const id = document.getElementById('shippingCarrierId').value;
+  const payload = {
+    entity_type: 'carrier',
+    nombre: document.getElementById('shippingCarrierNombre').value.trim(),
+    divisor_vol: document.getElementById('shippingCarrierDivisor').value,
+    fuel_pct: document.getElementById('shippingCarrierFuel').value,
+    activo: document.getElementById('shippingCarrierActivo').checked ? 1 : 0,
+  };
+  try {
+    await api(id ? 'shipping-rates/' + id : 'shipping-rates', id ? 'PUT' : 'POST', payload);
+    await loadShippingCatalog();
+    renderShippingCatalogLists();
+    closeShippingCarrierModal();
+    showToast(id ? 'Transportista actualizado' : 'Transportista creado');
+  } catch (e) {
+    showToast('Error: ' + e.message);
+  }
+}
+
+async function deleteShippingCarrier() {
+  const id = document.getElementById('shippingCarrierId').value;
+  if (!id || !confirm('Eliminar este transportista y todo su catalogo?')) return;
+  try {
+    await api('shipping-rates/' + id + '?entity_type=carrier', 'DELETE');
+    await loadShippingCatalog();
+    renderShippingCatalogLists();
+    closeShippingCarrierModal();
+    showToast('Transportista eliminado');
+  } catch (e) {
+    showToast('Error: ' + e.message);
+  }
+}
+
+function openShippingZoneModal(id = null) {
+  ensureShippingCatalogModals();
+  if (!shippingCarriers.length) {
+    showToast('Crea primero un transportista');
+    return;
+  }
+  const zone = id ? shippingZones.find(row => parseInt(row.id, 10) === parseInt(id, 10)) : null;
+  document.getElementById('shippingZoneModalTitle').textContent = zone ? 'Editar zona' : 'Nueva zona';
+  document.getElementById('shippingZoneId').value = zone?.id || '';
+  document.getElementById('shippingZoneCarrier').innerHTML = shippingCarrierOptions(zone?.carrier_id || '');
+  document.getElementById('shippingZonePrefix').value = zone?.cp_prefix || '';
+  document.getElementById('shippingZoneNumber').value = zone?.zona || 1;
+  document.getElementById('shippingZoneRemote').checked = zone ? !!parseInt(zone.remoto, 10) : false;
+  document.getElementById('shippingZoneDeleteBtn').style.display = zone ? '' : 'none';
+  document.getElementById('shippingZoneModalV2').classList.add('open');
+}
+
+function closeShippingZoneModal() {
+  document.getElementById('shippingZoneModalV2')?.classList.remove('open');
+}
+
+async function saveShippingZone() {
+  const id = document.getElementById('shippingZoneId').value;
+  const payload = {
+    entity_type: 'zone',
+    carrier_id: document.getElementById('shippingZoneCarrier').value,
+    cp_prefix: document.getElementById('shippingZonePrefix').value.trim(),
+    zona: document.getElementById('shippingZoneNumber').value,
+    remoto: document.getElementById('shippingZoneRemote').checked ? 1 : 0,
+  };
+  try {
+    await api(id ? 'shipping-rates/' + id : 'shipping-rates', id ? 'PUT' : 'POST', payload);
+    await loadShippingCatalog();
+    renderShippingCatalogLists();
+    closeShippingZoneModal();
+    showToast(id ? 'Zona actualizada' : 'Zona creada');
+  } catch (e) {
+    showToast('Error: ' + e.message);
+  }
+}
+
+async function deleteShippingZone() {
+  const id = document.getElementById('shippingZoneId').value;
+  if (!id || !confirm('Eliminar esta zona?')) return;
+  try {
+    await api('shipping-rates/' + id + '?entity_type=zone', 'DELETE');
+    await loadShippingCatalog();
+    renderShippingCatalogLists();
+    closeShippingZoneModal();
+    showToast('Zona eliminada');
+  } catch (e) {
+    showToast('Error: ' + e.message);
+  }
+}
+
+function openShippingRateBandModal(id = null) {
+  ensureShippingCatalogModals();
+  if (!shippingCarriers.length) {
+    showToast('Crea primero un transportista');
+    return;
+  }
+  const rate = id ? shippingRates.find(row => parseInt(row.id, 10) === parseInt(id, 10)) : null;
+  document.getElementById('shippingRateBandModalTitle').textContent = rate ? 'Editar tarifa' : 'Nueva tarifa';
+  document.getElementById('shippingRateBandId').value = rate?.id || '';
+  document.getElementById('shippingRateCarrier').innerHTML = shippingCarrierOptions(rate?.carrier_id || '');
+  document.getElementById('shippingRateZone').value = rate?.zona || 1;
+  document.getElementById('shippingRatePesoMin').value = rate?.peso_min || 0;
+  document.getElementById('shippingRatePesoMax').value = rate?.peso_max || 1;
+  document.getElementById('shippingRatePrecioBase').value = rate?.precio_base || '';
+  document.getElementById('shippingRateDesde').value = rate?.vigencia_desde || todayStr();
+  document.getElementById('shippingRateHasta').value = rate?.vigencia_hasta || '';
+  document.getElementById('shippingRateBandDeleteBtn').style.display = rate ? '' : 'none';
+  document.getElementById('shippingRateBandModalV2').classList.add('open');
+}
+
+function closeShippingRateBandModal() {
+  document.getElementById('shippingRateBandModalV2')?.classList.remove('open');
+}
+
+async function saveShippingRateBand() {
+  const id = document.getElementById('shippingRateBandId').value;
+  const payload = {
+    entity_type: 'rate',
+    carrier_id: document.getElementById('shippingRateCarrier').value,
+    zona: document.getElementById('shippingRateZone').value,
+    peso_min: document.getElementById('shippingRatePesoMin').value,
+    peso_max: document.getElementById('shippingRatePesoMax').value,
+    precio_base: document.getElementById('shippingRatePrecioBase').value,
+    vigencia_desde: document.getElementById('shippingRateDesde').value,
+    vigencia_hasta: document.getElementById('shippingRateHasta').value,
+  };
+  try {
+    await api(id ? 'shipping-rates/' + id : 'shipping-rates', id ? 'PUT' : 'POST', payload);
+    await loadShippingCatalog();
+    renderShippingCatalogLists();
+    closeShippingRateBandModal();
+    showToast(id ? 'Tarifa actualizada' : 'Tarifa creada');
+  } catch (e) {
+    showToast('Error: ' + e.message);
+  }
+}
+
+async function deleteShippingRateBand() {
+  const id = document.getElementById('shippingRateBandId').value;
+  if (!id || !confirm('Eliminar esta tarifa?')) return;
+  try {
+    await api('shipping-rates/' + id + '?entity_type=rate', 'DELETE');
+    await loadShippingCatalog();
+    renderShippingCatalogLists();
+    closeShippingRateBandModal();
+    showToast('Tarifa eliminada');
+  } catch (e) {
+    showToast('Error: ' + e.message);
+  }
+}
+
+function openShippingSurchargeModal(id = null) {
+  ensureShippingCatalogModals();
+  if (!shippingCarriers.length) {
+    showToast('Crea primero un transportista');
+    return;
+  }
+  const surcharge = id ? shippingSurcharges.find(row => parseInt(row.id, 10) === parseInt(id, 10)) : null;
+  document.getElementById('shippingSurchargeModalTitle').textContent = surcharge ? 'Editar recargo' : 'Nuevo recargo';
+  document.getElementById('shippingSurchargeId').value = surcharge?.id || '';
+  document.getElementById('shippingSurchargeCarrier').innerHTML = shippingCarrierOptions(surcharge?.carrier_id || '');
+  document.getElementById('shippingSurchargeTipo').value = surcharge?.tipo || '';
+  document.getElementById('shippingSurchargeImporte').value = surcharge?.importe ?? '';
+  document.getElementById('shippingSurchargePct').value = surcharge?.porcentaje ?? '';
+  document.getElementById('shippingSurchargeActivo').checked = surcharge ? !!parseInt(surcharge.activo, 10) : true;
+  document.getElementById('shippingSurchargeDeleteBtn').style.display = surcharge ? '' : 'none';
+  document.getElementById('shippingSurchargeModalV2').classList.add('open');
+}
+
+function closeShippingSurchargeModal() {
+  document.getElementById('shippingSurchargeModalV2')?.classList.remove('open');
+}
+
+async function saveShippingSurcharge() {
+  const id = document.getElementById('shippingSurchargeId').value;
+  const payload = {
+    entity_type: 'surcharge',
+    carrier_id: document.getElementById('shippingSurchargeCarrier').value,
+    tipo: document.getElementById('shippingSurchargeTipo').value.trim(),
+    importe: document.getElementById('shippingSurchargeImporte').value,
+    porcentaje: document.getElementById('shippingSurchargePct').value,
+    activo: document.getElementById('shippingSurchargeActivo').checked ? 1 : 0,
+  };
+  try {
+    await api(id ? 'shipping-rates/' + id : 'shipping-rates', id ? 'PUT' : 'POST', payload);
+    await loadShippingCatalog();
+    renderShippingCatalogLists();
+    closeShippingSurchargeModal();
+    showToast(id ? 'Recargo actualizado' : 'Recargo creado');
+  } catch (e) {
+    showToast('Error: ' + e.message);
+  }
+}
+
+async function deleteShippingSurcharge() {
+  const id = document.getElementById('shippingSurchargeId').value;
+  if (!id || !confirm('Eliminar este recargo?')) return;
+  try {
+    await api('shipping-rates/' + id + '?entity_type=surcharge', 'DELETE');
+    await loadShippingCatalog();
+    renderShippingCatalogLists();
+    closeShippingSurchargeModal();
+    showToast('Recargo eliminado');
+  } catch (e) {
+    showToast('Error: ' + e.message);
+  }
+}
+
+async function openSettingsModal() {
+  ensureShippingCatalogUi();
+  try {
+    const requests = [api('settings')];
+    if (typeof APP_USER !== 'undefined' && APP_USER.role === 'admin') {
+      requests.push(api('shipping-config').catch(() => null));
+      requests.push(api('shipping-rates').catch(() => ({ carriers: [], zones: [], rates: [], surcharges: [] })));
+    }
+
+    const results = await Promise.all(requests);
+    const s = results[0];
+    const shippingConfig = typeof APP_USER !== 'undefined' && APP_USER.role === 'admin' ? (results[1] || null) : null;
+    const shippingCatalog = typeof APP_USER !== 'undefined' && APP_USER.role === 'admin'
+      ? (results[2] || { carriers: [], zones: [], rates: [], surcharges: [] })
+      : { carriers: [], zones: [], rates: [], surcharges: [] };
+
+    document.getElementById('sLunchDur').value = s.lunch_duration_min || 60;
+    document.getElementById('sLunchEarly').value = s.lunch_earliest || '12:00';
+    document.getElementById('sLunchLate').value = s.lunch_latest || '15:30';
+    document.getElementById('sBaseUnload').value = s.base_unload_min || 5;
+    document.getElementById('sSpeed').value = s.default_speed_kmh || 50;
+
+    glsConfigState = shippingConfig;
+    applyShippingConfigToForm(shippingConfig);
+
+    shippingCarriers = Array.isArray(shippingCatalog.carriers) ? shippingCatalog.carriers : [];
+    shippingZones = Array.isArray(shippingCatalog.zones) ? shippingCatalog.zones : [];
+    shippingRates = Array.isArray(shippingCatalog.rates) ? shippingCatalog.rates : [];
+    shippingSurcharges = Array.isArray(shippingCatalog.surcharges) ? shippingCatalog.surcharges : [];
+    renderShippingCatalogLists();
+  } catch (e) { /* usa valores por defecto del form */ }
+
+  document.getElementById('btnSaveTemplate').style.display = fleetRoutes?.routes?.length ? 'block' : 'none';
+  loadTemplates();
+  document.getElementById('settingsModal').classList.add('open');
+}

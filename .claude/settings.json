@@ -43,7 +43,24 @@
       "Bash(sort -t' ' -k2 -n)",
       "Bash(grep -r \"json_encode\\\\|json_decode\\\\|POST\\\\|GET\" /c/wamp64/www/\"Gestor de Rutas\"/controllers/*.php)",
       "Bash(grep -r \"delegations\\\\|depots\" /c/wamp64/www/\"Gestor de Rutas\"/sql/*.sql)",
-      "Bash(python -u scripts/informe_rutas.py)"
+      "Bash(python -u scripts/informe_rutas.py)",
+      "Bash(wc -l \"c:/wamp64/www/Gestor de Rutas/vehiculos \\(1\\).sql\")",
+      "Read(//c/wamp64/bin/mysql/**)",
+      "Bash(\"c:/wamp64/bin/mysql/mysql8.4.7/bin/mysql.exe\" -u root -e \"SHOW TABLES;\" gestorrutas)",
+      "Bash(\"c:/wamp64/bin/mysql/mysql8.4.7/bin/mysql.exe\" -u root -e \"SELECT COUNT\\(*\\) as total FROM vehicles; SELECT id, name, plate, delegation_id FROM vehicles LIMIT 10;\" gestorrutas)",
+      "Bash(\"c:/wamp64/bin/mysql/mysql8.4.7/bin/mysql.exe\" -u root -e \"SELECT COUNT\\(*\\) as total_hojas FROM hojas_ruta; SELECT COUNT\\(*\\) as total_lineas FROM hoja_ruta_lineas;\" gestorrutas)",
+      "Bash(\"c:/wamp64/bin/mysql/mysql8.4.7/bin/mysql.exe\" -u root -e \"DESCRIBE hojas_ruta;\" gestorrutas)",
+      "Bash(\"c:/wamp64/bin/mysql/mysql8.4.7/bin/mysql.exe\" -u root -e \"DELETE FROM hoja_ruta_lineas; DELETE FROM hojas_ruta;\" gestorrutas)",
+      "Bash(\"c:/wamp64/bin/mysql/mysql8.4.7/bin/mysql.exe\" -u root -e \"DESCRIBE hoja_ruta_lineas; SELECT id, nombre FROM rutas; SELECT id, name FROM clients WHERE name LIKE ''%TRADESCANTIA%'' OR name LIKE ''%FIGUERAGRO%'' OR name LIKE ''%ORGANIZA%'' OR name LIKE ''%SAN MIGUEL%'' LIMIT 10;\" gestorrutas)",
+      "Bash(\"c:/wamp64/bin/mysql/mysql8.4.7/bin/mysql.exe\" -u root -e \"DESCRIBE rutas; SELECT * FROM rutas LIMIT 20;\" gestorrutas)",
+      "Bash(\"c:/wamp64/bin/mysql/mysql8.4.7/bin/mysql.exe\" -u root -e \"SELECT id, name FROM clients ORDER BY name;\" gestorrutas)",
+      "Bash(\"c:/wamp64/bin/mysql/mysql8.4.7/bin/mysql.exe\" -u root -e \":*)",
+      "Bash(\"c:/wamp64/bin/mysql/mysql8.4.7/bin/mysql.exe\" -u root -e \"SELECT id, name FROM comerciales;\" gestorrutas)",
+      "Bash(\"c:/wamp64/bin/mysql/mysql8.4.7/bin/mysql.exe\" -u:*)",
+      "Bash(xargs grep:*)",
+      "Bash(find '/c/wamp64/www/Gestor de Rutas' -type f -name *.md -o -name *OSRM* -o -name *osrm*)",
+      "Bash(\"c:/wamp64/bin/mysql/mysql8.4.7/bin/mysql.exe\" -u root -e \"SELECT id, name, x, y, active FROM clients WHERE id = 2769;\" gestorrutas)",
+      "Bash(\"c:/wamp64/bin/mysql/mysql8.4.7/bin/mysql.exe\" -u root -e \"SELECT orden_descarga FROM hoja_ruta_lineas WHERE hoja_ruta_id = 10 ORDER BY orden_descarga LIMIT 5;\" gestorrutas)"
     ],
     "additionalDirectories": [
       "c:\\wamp64\\www"

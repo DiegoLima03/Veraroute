@@ -6,7 +6,7 @@ require_once __DIR__ . '/../models/Delegation.php';
 require_once __DIR__ . '/../models/DistanceCache.php';
 require_once __DIR__ . '/../models/GlsShippingConfig.php';
 require_once __DIR__ . '/../models/ClientCostHistory.php';
-require_once __DIR__ . '/GlsApiClient.php';
+require_once __DIR__ . '/../models/ShippingRateTable.php';
 
 class RouteCostCalculator
 {
@@ -16,7 +16,7 @@ class RouteCostCalculator
     private DistanceCache $distanceCache;
     private GlsShippingConfig $configModel;
     private ClientCostHistory $historyModel;
-    private GlsApiClient $glsApiClient;
+    private ShippingRateTable $shippingRateModel;
 
     public function __construct()
     {
@@ -26,7 +26,7 @@ class RouteCostCalculator
         $this->distanceCache = new DistanceCache();
         $this->configModel = new GlsShippingConfig();
         $this->historyModel = new ClientCostHistory();
-        $this->glsApiClient = new GlsApiClient();
+        $this->shippingRateModel = new ShippingRateTable();
     }
 
     public function calculateDetourKm(int $clientId, int $hojaRutaId): ?float
@@ -55,9 +55,7 @@ class RouteCostCalculator
             ];
         }
 
-        $config = $this->configModel->getConfig();
-        $weights = $this->configModel->getWeightsPerUnit();
-        $multiplier = max(0.0, (float) ($config['price_multiplier'] ?? 1));
+        $calcVars = $this->configModel->getCalculationVariables();
         $vehicle = !empty($hoja['vehicle_id']) ? $this->vehicleModel->getById((int) $hoja['vehicle_id']) : null;
         $vehicleCostPerKm = $vehicle && $vehicle['cost_per_km'] !== null ? (float) $vehicle['cost_per_km'] : null;
         $depot = $this->resolveDepotForHoja($hoja);
@@ -94,14 +92,27 @@ class RouteCostCalculator
             $lineaId = (int) $linea['id'];
             $clientId = (int) $linea['client_id'];
             $postcode = trim((string) ($linea['client_postcode'] ?? ''));
-            $weightKg = round(($carros * $weights['per_carro']) + ($cajas * $weights['per_caja']), 2);
-            $numParcels = max(1, (int) ceil($carros + $cajas));
+            $realWeightKg = round(
+                ($carros * $calcVars['per_carro']) + ($cajas * $calcVars['per_caja']),
+                2
+            );
+            $volumeM3 = round(
+                ($carros * $calcVars['volume_per_carro_cm3']) + ($cajas * $calcVars['volume_per_caja_cm3']),
+                2
+            );
+            $numParcels = max(
+                1,
+                (int) ceil(
+                    ($carros * $calcVars['parcels_per_carro']) + ($cajas * $calcVars['parcels_per_caja'])
+                )
+            );
             $detourKm = $this->calculateDetourKmFromLineas($clientId, $lineas, $depot);
             $costOwnRoute = null;
-            $costGlsRaw = null;
-            $costGlsAdjusted = null;
+            $costCarrierRaw = null;
+            $costCarrierAdjusted = null;
+            $billableWeightKg = $realWeightKg;
             $recommendation = 'unavailable';
-            $glsService = '';
+            $carrierService = '';
             $notes = '';
 
             if ($detourKm === null) {
@@ -116,34 +127,40 @@ class RouteCostCalculator
                 $summary['skipped_no_postcode']++;
                 $notes = $notes ?: 'postcode_missing';
             } else {
-                $glsResult = $this->glsApiClient->getShippingRate([
-                    'dest_postcode' => $postcode,
-                    'dest_country' => 'ES',
-                    'weight_kg' => $weightKg,
-                    'num_parcels' => $numParcels,
-                    'service' => (string) ($config['default_service'] ?? 'BusinessParcel'),
-                    'shipping_date' => date('d-m-Y', strtotime((string) $hoja['fecha'])),
-                ]);
+                $bestRate = $this->shippingRateModel->findBestRate(
+                    $postcode,
+                    'ES',
+                    $realWeightKg,
+                    $numParcels,
+                    [
+                        'volume_m3' => $volumeM3,
+                        'use_volumetric_weight' => $calcVars['use_volumetric_weight'],
+                    ]
+                );
 
-                if ($glsResult['success']) {
-                    $costGlsRaw = round((float) $glsResult['price_raw'], 4);
-                    $costGlsAdjusted = round($costGlsRaw * $multiplier, 4);
-                    $glsService = (string) ($glsResult['service'] ?? '');
+                if ($bestRate) {
+                    $costCarrierRaw = round((float) ($bestRate['price'] ?? 0), 4);
+                    $costCarrierAdjusted = $costCarrierRaw;
+                    $billableWeightKg = round((float) ($bestRate['billable_weight_kg'] ?? $realWeightKg), 2);
+                    $carrierService = trim(
+                        (string) ($bestRate['carrier_name'] ?? $bestRate['carrier_code'] ?? '')
+                        . (!empty($bestRate['service_name']) ? ' - ' . $bestRate['service_name'] : '')
+                    );
                 } else {
                     $summary['gls_errors']++;
-                    $notes = 'gls_error:' . substr((string) ($glsResult['error'] ?? 'Error GLS desconocido'), 0, 220);
+                    $notes = $notes ?: 'carrier_rate_missing';
                 }
             }
 
-            if ($costOwnRoute !== null && $costGlsAdjusted !== null) {
-                $recommendation = $this->resolveRecommendation($costOwnRoute, $costGlsAdjusted);
+            if ($costOwnRoute !== null && $costCarrierAdjusted !== null) {
+                $recommendation = $this->resolveRecommendation($costOwnRoute, $costCarrierAdjusted);
             }
 
             $saving = 0.0;
-            if ($costOwnRoute !== null && $costGlsAdjusted !== null) {
-                $saving = round($costOwnRoute - $costGlsAdjusted, 4);
+            if ($costOwnRoute !== null && $costCarrierAdjusted !== null) {
+                $saving = round($costOwnRoute - $costCarrierAdjusted, 4);
                 $summary['total_own_cost'] += $costOwnRoute;
-                $summary['total_gls_cost'] += $costGlsAdjusted;
+                $summary['total_gls_cost'] += $costCarrierAdjusted;
                 if ($saving > 0) {
                     $summary['potential_savings_if_externalized'] += $saving;
                 }
@@ -162,10 +179,10 @@ class RouteCostCalculator
             $this->hojaModel->updateLineaCostData($lineaId, [
                 'detour_km' => $detourKm,
                 'cost_own_route' => $costOwnRoute,
-                'cost_gls_raw' => $costGlsRaw,
-                'cost_gls_adjusted' => $costGlsAdjusted,
+                'cost_gls_raw' => $costCarrierRaw,
+                'cost_gls_adjusted' => $costCarrierAdjusted,
                 'gls_recommendation' => $recommendation,
-                'gls_service' => $glsService ?: null,
+                'gls_service' => $carrierService ?: null,
                 'gls_notes' => $notes ?: null,
             ]);
 
@@ -175,17 +192,17 @@ class RouteCostCalculator
                 'fecha' => $hoja['fecha'],
                 'carros' => $carros,
                 'cajas' => $cajas,
-                'weight_kg' => $weightKg,
+                'weight_kg' => $billableWeightKg,
                 'num_parcels' => $numParcels,
                 'detour_km' => $detourKm ?? 0,
                 'vehicle_cost_per_km' => $vehicleCostPerKm ?? 0,
                 'cost_own_route' => $costOwnRoute ?? 0,
-                'cost_gls_raw' => $costGlsRaw ?? 0,
-                'cost_gls_adjusted' => $costGlsAdjusted ?? 0,
-                'price_multiplier_used' => $multiplier,
+                'cost_gls_raw' => $costCarrierRaw ?? 0,
+                'cost_gls_adjusted' => $costCarrierAdjusted ?? 0,
+                'price_multiplier_used' => 1,
                 'recommendation' => $recommendation,
                 'savings_if_externalized' => $saving,
-                'gls_service' => $glsService,
+                'gls_service' => $carrierService,
                 'notes' => $notes,
             ]);
 

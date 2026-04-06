@@ -45,6 +45,9 @@ class ClientController extends Controller
         $data['y'] = isset($data['y']) && $data['y'] !== '' && $data['y'] !== null ? $data['y'] : null;
 
         $id = $this->client->create($data);
+        if (!empty($data['ruta_ids']) && is_array($data['ruta_ids'])) {
+            $this->client->setRutas($id, $data['ruta_ids']);
+        }
         $created = $this->client->getById($id);
         $this->json($created, 201);
     }
@@ -62,6 +65,9 @@ class ClientController extends Controller
         $data['y'] = isset($data['y']) && $data['y'] !== '' && $data['y'] !== null ? $data['y'] : null;
 
         $this->client->update((int) $id, $data);
+        if (isset($data['ruta_ids']) && is_array($data['ruta_ids'])) {
+            $this->client->setRutas((int) $id, $data['ruta_ids']);
+        }
         $updated = $this->client->getById((int) $id);
         $this->json($updated);
     }
@@ -90,6 +96,18 @@ class ClientController extends Controller
         $data = $this->getInput();
         $this->client->setContado((int) $id, !empty($data['al_contado']));
         $this->json(['ok' => true]);
+    }
+
+    public function duplicate($id)
+    {
+        $newId = $this->client->duplicate((int) $id);
+        if (!$newId) {
+            $this->json(['error' => 'Cliente no encontrado'], 404);
+            return;
+        }
+        $created = $this->client->getById($newId);
+        $created['schedules'] = $this->schedule->getByClient($newId);
+        $this->json($created, 201);
     }
 
     public function destroy($id)

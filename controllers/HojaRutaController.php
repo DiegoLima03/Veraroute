@@ -260,10 +260,23 @@ class HojaRutaController extends Controller
         $hoja = $this->model->getById((int) $id);
         if (!$hoja) $this->json(['error' => 'Hoja no encontrada'], 404);
 
-        $lineas = $hoja['lineas'];
+        $allLineas = $hoja['lineas'];
+        // Solo ordenar líneas con carga (carros o cajas > 0) — las sin carga van al final
+        $lineas = array_values(array_filter($allLineas, fn($l) =>
+            (float) ($l['carros'] ?? 0) > 0 || (float) ($l['cajas'] ?? 0) > 0
+        ));
+        $noCargaLineaIds = array_map(
+            fn($l) => (int) $l['id'],
+            array_filter($allLineas, fn($l) =>
+                (float) ($l['carros'] ?? 0) <= 0 && (float) ($l['cajas'] ?? 0) <= 0
+            )
+        );
+
         if (count($lineas) < 2) {
             if (count($lineas) === 1) {
-                $this->model->reorder((int) $id, [(int) $lineas[0]['id']]);
+                $ordered = [(int) $lineas[0]['id']];
+                $ordered = array_merge($ordered, $noCargaLineaIds);
+                $this->model->reorder((int) $id, $ordered);
             }
             $this->json($this->model->getById((int) $id));
             return;
@@ -328,9 +341,9 @@ class HojaRutaController extends Controller
         // 2-opt improvement usando duraciones reales
         $orderedIndices = $this->twoOptMatrix($orderedIndices, $durations, $depotIdx);
 
-        // Mapear indices de vuelta a linea_ids, clientes sin coordenadas van al final
+        // Mapear indices de vuelta a linea_ids, clientes sin coordenadas y sin carga van al final
         $lineaIds = array_map(fn($idx) => $points[$idx]['linea_id'], $orderedIndices);
-        $lineaIds = array_merge($lineaIds, $noCoordLineaIds);
+        $lineaIds = array_merge($lineaIds, $noCoordLineaIds, $noCargaLineaIds);
         $this->model->reorder((int) $id, $lineaIds);
 
         $this->json($this->model->getById((int) $id));

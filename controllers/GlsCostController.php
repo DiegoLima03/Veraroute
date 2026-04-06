@@ -5,7 +5,6 @@ require_once __DIR__ . '/../core/Auth.php';
 require_once __DIR__ . '/../models/GlsShippingConfig.php';
 require_once __DIR__ . '/../models/ClientCostHistory.php';
 require_once __DIR__ . '/../models/HojaRuta.php';
-require_once __DIR__ . '/../services/GlsApiClient.php';
 require_once __DIR__ . '/../services/RouteCostCalculator.php';
 
 class GlsCostController extends Controller
@@ -13,7 +12,6 @@ class GlsCostController extends Controller
     private GlsShippingConfig $configModel;
     private ClientCostHistory $historyModel;
     private HojaRuta $hojaModel;
-    private GlsApiClient $apiClient;
     private RouteCostCalculator $calculator;
 
     public function __construct()
@@ -21,16 +19,13 @@ class GlsCostController extends Controller
         $this->configModel = new GlsShippingConfig();
         $this->historyModel = new ClientCostHistory();
         $this->hojaModel = new HojaRuta();
-        $this->apiClient = new GlsApiClient();
         $this->calculator = new RouteCostCalculator();
     }
 
     public function getConfig()
     {
         Auth::requireRole('admin');
-        $config = $this->configModel->getConfig();
-        $config['api_password'] = trim((string) ($config['api_password'] ?? '')) !== '' ? '***' : '';
-        $this->json($config);
+        $this->json($this->getConfigPayload());
     }
 
     public function updateConfig()
@@ -39,14 +34,16 @@ class GlsCostController extends Controller
         $data = $this->getInput();
 
         $errors = [];
-        $multiplier = isset($data['price_multiplier']) ? (float) $data['price_multiplier'] : 1;
-        if ($multiplier < 0.1 || $multiplier > 2.0) {
-            $errors[] = 'El multiplicador debe estar entre 0.1 y 2.0.';
-        }
-
-        foreach (['default_weight_per_carro_kg', 'default_weight_per_caja_kg'] as $field) {
+        foreach ([
+            'default_weight_per_carro_kg',
+            'default_weight_per_caja_kg',
+            'default_parcels_per_carro',
+            'default_parcels_per_caja',
+            'default_volume_per_carro_cm3',
+            'default_volume_per_caja_cm3',
+        ] as $field) {
             if (isset($data[$field]) && (float) $data[$field] < 0) {
-                $errors[] = 'Los pesos por defecto no pueden ser negativos.';
+                $errors[] = 'Las variables de calculo no pueden ser negativas.';
             }
         }
 
@@ -58,44 +55,15 @@ class GlsCostController extends Controller
             $this->json(['error' => implode(' ', $errors)], 400);
         }
 
-        if (($data['api_password'] ?? '') === '***') {
-            unset($data['api_password']);
-        }
-
         if (isset($data['origin_country'])) {
             $data['origin_country'] = strtoupper(trim((string) $data['origin_country']));
         }
-        if (isset($data['api_env'])) {
-            $data['api_env'] = in_array($data['api_env'], ['test', 'production'], true) ? $data['api_env'] : 'test';
+        if (isset($data['use_volumetric_weight'])) {
+            $data['use_volumetric_weight'] = !empty($data['use_volumetric_weight']) ? 1 : 0;
         }
 
         $this->configModel->updateConfig($data);
-        $config = $this->configModel->getConfig();
-        $config['api_password'] = trim((string) ($config['api_password'] ?? '')) !== '' ? '***' : '';
-        $this->json($config);
-    }
-
-    public function testConnection()
-    {
-        Auth::requireRole('admin');
-        $result = $this->apiClient->testConnection();
-        $message = $result['success']
-            ? sprintf(
-                'Conexion OK. Precio de prueba: %.2f %s (%s)',
-                (float) ($result['price_raw'] ?? 0),
-                $result['currency'] ?? 'EUR',
-                $result['service'] ?? 'GLS'
-            )
-            : ($result['error'] ?? 'No se pudo conectar con GLS.');
-
-        $this->json([
-            'success' => (bool) $result['success'],
-            'message' => $message,
-            'price_raw' => (float) ($result['price_raw'] ?? 0),
-            'currency' => $result['currency'] ?? 'EUR',
-            'service' => $result['service'] ?? '',
-            'response_time_ms' => (int) ($result['response_time_ms'] ?? 0),
-        ], $result['success'] ? 200 : 400);
+        $this->json($this->getConfigPayload());
     }
 
     public function calculateForHoja()
@@ -213,5 +181,21 @@ class GlsCostController extends Controller
             'results' => $results,
             'totals' => $totals,
         ]);
+    }
+
+    private function getConfigPayload(): array
+    {
+        $config = $this->configModel->getConfig();
+        return [
+            'origin_postcode' => $config['origin_postcode'] ?? '',
+            'origin_country' => $config['origin_country'] ?? 'ES',
+            'default_weight_per_carro_kg' => $config['default_weight_per_carro_kg'] ?? '5.00',
+            'default_weight_per_caja_kg' => $config['default_weight_per_caja_kg'] ?? '2.50',
+            'default_parcels_per_carro' => $config['default_parcels_per_carro'] ?? '1.00',
+            'default_parcels_per_caja' => $config['default_parcels_per_caja'] ?? '1.00',
+            'default_volume_per_carro_cm3' => $config['default_volume_per_carro_cm3'] ?? '0.00',
+            'default_volume_per_caja_cm3' => $config['default_volume_per_caja_cm3'] ?? '0.00',
+            'use_volumetric_weight' => !empty($config['use_volumetric_weight']) ? 1 : 0,
+        ];
     }
 }

@@ -481,6 +481,89 @@ class HojaRuta extends Model
         return $this->query("SELECT id, code, name FROM comerciales ORDER BY name")->fetchAll();
     }
 
+    /**
+     * Genera hojas de ruta desde pedidos confirmados de una fecha.
+     * Crea una hoja por ruta y vincula cada linea al order_id de origen.
+     * No duplica lineas si ya existen para ese order_id en la hoja.
+     */
+    public function generateFromOrders(string $fecha, array $rutasConPedidos): array
+    {
+        $created = [];
+        $linesAdded = 0;
+        $skipped = 0;
+
+        foreach ($rutasConPedidos as $rutaData) {
+            $rutaId = (int) $rutaData['ruta_id'];
+            $pedidos = $rutaData['pedidos'] ?? [];
+            if (empty($pedidos)) continue;
+
+            // Crear o reutilizar hoja para esta ruta+fecha
+            $hojaId = $this->create([
+                'ruta_id' => $rutaId,
+                'fecha'   => $fecha,
+            ]);
+
+            // Obtener order_ids ya vinculados en esta hoja para evitar duplicados
+            $existingOrderIds = [];
+            $rows = $this->query(
+                "SELECT order_id FROM hoja_ruta_lineas WHERE hoja_ruta_id = ? AND order_id IS NOT NULL",
+                [$hojaId]
+            )->fetchAll();
+            foreach ($rows as $r) {
+                $existingOrderIds[(int) $r['order_id']] = true;
+            }
+
+            // Tambien obtener client_ids existentes para evitar duplicados sin order_id
+            $existingClientIds = [];
+            $rows2 = $this->query(
+                "SELECT client_id FROM hoja_ruta_lineas WHERE hoja_ruta_id = ?",
+                [$hojaId]
+            )->fetchAll();
+            foreach ($rows2 as $r) {
+                $existingClientIds[(int) $r['client_id']] = true;
+            }
+
+            $hojaLinesAdded = 0;
+            foreach ($pedidos as $p) {
+                $orderId = (int) $p['order_id'];
+                $clientId = (int) $p['client_id'];
+
+                // Skip si ya existe este pedido o este cliente en la hoja
+                if (isset($existingOrderIds[$orderId]) || isset($existingClientIds[$clientId])) {
+                    $skipped++;
+                    continue;
+                }
+
+                $this->addLinea($hojaId, [
+                    'order_id'      => $orderId,
+                    'client_id'     => $clientId,
+                    'comercial_id'  => $p['comercial_id'] ?? null,
+                    'carros'        => 0,
+                    'cajas'         => $p['cc_aprox'] ?? 0,
+                    'cc_aprox'      => $p['cc_aprox'] ?? 0,
+                    'observaciones' => $p['observaciones'] ?? null,
+                ]);
+                $hojaLinesAdded++;
+                $linesAdded++;
+            }
+
+            $hoja = $this->getById($hojaId);
+            $created[] = [
+                'hoja_id'     => $hojaId,
+                'ruta_id'     => $rutaId,
+                'ruta_name'   => $rutaData['ruta_name'] ?? '',
+                'lines_added' => $hojaLinesAdded,
+                'total_lines' => count($hoja['lineas'] ?? []),
+            ];
+        }
+
+        return [
+            'hojas_created'  => $created,
+            'total_lines'    => $linesAdded,
+            'total_skipped'  => $skipped,
+        ];
+    }
+
     public function getCostLines(int $hojaId): array
     {
         return $this->query(

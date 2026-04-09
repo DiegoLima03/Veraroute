@@ -349,6 +349,36 @@ class HojaRutaController extends Controller
         $this->json($this->model->getById((int) $id));
     }
 
+    /* POST /api/hojas-ruta/generar-desde-pedidos */
+    public function generateFromOrders()
+    {
+        if (Auth::isComercial()) {
+            $this->json(['error' => 'Solo logistica/admin puede generar hojas'], 403);
+            return;
+        }
+
+        $data = $this->getInput();
+        $fecha = $data['fecha'] ?? date('Y-m-d');
+
+        require_once __DIR__ . '/../models/Order.php';
+        $orderModel = new Order();
+        $grouped = $orderModel->getConfirmedByDateGroupedByRuta($fecha);
+
+        if (empty($grouped['rutas'])) {
+            $this->json([
+                'error'   => 'No hay pedidos confirmados para ' . $fecha,
+                'alertas' => $grouped['alertas'],
+            ], 400);
+            return;
+        }
+
+        $result = $this->model->generateFromOrders($fecha, $grouped['rutas']);
+        $result['alertas'] = $grouped['alertas'];
+        $result['sin_ruta'] = $grouped['sin_ruta'];
+
+        $this->json($result, 201);
+    }
+
     /* POST /api/hojas-ruta/{id}/duplicar */
     public function duplicate($id)
     {

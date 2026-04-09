@@ -59,6 +59,7 @@ let hrQuickSaveTimers = {};
 let lineaSelectedClients = new Set();
 let hrMapMarkers = [];
 let hrMapLine = null;
+let hrAutoOrderFocusMode = false;
 let hrGlsAutoCalcTimer = null;
 let hrGlsAutoCalcRunning = false;
 let glsConfigState = null;
@@ -126,6 +127,10 @@ function hasLineaCostData(linea) {
 
 function getHojaActiveLineas(hoja) {
   return (hoja?.lineas || []).filter(hojaLineaHasCarga);
+}
+
+function getHojaVisibleLineas(hoja, isComercialView) {
+  return isComercialView ? (hoja?.lineas || []) : getHojaActiveLineas(hoja);
 }
 
 function getHojaSummaryLineCount(hoja) {
@@ -263,10 +268,9 @@ function renderComercialQuickSearchResults() {
       </div>
       <div class="hr-card-bottom" style="justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
         <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
-          <input type="number" id="hrQuickCarros-${client.id}" value="${numVal(linea?.carros) > 0 ? formatQty(linea.carros) : ''}" min="0" step="1" placeholder="Carros" oninput="queueQuickHojaLineSave(${client.id})" style="width:96px;text-align:right;padding:6px 8px;font-size:11px;border-radius:6px">
-          <input type="number" id="hrQuickCajas-${client.id}" value="${numVal(linea?.cajas) > 0 ? formatQty(linea.cajas) : ''}" min="0" step="1" placeholder="Cajas" oninput="queueQuickHojaLineSave(${client.id})" style="width:96px;text-align:right;padding:6px 8px;font-size:11px;border-radius:6px">
+          <input type="number" id="hrQuickCarros-${client.id}" value="${numVal(linea?.carros) > 0 ? formatQty(linea.carros) : ''}" min="0" step="1" placeholder="Carros" oninput="queueQuickHojaLineSave(${client.id})" style="width:96px;text-align:right;padding:6px 8px;font-size:12px;border-radius:8px" inputmode="numeric">
+          <input type="number" id="hrQuickCajas-${client.id}" value="${numVal(linea?.cajas) > 0 ? formatQty(linea.cajas) : ''}" min="0" step="1" placeholder="Cajas" oninput="queueQuickHojaLineSave(${client.id})" style="width:96px;text-align:right;padding:6px 8px;font-size:12px;border-radius:8px" inputmode="numeric">
         </div>
-        
       </div>
     </div>`;
   });
@@ -636,6 +640,15 @@ function fitMapToMarkers() {
   map.fitBounds(bounds, { padding: [40, 40] });
 }
 
+function clearGeneralMapLayers() {
+  mapMarkers.forEach(m => map.removeLayer(m));
+  mapMarkers = [];
+  routeLines.forEach(l => map.removeLayer(l));
+  routeLines = [];
+  if (mapRouteLine) { map.removeLayer(mapRouteLine); mapRouteLine = null; }
+  if (mapPreviewMarker) { map.removeLayer(mapPreviewMarker); mapPreviewMarker = null; }
+}
+
 // ── DATA LOADING ──────────────────────────────────────────
 async function loadClients() {
   try {
@@ -917,7 +930,7 @@ async function deleteFromModal() {
   const id = parseInt(document.getElementById('cId').value);
   if (!id) return;
   const c = clients.find(x => x.id === id);
-  if (!confirm('¿Eliminar el cliente "' + (c?.name || id) + '"? Esta acción no se puede deshacer.')) return;
+  if (!await appConfirm('¿Eliminar el cliente <b>' + esc(c?.name || id) + '</b>?<br><span style="font-size:11px;color:var(--text-dim)">Esta accion no se puede deshacer.</span>', { title: 'Eliminar cliente', okText: 'Eliminar' })) return;
   try {
     await api('clients/' + id, 'DELETE');
     showToast('Cliente eliminado');
@@ -1049,7 +1062,7 @@ async function saveClient() {
 }
 
 async function deleteClient(id) {
-  if (!confirm('Eliminar cliente? Se borraran tambien sus pedidos.')) return;
+  if (!await appConfirm('Eliminar cliente?<br><span style="font-size:11px;color:var(--text-dim)">Se borraran tambien sus pedidos.</span>', { title: 'Eliminar cliente', okText: 'Eliminar' })) return;
   try {
     await api('clients/' + id, 'DELETE');
     currentRoute = null;
@@ -2245,7 +2258,7 @@ async function saveShippingRate() {
 async function deleteShippingRate(rateId = null) {
   const id = rateId || document.getElementById('shippingRateId').value;
   if (!id) return;
-  if (!confirm('Eliminar esta tarifa?')) return;
+  if (!await appConfirm('¿Eliminar esta tarifa?', { title: 'Eliminar tarifa', okText: 'Eliminar' })) return;
 
   try {
     await api('shipping-rates/' + id, 'DELETE');
@@ -2335,7 +2348,7 @@ async function applyTemplate(templateId) {
 }
 
 async function deleteTemplate(id) {
-  if (!confirm('Eliminar plantilla?')) return;
+  if (!await appConfirm('¿Eliminar esta plantilla?', { title: 'Eliminar plantilla', okText: 'Eliminar' })) return;
   await api('templates/' + id, 'DELETE');
   loadTemplates();
 }
@@ -2665,7 +2678,12 @@ function hrDateNav(delta) {
   document.getElementById('hrDate').value = d.toISOString().slice(0, 10);
   onHrDateChange();
 }
-async function onHrDateChange() { await loadHojasRuta(); }
+async function onHrDateChange() {
+  await loadHojasRuta();
+  if (typeof APP_USER !== 'undefined' && APP_USER.role === 'comercial') {
+    await loadComercialPedidos();
+  }
+}
 
 async function loadComerciales() {
   if (comerciales.length) return;
@@ -2679,6 +2697,7 @@ async function loadHojasRuta() {
   } catch (e) { hojasData = { hojas: [], rutas_sin_hoja: [] }; }
   renderHojasList();
   updateHojasRutaBadge();
+  loadPedidosResumen();
 }
 
 function updateHojasRutaBadge() {
@@ -2710,6 +2729,141 @@ function updateHojasRutaBadge() {
   ];
   if (otherCount > 0) titleParts.push(`Otras: ${otherCount}`);
   badge.title = titleParts.join(' · ');
+}
+
+// ── Panel logistica: resumen pedidos del dia ──
+let hrPedidosResumen = null;
+
+async function loadPedidosResumen() {
+  const isComercial = typeof APP_USER !== 'undefined' && APP_USER.role === 'comercial';
+  const panel = document.getElementById('hrPedidosPanel');
+  if (isComercial || !panel) return;
+
+  const fecha = getHrDate();
+  try {
+    hrPedidosResumen = await api('orders/resumen-por-ruta?date=' + fecha);
+  } catch (e) {
+    hrPedidosResumen = null;
+    panel.style.display = 'none';
+    return;
+  }
+
+  renderPedidosPanel();
+}
+
+function renderPedidosPanel() {
+  const panel = document.getElementById('hrPedidosPanel');
+  if (!panel || !hrPedidosResumen) { if (panel) panel.style.display = 'none'; return; }
+
+  const { resumen_estado, rutas, sin_ruta, alertas, total_pedidos } = hrPedidosResumen;
+  const totalConfirmados = resumen_estado.confirmado || 0;
+  const totalPendientes = resumen_estado.pendiente || 0;
+  const totalAnulados = resumen_estado.anulado || 0;
+
+  // Si no hay pedidos de ningun tipo, no mostrar el panel
+  if (!totalConfirmados && !totalPendientes && !totalAnulados) {
+    panel.style.display = 'none';
+    document.getElementById('btnGenerarDesde').style.display = 'none';
+    return;
+  }
+
+  panel.style.display = 'block';
+  document.getElementById('btnGenerarDesde').style.display = totalConfirmados > 0 ? '' : 'none';
+
+  let html = '<div style="padding:8px 10px;background:var(--accent-soft);border:1px solid rgba(142,139,48,0.25);border-radius:8px;margin:8px 0 4px;font-size:11px">';
+  html += '<div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center;margin-bottom:6px">';
+  html += '<b style="color:var(--accent)">Pedidos del dia</b>';
+  if (totalConfirmados) html += `<span style="color:#2d7d2d"><b>${totalConfirmados}</b> confirmados</span>`;
+  if (totalPendientes) html += `<span style="color:var(--accent2)"><b>${totalPendientes}</b> pendientes</span>`;
+  if (totalAnulados) html += `<span style="color:var(--text-dim)"><b>${totalAnulados}</b> anulados</span>`;
+  html += '</div>';
+
+  // Resumen por ruta
+  if (rutas.length) {
+    html += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:4px">';
+    rutas.forEach(r => {
+      const n = r.pedidos.length;
+      // Comprobar si ya existe hoja para esta ruta
+      const hojaExiste = hojasData.hojas.some(h => parseInt(h.ruta_id) === r.ruta_id);
+      const badge = hojaExiste
+        ? '<span style="color:#2d7d2d;font-size:9px" title="Hoja ya generada"> ✓</span>'
+        : '<span style="color:var(--accent2);font-size:9px" title="Hoja sin generar"> ○</span>';
+      html += `<span style="padding:2px 8px;background:var(--surface);border:1px solid var(--border);border-radius:4px">${esc(r.ruta_name)} <b>${n}</b>${badge}</span>`;
+    });
+    html += '</div>';
+  }
+
+  // Alertas
+  const alertasTipos = {};
+  (alertas || []).forEach(a => {
+    alertasTipos[a.tipo] = (alertasTipos[a.tipo] || 0) + 1;
+  });
+
+  const alertaLines = [];
+  if (alertasTipos.sin_ruta) alertaLines.push(`${alertasTipos.sin_ruta} pedidos de clientes sin ruta asignada`);
+  if (alertasTipos.sin_coordenadas) alertaLines.push(`${alertasTipos.sin_coordenadas} clientes sin coordenadas`);
+  if (alertasTipos.sin_cp) alertaLines.push(`${alertasTipos.sin_cp} clientes sin codigo postal`);
+
+  if (alertaLines.length || sin_ruta.length) {
+    html += '<div style="margin-top:4px;padding:4px 8px;background:rgba(212,168,48,0.12);border:1px solid rgba(212,168,48,0.3);border-radius:4px;font-size:10px;color:#8a6d10">';
+    alertaLines.forEach(l => { html += `<div>⚠ ${l}</div>`; });
+    if (sin_ruta.length) {
+      html += '<div style="margin-top:2px;font-size:9px;color:var(--text-dim)">Sin ruta: ';
+      html += sin_ruta.map(p => esc(p.client_name)).join(', ');
+      html += '</div>';
+    }
+    html += '</div>';
+  }
+
+  html += '</div>';
+  panel.innerHTML = html;
+}
+
+async function generarHojasFromPedidos() {
+  const fecha = getHrDate();
+
+  // Primero cargar resumen si no esta cargado
+  if (!hrPedidosResumen) {
+    await loadPedidosResumen();
+  }
+
+  const confirmados = hrPedidosResumen?.resumen_estado?.confirmado || 0;
+  if (!confirmados) {
+    showToast('No hay pedidos confirmados para ' + fecha);
+    return;
+  }
+
+  const numRutas = hrPedidosResumen?.rutas?.length || 0;
+  if (!await appConfirm(`Generar hojas para <b>${fecha}</b>?<br><br><b>${confirmados}</b> pedidos confirmados en <b>${numRutas}</b> rutas.<br><span style="font-size:11px;color:var(--text-dim)">Se crearan las hojas que no existan y se anadiran las lineas de pedido.</span>`, { title: 'Generar hojas', okText: 'Generar', danger: false })) {
+    return;
+  }
+
+  const btn = document.getElementById('btnGenerarDesde');
+  const origText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Generando...';
+
+  try {
+    const result = await api('hojas-ruta/generar-desde-pedidos', 'POST', { fecha });
+
+    let msg = `Generadas ${result.hojas_created.length} hojas con ${result.total_lines} lineas`;
+    if (result.total_skipped) msg += ` (${result.total_skipped} ya existian)`;
+
+    // Mostrar alertas si las hay
+    if (result.alertas?.length) {
+      const sinRutaCount = result.alertas.filter(a => a.tipo === 'sin_ruta').length;
+      if (sinRutaCount) msg += `\n⚠ ${sinRutaCount} pedidos sin ruta (no se incluyeron)`;
+    }
+
+    showToast(msg);
+    await loadHojasRuta();
+    await loadPedidosResumen();
+  } catch (e) {
+    showToast('Error: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = origText;
+  }
 }
 
 function renderHojasList() {
@@ -2852,6 +3006,7 @@ async function openHojaDetail(id) {
     currentHoja = await api('hojas-ruta/' + id);
   } catch (e) { return showToast('Error: ' + e.message); }
 
+  hrAutoOrderFocusMode = false;
   hrClientSearchQuery = '';
   if (hrClientSearchTimer) {
     clearTimeout(hrClientSearchTimer);
@@ -2881,6 +3036,7 @@ async function openHojaDetail(id) {
 
 function closeHojaDetail() {
   currentHoja = null;
+  hrAutoOrderFocusMode = false;
   hrClientSearchQuery = '';
   if (hrClientSearchTimer) {
     clearTimeout(hrClientSearchTimer);
@@ -2908,7 +3064,7 @@ function setHojaClientSearch(value) {
 }
 
 function getFilteredHojaLineas(hoja, isComercialView) {
-  const allLineas = hoja?.lineas || [];
+  const allLineas = getHojaVisibleLineas(hoja, isComercialView);
   const query = (hrClientSearchQuery || '').trim().toLowerCase();
   if (!isComercialView || !query) return allLineas;
 
@@ -3065,7 +3221,7 @@ function renderHojaDetailLegacy() {
     vehicleSel.innerHTML = options.join('');
     vehicleSel.value = h.vehicle_id ? String(h.vehicle_id) : '';
   }
-  const allLineas = h.lineas || [];
+  const allLineas = getHojaVisibleLineas(h, isComercialView);
   const query = (hrClientSearchQuery || '').trim();
   const lineas = getFilteredHojaLineas({ ...h, lineas: allLineas }, isComercialView);
   document.getElementById('hrTotalClientes').textContent = allLineas.length;
@@ -3081,7 +3237,7 @@ function renderHojaDetailLegacy() {
   if (!lineas.length) {
     el.innerHTML = isComercialView
       ? '<div class="empty"><div class="empty-icon">📋</div>No hay clientes asociados a esta ruta para tus comerciales.</div>'
-      : '<div class="empty"><div class="empty-icon">📋</div>Sin clientes. Pulsa "+ Cliente" para añadir.</div>';
+      : '<div class="empty"><div class="empty-icon">📋</div>Solo se muestran clientes con pedido o carga para esta fecha.</div>';
     return;
   }
 
@@ -3144,7 +3300,11 @@ function renderHojaDetailLegacy() {
     animation: 150,
     ghostClass: 'sortable-ghost',
     onEnd: async function () {
-      const ids = Array.from(el.querySelectorAll('.hr-linea')).map(e => parseInt(e.dataset.id));
+      const visibleIds = Array.from(el.querySelectorAll('.hr-linea')).map(e => parseInt(e.dataset.id, 10));
+      const hiddenIds = (currentHoja?.lineas || [])
+        .map(l => parseInt(l.id, 10))
+        .filter(id => !visibleIds.includes(id));
+      const ids = visibleIds.concat(hiddenIds);
       try {
         currentHoja = await api('hojas-ruta/' + currentHoja.id + '/reordenar', 'PUT', { linea_ids: ids });
         renderHojaDetail();
@@ -3191,7 +3351,7 @@ function renderHojaDetail() {
   renderHojaGlsSummary(h, isComercialView);
   renderHojaVehicleSearch();
 
-  const allLineas = h.lineas || [];
+  const allLineas = getHojaVisibleLineas(h, isComercialView);
   const query = (hrClientSearchQuery || '').trim();
   const lineas = getFilteredHojaLineas({ ...h, lineas: allLineas }, isComercialView);
   document.getElementById('hrTotalClientes').textContent = allLineas.length;
@@ -3207,7 +3367,7 @@ function renderHojaDetail() {
   if (!lineas.length) {
     el.innerHTML = isComercialView
       ? '<div class="empty"><div class="empty-icon">&#128203;</div>No hay clientes asociados a esta ruta para tus comerciales.</div>'
-      : '<div class="empty"><div class="empty-icon">&#128203;</div>Sin clientes. Pulsa "+ Cliente" para anadir.</div>';
+      : '<div class="empty"><div class="empty-icon">&#128203;</div>Solo se muestran clientes con pedido o carga para esta fecha.</div>';
     return;
   }
 
@@ -3222,8 +3382,8 @@ function renderHojaDetail() {
     const handleHtml = isComercialView ? '' : '<span class="hr-linea-handle" data-sortable-handle>&#9776;</span>';
     const cantidadHtml = isComercialView
       ? `<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
-          <input type="number" value="${numVal(l.carros) > 0 ? formatQty(l.carros) : ''}" min="0" step="1" placeholder="Carros" onclick="event.stopPropagation()" onchange="updateHojaLineaCantidad(${l.id}, 'carros', this.value)" style="width:88px;text-align:right;padding:4px 6px;font-size:11px;border-radius:6px">
-          <input type="number" value="${numVal(l.cajas) > 0 ? formatQty(l.cajas) : ''}" min="0" step="1" placeholder="Cajas" onclick="event.stopPropagation()" onchange="updateHojaLineaCantidad(${l.id}, 'cajas', this.value)" style="width:88px;text-align:right;padding:4px 6px;font-size:11px;border-radius:6px">
+          <input type="number" value="${numVal(l.carros) > 0 ? formatQty(l.carros) : ''}" min="0" step="1" placeholder="Carros" onclick="event.stopPropagation()" onchange="updateHojaLineaCantidad(${l.id}, 'carros', this.value)" style="width:88px;text-align:right;padding:6px 8px;font-size:13px;border-radius:8px">
+          <input type="number" value="${numVal(l.cajas) > 0 ? formatQty(l.cajas) : ''}" min="0" step="1" placeholder="Cajas" onclick="event.stopPropagation()" onchange="updateHojaLineaCantidad(${l.id}, 'cajas', this.value)" style="width:88px;text-align:right;padding:6px 8px;font-size:13px;border-radius:8px">
         </div>`
       : `<span class="hr-linea-cc"${hojaLineaHasCarga(l) ? '' : ' style="color:var(--text-dim)"'}>${esc(hojaLineaHasCarga(l) ? formatLineaUnits(l) : 'Sin carga')}</span>`;
     const meta = glsRecommendationMeta(l.gls_recommendation);
@@ -3268,7 +3428,11 @@ function renderHojaDetail() {
     animation: 150,
     ghostClass: 'sortable-ghost',
     onEnd: async function () {
-      const ids = Array.from(el.querySelectorAll('.hr-linea')).map(e => parseInt(e.dataset.id, 10));
+      const visibleIds = Array.from(el.querySelectorAll('.hr-linea')).map(e => parseInt(e.dataset.id, 10));
+      const hiddenIds = (currentHoja?.lineas || [])
+        .map(l => parseInt(l.id, 10))
+        .filter(id => !visibleIds.includes(id));
+      const ids = visibleIds.concat(hiddenIds);
       try {
         currentHoja = await api('hojas-ruta/' + currentHoja.id + '/reordenar', 'PUT', { linea_ids: ids });
         renderHojaDetail();
@@ -3481,6 +3645,7 @@ async function autoOrdenarHoja() {
   try {
     showToast('Ordenando...');
     currentHoja = await api('hojas-ruta/' + currentHoja.id + '/auto-ordenar', 'POST');
+    hrAutoOrderFocusMode = true;
     renderHojaDetail();
 
     // Obtener ruta real OSRM
@@ -3785,7 +3950,7 @@ async function saveEditLinea() {
 async function removeLineaFromModal() {
   const lineaId = document.getElementById('hrEditLineaId').value;
   if (!lineaId || !currentHoja) return;
-  if (!confirm('Quitar este cliente de la hoja?')) return;
+  if (!await appConfirm('¿Quitar este cliente de la hoja?', { title: 'Quitar cliente', okText: 'Quitar' })) return;
   try {
     currentHoja = await api('hojas-ruta/' + currentHoja.id + '/lineas/' + lineaId, 'DELETE');
     closeEditLineaModal();
@@ -3857,6 +4022,10 @@ function drawHojaOnMap() {
   if (hrMapLine) { map.removeLayer(hrMapLine); hrMapLine = null; }
 
   if (!currentHoja) { drawMap(); return; }
+
+  if (hrAutoOrderFocusMode) {
+    clearGeneralMapLayers();
+  }
 
   const lineas = getHojaActiveLineas(currentHoja);
   if (!lineas.length) return;
@@ -4125,6 +4294,32 @@ function showToast(msg) {
   setTimeout(() => t.classList.remove('show'), 2800);
 }
 
+// ── MODAL DE CONFIRMACION (reemplaza confirm() nativo) ──
+let _confirmResolve = null;
+
+function appConfirm(message, opts = {}) {
+  return new Promise(resolve => {
+    _confirmResolve = resolve;
+    const modal = document.getElementById('confirmModal');
+    document.getElementById('confirmTitle').textContent = opts.title || 'Confirmar';
+    document.getElementById('confirmMsg').innerHTML = message;
+    const okBtn = document.getElementById('confirmOkBtn');
+    okBtn.textContent = opts.okText || 'Confirmar';
+    okBtn.className = 'btn ' + (opts.danger !== false ? 'btn-danger' : 'btn-primary');
+    document.getElementById('confirmCancelBtn').textContent = opts.cancelText || 'Cancelar';
+    modal.classList.add('open');
+    okBtn.focus();
+  });
+}
+
+function closeConfirmModal(result) {
+  document.getElementById('confirmModal').classList.remove('open');
+  if (_confirmResolve) {
+    _confirmResolve(result);
+    _confirmResolve = null;
+  }
+}
+
 // ── GESTIÓN DE USUARIOS ──────────────────────────────────
 let appUsers = [];
 let allComerciales = [];
@@ -4250,7 +4445,7 @@ async function saveUser() {
 
 async function deleteUser() {
   const id = document.getElementById('uId').value;
-  if (!id || !confirm('¿Eliminar este usuario?')) return;
+  if (!id || !await appConfirm('¿Eliminar este usuario?', { title: 'Eliminar usuario', okText: 'Eliminar' })) return;
   try {
     await api('users/' + id, 'DELETE');
     showToast('Usuario eliminado');
@@ -4279,6 +4474,8 @@ window.addEventListener('DOMContentLoaded', async () => {
     await loadRutas();
     await loadVehicles();
     await loadHojasRuta();
+    await loadComercialPedidos();
+    comQoFilterClients('');
   } else {
     const today = todayStr();
     document.getElementById('hTo').value = today;
@@ -4618,7 +4815,7 @@ async function saveShippingCarrier() {
 
 async function deleteShippingCarrier() {
   const id = document.getElementById('shippingCarrierId').value;
-  if (!id || !confirm('Eliminar este transportista y todo su catalogo?')) return;
+  if (!id || !await appConfirm('¿Eliminar este transportista y todo su catalogo?', { title: 'Eliminar transportista', okText: 'Eliminar' })) return;
   try {
     await api('shipping-rates/' + id + '?entity_type=carrier', 'DELETE');
     await loadShippingCatalog();
@@ -4673,7 +4870,7 @@ async function saveShippingZone() {
 
 async function deleteShippingZone() {
   const id = document.getElementById('shippingZoneId').value;
-  if (!id || !confirm('Eliminar esta zona?')) return;
+  if (!id || !await appConfirm('¿Eliminar esta zona?', { title: 'Eliminar zona', okText: 'Eliminar' })) return;
   try {
     await api('shipping-rates/' + id + '?entity_type=zone', 'DELETE');
     await loadShippingCatalog();
@@ -4734,7 +4931,7 @@ async function saveShippingRateBand() {
 
 async function deleteShippingRateBand() {
   const id = document.getElementById('shippingRateBandId').value;
-  if (!id || !confirm('Eliminar esta tarifa?')) return;
+  if (!id || !await appConfirm('¿Eliminar esta tarifa?', { title: 'Eliminar tarifa', okText: 'Eliminar' })) return;
   try {
     await api('shipping-rates/' + id + '?entity_type=rate', 'DELETE');
     await loadShippingCatalog();
@@ -4791,7 +4988,7 @@ async function saveShippingSurcharge() {
 
 async function deleteShippingSurcharge() {
   const id = document.getElementById('shippingSurchargeId').value;
-  if (!id || !confirm('Eliminar este recargo?')) return;
+  if (!id || !await appConfirm('¿Eliminar este recargo?', { title: 'Eliminar recargo', okText: 'Eliminar' })) return;
   try {
     await api('shipping-rates/' + id + '?entity_type=surcharge', 'DELETE');
     await loadShippingCatalog();

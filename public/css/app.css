@@ -313,6 +313,65 @@ textarea { resize: none; height: 54px; }
 .history-table th, .history-table td { padding: 6px 8px; border-bottom: 1px solid rgba(133,114,94,0.2); font-size: 11px; text-align: left; }
 .history-table th { background: var(--surface2); color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.8px; font-size: 9px; }
 
+/* ═══ VISTA COMERCIAL (mobile-first) ═══ */
+.comercial-main { grid-template-columns: 1fr; }
+.comercial-panel { max-width: 100%; width: 100%; }
+.comercial-tabs { position: sticky; top: 0; z-index: 5; }
+.comercial-tabs .tab { padding: 12px 8px; font-size: 10px; }
+.comercial-date-bar { justify-content: center; padding-top: 14px; padding-bottom: 12px; }
+.comercial-date-stack { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.comercial-date-nav { display: flex; align-items: center; justify-content: center; gap: 6px; }
+.comercial-date-today { min-width: 42px; }
+.comercial-date-bar input[type="date"] { max-width: 160px; text-align: center; font-size: 13px; padding: 6px 8px; }
+.comercial-view { display: flex; flex-direction: column; flex: 1; overflow: hidden; }
+
+/* Resumen del dia */
+.comercial-summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; padding: 10px 14px; background: var(--surface); border-bottom: 1px solid var(--border); }
+.comercial-summary-card { background: var(--surface2); border: 1px solid var(--border); border-radius: 10px; padding: 10px 8px; text-align: center; }
+.comercial-summary-val { font-size: 22px; font-weight: 800; color: var(--accent); }
+.comercial-summary-label { font-size: 9px; text-transform: uppercase; letter-spacing: 1px; color: var(--text-dim); margin-top: 2px; }
+
+/* Pedido card en lista del comercial */
+.com-pedido-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; margin-bottom: 8px; box-shadow: 0 2px 6px rgba(16,24,14,0.06); position: relative; overflow: hidden; }
+.com-pedido-card::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--accent); }
+.com-pedido-card.anulado { opacity: 0.55; }
+.com-pedido-card.anulado::before { background: var(--danger); }
+.com-pedido-card-top { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 6px; }
+.com-pedido-card-name { font-weight: 700; font-size: 14px; flex: 1; min-width: 0; word-break: break-word; }
+.com-pedido-card-estado { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; flex-shrink: 0; }
+.com-pedido-estado-pendiente { background: rgba(212,168,48,0.15); color: var(--accent2); border: 1px solid rgba(212,168,48,0.3); }
+.com-pedido-estado-confirmado { background: var(--accent-soft); color: var(--accent); border: 1px solid rgba(142,139,48,0.3); }
+.com-pedido-estado-anulado { background: rgba(200,60,50,0.1); color: var(--danger); border: 1px solid rgba(200,60,50,0.3); }
+.com-pedido-card-addr { font-size: 11px; color: var(--text-dim); margin-bottom: 6px; padding-left: 2px; }
+.com-pedido-card-items { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
+.com-pedido-card-items .pill { font-size: 11px; padding: 3px 9px; }
+.com-pedido-card-obs { font-size: 11px; color: var(--text-dim); font-style: italic; margin-bottom: 6px; padding-left: 2px; }
+.com-pedido-card-actions { display: flex; gap: 6px; justify-content: flex-end; }
+
+/* Quick order form */
+.comercial-quick-order { padding: 14px; overflow-y: auto; flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.comercial-qo-section { margin-bottom: 16px; }
+.comercial-qo-section-fill { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.comercial-qo-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 2px; color: var(--text-dim); margin-bottom: 8px; }
+.comercial-qo-client-list { flex: 1; min-height: 0; margin-top: 8px; overflow-y: auto; border: 1px solid var(--border); border-radius: 10px; background: var(--surface2); }
+.comercial-qo-client-item { padding: 12px 14px; border-bottom: 1px solid var(--border); cursor: pointer; transition: background .12s; }
+.comercial-qo-client-item:last-child { border-bottom: none; }
+.comercial-qo-client-item:hover, .comercial-qo-client-item:active { background: var(--accent-soft); }
+.comercial-qo-client-item-name { font-weight: 700; font-size: 13px; }
+.comercial-qo-client-item-addr { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
+.comercial-qo-client-item-ruta { display: inline-flex; align-items: center; width: fit-content; font-size: 10px; color: var(--accent); font-weight: 700; margin-top: 6px; padding: 3px 9px; border-radius: 999px; border: 1px solid rgba(142,139,48,0.3); background: var(--accent-soft); }
+.comercial-qo-selected { display: flex; align-items: center; gap: 10px; padding: 12px 14px; background: var(--accent-soft); border: 1px solid rgba(142,139,48,0.3); border-radius: 10px; }
+.comercial-qo-selected-name { font-weight: 700; font-size: 14px; flex: 1; }
+.comercial-qo-selected-addr { font-size: 11px; color: var(--text-dim); flex: 1; }
+.comercial-qo-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.comercial-qo-field label { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: var(--text-dim); margin-bottom: 4px; display: block; }
+.comercial-qo-field input, .comercial-qo-field textarea { font-size: 14px; padding: 10px 12px; border-radius: 10px; }
+.comercial-qo-save { width: 100%; padding: 14px; font-size: 14px; margin-top: 14px; border-radius: 12px; }
+
+/* Inline quick-add button in hoja linea */
+.com-quick-add-btn { background: none; border: 1px dashed var(--accent); color: var(--accent); border-radius: 10px; padding: 10px; font-size: 12px; font-weight: 700; cursor: pointer; width: 100%; text-align: center; transition: all .15s; margin-bottom: 6px; }
+.com-quick-add-btn:hover, .com-quick-add-btn:active { background: var(--accent-soft); }
+
 /* Responsive movil */
 @media (max-width: 768px) {
   .main { grid-template-columns: 1fr; }
@@ -321,6 +380,7 @@ textarea { resize: none; height: 54px; }
   .map-area { display: none; }
   .panel { border-right: none; }
   .header { padding: 10px 14px; height: auto; flex-wrap: wrap; }
+  .header .badge { display: none; }
   .stats-bar { gap: 12px; }
   .tab { padding: 8px 6px; font-size: 9px; letter-spacing: 1px; }
   .hr-linea { padding: 10px; font-size: 12px; }
@@ -328,6 +388,13 @@ textarea { resize: none; height: 54px; }
   .hr-linea-num { width: 24px; height: 24px; font-size: 10px; }
   .hr-gls-summary-grid { grid-template-columns: 1fr 1fr; }
   .rent-summary-grid { grid-template-columns: 1fr 1fr; }
+  /* Comercial mobile tweaks */
+  .comercial-tabs .tab { padding: 10px 4px; font-size: 9px; }
+  .comercial-summary-val { font-size: 20px; }
+  .com-pedido-card { padding: 10px 12px; }
+  .comercial-qo-fields { grid-template-columns: 1fr 1fr; }
+  .comercial-qo-field input { font-size: 16px; padding: 12px; }
+  .comercial-qo-save { padding: 16px; font-size: 15px; }
 }
 
 /* Print */

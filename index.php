@@ -54,8 +54,11 @@ $router->put('api/clients/(\d+)/schedules', 'ClientController@saveSchedules');
 
 // API — Pedidos
 $router->get('api/orders', 'OrderController@index');
+$router->get('api/orders/comercial-day', 'OrderController@comercialDay');
+$router->get('api/orders/resumen-por-ruta', 'OrderController@resumenPorRuta');
 $router->post('api/orders', 'OrderController@store');
 $router->put('api/orders/(\d+)', 'OrderController@update');
+$router->put('api/orders/(\d+)/estado', 'OrderController@updateEstado');
 $router->delete('api/orders', 'OrderController@destroy');
 
 // Demo
@@ -122,6 +125,7 @@ $router->delete('api/rutas/(\d+)', 'RutaController@destroy');
 
 // API — Hojas de Ruta
 $router->get('api/hojas-ruta', 'HojaRutaController@index');
+$router->post('api/hojas-ruta/generar-desde-pedidos', 'HojaRutaController@generateFromOrders');
 $router->get('api/hojas-ruta/(\d+)', 'HojaRutaController@show');
 $router->post('api/hojas-ruta', 'HojaRutaController@store');
 $router->put('api/hojas-ruta/(\d+)', 'HojaRutaController@update');

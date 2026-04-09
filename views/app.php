@@ -6,6 +6,7 @@
 <title>VeraRoute — Gestor de Rutas</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 <link rel="stylesheet" href="public/css/app.css?v=<?= time() ?>">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
 </head>
 <body>
 <?php $u = Auth::currentUser(); ?>
@@ -42,44 +43,116 @@
 </header>
 
 <?php if ($u['role'] === 'comercial'): ?>
-<!-- ═══ VISTA COMERCIAL: solo hojas de ruta a pantalla completa ═══ -->
-<div class="main" style="grid-template-columns:1fr">
-  <div class="panel" style="max-width:100%;width:100%">
+<!-- ═══ VISTA COMERCIAL: mobile-first con pestanas ═══ -->
+<div class="main comercial-main">
+  <div class="panel comercial-panel">
     <input type="hidden" id="rDate" value="">
     <span id="bhr" style="display:none">0</span>
 
-    <div class="date-bar">
-      <div class="date-label">Fecha</div>
-      <input type="date" id="hrDate" onchange="onHrDateChange()">
-      <button class="btn btn-secondary btn-sm" onclick="hrDateNav(-1)" title="Dia anterior">&larr;</button>
-      <button class="btn btn-secondary btn-sm" onclick="setHrToday()">Hoy</button>
-      <button class="btn btn-secondary btn-sm" onclick="hrDateNav(1)" title="Dia siguiente">&rarr;</button>
+    <!-- Tabs comercial -->
+    <div class="tabs comercial-tabs">
+      <button class="tab active" id="comTab-pedidos" onclick="switchComercialTab('pedidos')">Mis Pedidos <span class="tab-badge" id="comBadgePedidos">0</span></button>
+      <button class="tab" id="comTab-nuevo" onclick="switchComercialTab('nuevo')">+ Pedido</button>
+      <button class="tab" id="comTab-hojas" onclick="switchComercialTab('hojas')">Hojas Ruta <span class="tab-badge" id="comBadgeHojas">0</span></button>
     </div>
 
-    <!-- Vista listado (principal) -->
-    <div id="hrListView" style="display:flex;flex-direction:column;flex:1;overflow:hidden">
-      <div class="scroll-list" id="hrList" style="flex:1">
-        <div style="padding:40px 20px;text-align:center;color:var(--text-dim)">Cargando rutas...</div>
-      </div>
-    </div>
-
-    <!-- Vista detalle de una hoja -->
-    <div id="hrDetailView" style="display:none;flex-direction:column;flex:1;overflow:hidden">
-      <div class="panel-header" style="gap:8px">
-        <button class="btn btn-secondary btn-sm" onclick="closeHojaDetail()">&larr; Volver</button>
-        <div class="panel-title" id="hrDetailTitle" style="flex:1">—</div>
-      </div>
-      <div style="padding:8px 14px;border-bottom:1px solid var(--border);display:flex;gap:6px;flex-wrap:wrap;background:var(--surface);flex-shrink:0">
-        <div style="display:flex;align-items:center;gap:4px;min-width:260px;flex:1 1 360px">
-          <input id="hrClientSearch" type="search" placeholder="Buscar cliente..." autocomplete="off" oninput="setHojaClientSearch(this.value)" style="min-width:0;width:100%;padding:4px 8px;font-size:10px;border-radius:6px">
+    <!-- Barra fecha compartida -->
+    <div class="date-bar comercial-date-bar">
+      <div class="comercial-date-stack">
+        <button class="btn btn-secondary btn-sm comercial-date-today" onclick="setHrToday()">Hoy</button>
+        <div class="comercial-date-nav">
+          <button class="btn btn-secondary btn-sm" onclick="hrDateNav(-1)">&larr;</button>
+          <input type="date" id="hrDate" onchange="onHrDateChange()">
+          <button class="btn btn-secondary btn-sm" onclick="hrDateNav(1)">&rarr;</button>
         </div>
       </div>
-      <div class="scroll-list" id="hrLineasList" style="flex:1"></div>
-      <div style="padding:8px 14px;border-top:1px solid var(--border);background:var(--surface);font-size:11px;display:flex;gap:16px;flex-shrink:0">
-        <span><b id="hrTotalClientes">0</b> clientes</span>
-        <span><b id="hrTotalCarros">0</b> carros</span>
-        <span><b id="hrTotalCajas">0</b> cajas</span>
-        <span id="hrRouteInfo" style="margin-left:auto;color:var(--accent);font-weight:700"></span>
+    </div>
+
+    <!-- ══ TAB: MIS PEDIDOS DEL DIA ══ -->
+    <div id="comViewPedidos" class="comercial-view">
+      <!-- Resumen del dia -->
+      <div class="comercial-summary" id="comDaySummary">
+        <div class="comercial-summary-card">
+          <div class="comercial-summary-val" id="comSumClientes">0</div>
+          <div class="comercial-summary-label">Clientes</div>
+        </div>
+        <div class="comercial-summary-card">
+          <div class="comercial-summary-val" id="comSumCarros">0</div>
+          <div class="comercial-summary-label">Carros</div>
+        </div>
+        <div class="comercial-summary-card">
+          <div class="comercial-summary-val" id="comSumCajas">0</div>
+          <div class="comercial-summary-label">Cajas</div>
+        </div>
+      </div>
+      <div class="scroll-list" id="comPedidosList">
+        <div class="empty"><div class="empty-icon">&#128230;</div>Cargando pedidos...</div>
+      </div>
+    </div>
+
+    <!-- ══ TAB: NUEVO PEDIDO RAPIDO ══ -->
+    <div id="comViewNuevo" class="comercial-view" style="display:none">
+      <div class="comercial-quick-order">
+        <!-- Paso 1: Seleccionar cliente -->
+        <div class="comercial-qo-section comercial-qo-section-fill">
+          <div class="comercial-qo-label">Cliente</div>
+          <input type="search" id="comQoClientSearch" placeholder="Buscar cliente por nombre..." oninput="comQoFilterClients(this.value)" autocomplete="off">
+          <div id="comQoClientList" class="comercial-qo-client-list"></div>
+          <div id="comQoSelectedClient" class="comercial-qo-selected" style="display:none">
+            <div class="comercial-qo-selected-name" id="comQoSelectedName"></div>
+            <div class="comercial-qo-selected-addr" id="comQoSelectedAddr"></div>
+            <button class="btn btn-secondary btn-sm" onclick="comQoClearClient()">Cambiar</button>
+          </div>
+        </div>
+        <!-- Paso 2: Cantidades -->
+        <div class="comercial-qo-section" id="comQoFormFields" style="display:none">
+          <div class="comercial-qo-label">Cantidades</div>
+          <div class="comercial-qo-fields">
+            <div class="comercial-qo-field">
+              <label>Carros</label>
+              <input type="number" id="comQoCarros" min="0" step="1" placeholder="0" inputmode="numeric">
+            </div>
+            <div class="comercial-qo-field">
+              <label>Cajas</label>
+              <input type="number" id="comQoCajas" min="0" step="1" placeholder="0" inputmode="numeric">
+            </div>
+          </div>
+          <div class="comercial-qo-field" style="margin-top:8px">
+            <label>Observaciones</label>
+            <textarea id="comQoObs" placeholder="Notas del pedido..." rows="2"></textarea>
+          </div>
+          <button class="btn btn-primary comercial-qo-save" onclick="comQoSave()">Guardar pedido</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══ TAB: HOJAS DE RUTA ══ -->
+    <div id="comViewHojas" class="comercial-view" style="display:none">
+      <!-- Vista listado (principal) -->
+      <div id="hrListView" style="display:flex;flex-direction:column;flex:1;overflow:hidden">
+        <div class="scroll-list" id="hrList" style="flex:1">
+          <div style="padding:40px 20px;text-align:center;color:var(--text-dim)">Cargando rutas...</div>
+        </div>
+      </div>
+
+      <!-- Vista detalle de una hoja -->
+      <div id="hrDetailView" style="display:none;flex-direction:column;flex:1;overflow:hidden">
+        <div class="panel-header" style="gap:8px">
+          <button class="btn btn-secondary btn-sm" onclick="closeHojaDetail()">&larr; Volver</button>
+          <div class="panel-title" id="hrDetailTitle" style="flex:1">--</div>
+        </div>
+        <div style="padding:8px 14px;border-bottom:1px solid var(--border);display:flex;gap:6px;flex-wrap:wrap;background:var(--surface);flex-shrink:0">
+          <div style="display:flex;align-items:center;gap:4px;min-width:0;flex:1">
+            <input id="hrClientSearch" type="search" placeholder="Buscar cliente..." autocomplete="off" oninput="setHojaClientSearch(this.value)" style="min-width:0;width:100%;padding:6px 10px;font-size:12px;border-radius:8px">
+          </div>
+        </div>
+        <div class="scroll-list" id="hrLineasList" style="flex:1"></div>
+        <div style="padding:10px 14px;border-top:1px solid var(--border);background:var(--surface);font-size:12px;display:flex;gap:16px;flex-shrink:0">
+          <span><b id="hrTotalClientes">0</b> clientes</span>
+          <span><b id="hrTotalCarros">0</b> carros</span>
+          <span><b id="hrTotalCajas">0</b> cajas</span>
+          <span id="hrRouteInfo" style="margin-left:auto;color:var(--accent);font-weight:700"></span>
+        </div>
       </div>
     </div>
 
@@ -137,8 +210,13 @@
       <div id="hrListView" style="display:flex;flex-direction:column;flex:1;overflow:hidden">
         <div class="panel-header">
           <div class="panel-title">Hojas del dia</div>
-          <button class="btn btn-primary" onclick="openCreateHojaModal()">+ Nueva hoja</button>
+          <div style="display:flex;gap:6px">
+            <button class="btn btn-primary btn-sm" id="btnGenerarDesde" onclick="generarHojasFromPedidos()" title="Generar hojas automaticamente desde pedidos confirmados" style="background:var(--accent2);border-color:var(--accent2)">Generar desde pedidos</button>
+            <button class="btn btn-primary" onclick="openCreateHojaModal()">+ Nueva hoja</button>
+          </div>
         </div>
+        <!-- Panel resumen logistica: pedidos del dia -->
+        <div id="hrPedidosPanel" style="display:none"></div>
         <div class="scroll-list" id="hrList"></div>
       </div>
       <!-- Vista detalle de una hoja -->
@@ -626,6 +704,23 @@
   </div>
 </div>
 
+<!-- MODAL CONFIRMACION GLOBAL -->
+<div class="overlay" id="confirmModal">
+  <div class="modal" style="width:360px">
+    <div class="mhead">
+      <div class="mtitle" id="confirmTitle">Confirmar</div>
+      <button class="mclose" onclick="closeConfirmModal(false)">x</button>
+    </div>
+    <div class="mbody">
+      <p id="confirmMsg" style="margin:0;font-size:13px;line-height:1.5;color:var(--text-main)"></p>
+    </div>
+    <div class="mfoot">
+      <button class="btn btn-secondary" id="confirmCancelBtn" onclick="closeConfirmModal(false)">Cancelar</button>
+      <button class="btn btn-danger" id="confirmOkBtn" onclick="closeConfirmModal(true)">Confirmar</button>
+    </div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <?php if ($u['role'] !== 'comercial'): ?>
@@ -633,5 +728,8 @@
 <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js"></script>
 <?php endif; ?>
 <script src="public/js/app.js?v=<?= time() ?>"></script>
+<?php if (($u['role'] ?? '') === 'comercial'): ?>
+<script src="public/js/comercial.js?v=<?= time() ?>"></script>
+<?php endif; ?>
 </body>
 </html>

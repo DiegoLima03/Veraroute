@@ -106,6 +106,93 @@ class ClientCostHistory extends Model
         );
     }
 
+    /**
+     * Resumen agregado por rango de fechas: por dia, por ruta y top clientes a externalizar.
+     */
+    public function getRangeReport(string $from, string $to): array
+    {
+        // Por dia
+        $daily = $this->query(
+            "SELECT cch.fecha,
+                    COUNT(*) as entregas,
+                    SUM(cch.detour_km) as total_km,
+                    SUM(cch.cost_own_route) as total_own,
+                    SUM(cch.cost_gls_adjusted) as total_gls,
+                    SUM(GREATEST(0, cch.cost_own_route - cch.cost_gls_adjusted)) as ahorro_potencial,
+                    SUM(CASE WHEN cch.recommendation='externalize' THEN 1 ELSE 0 END) as n_externalize,
+                    SUM(CASE WHEN cch.recommendation='own_route' THEN 1 ELSE 0 END) as n_own,
+                    SUM(CASE WHEN cch.recommendation='break_even' THEN 1 ELSE 0 END) as n_breakeven
+             FROM client_cost_history cch
+             WHERE cch.fecha BETWEEN ? AND ?
+               AND cch.recommendation IN ('externalize','own_route','break_even')
+             GROUP BY cch.fecha
+             ORDER BY cch.fecha",
+            [$from, $to]
+        )->fetchAll();
+
+        // Por ruta comercial
+        $byRuta = $this->query(
+            "SELECT r.id as ruta_id, r.name as ruta_name,
+                    COUNT(*) as entregas,
+                    SUM(cch.detour_km) as total_km,
+                    SUM(cch.cost_own_route) as total_own,
+                    SUM(cch.cost_gls_adjusted) as total_gls,
+                    SUM(GREATEST(0, cch.cost_own_route - cch.cost_gls_adjusted)) as ahorro_potencial,
+                    SUM(CASE WHEN cch.recommendation='externalize' THEN 1 ELSE 0 END) as n_externalize
+             FROM client_cost_history cch
+             JOIN hojas_ruta hr ON hr.id = cch.hoja_ruta_id
+             JOIN rutas r ON r.id = hr.ruta_id
+             WHERE cch.fecha BETWEEN ? AND ?
+               AND cch.recommendation IN ('externalize','own_route','break_even')
+             GROUP BY r.id, r.name
+             ORDER BY ahorro_potencial DESC",
+            [$from, $to]
+        )->fetchAll();
+
+        // Top clientes a externalizar (mas ahorro potencial acumulado)
+        $topExt = $this->query(
+            "SELECT c.id as client_id, c.name as client_name, c.postcode,
+                    COUNT(*) as entregas,
+                    SUM(cch.cost_own_route) as total_own,
+                    SUM(cch.cost_gls_adjusted) as total_gls,
+                    SUM(GREATEST(0, cch.cost_own_route - cch.cost_gls_adjusted)) as ahorro_potencial,
+                    AVG(cch.detour_km) as avg_km
+             FROM client_cost_history cch
+             JOIN clients c ON c.id = cch.client_id
+             WHERE cch.fecha BETWEEN ? AND ?
+               AND cch.recommendation = 'externalize'
+             GROUP BY c.id, c.name, c.postcode
+             HAVING ahorro_potencial > 0
+             ORDER BY ahorro_potencial DESC
+             LIMIT 25",
+            [$from, $to]
+        )->fetchAll();
+
+        // Totales del rango
+        $totals = $this->query(
+            "SELECT COUNT(*) as entregas,
+                    SUM(cch.detour_km) as total_km,
+                    SUM(cch.cost_own_route) as total_own,
+                    SUM(cch.cost_gls_adjusted) as total_gls,
+                    SUM(GREATEST(0, cch.cost_own_route - cch.cost_gls_adjusted)) as ahorro_potencial,
+                    SUM(CASE WHEN cch.recommendation='externalize' THEN 1 ELSE 0 END) as n_externalize,
+                    SUM(CASE WHEN cch.recommendation='own_route' THEN 1 ELSE 0 END) as n_own
+             FROM client_cost_history cch
+             WHERE cch.fecha BETWEEN ? AND ?
+               AND cch.recommendation IN ('externalize','own_route','break_even')",
+            [$from, $to]
+        )->fetch();
+
+        return [
+            'from' => $from,
+            'to' => $to,
+            'totals' => $totals ?: [],
+            'daily' => $daily ?: [],
+            'by_ruta' => $byRuta ?: [],
+            'top_externalize' => $topExt ?: [],
+        ];
+    }
+
     public function getDailySummary(string $date): array
     {
         $rows = $this->getForDate($date);

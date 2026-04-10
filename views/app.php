@@ -24,6 +24,9 @@
 <header class="header">
   <div class="logo">Vera<span>Route</span></div>
   <div class="badge">v3.0</div>
+  <?php if ($u['role'] === 'admin'): ?>
+  <button class="btn-vars" onclick="openVarsModal()" title="Variables de calculo">&#9881; Variables</button>
+  <?php endif; ?>
   <?php if ($u['role'] !== 'comercial'): ?>
   <div class="stats-bar">
     <div class="stat"><div class="stat-val" id="sClientes">0</div><div class="stat-label">Clientes</div></div>
@@ -276,6 +279,7 @@
     <div id="vh" style="display:none;flex-direction:column;flex:1;overflow:hidden">
       <div class="panel-header">
         <div class="panel-title">Historial de rutas</div>
+        <button class="btn btn-primary btn-sm" onclick="openRentabilityReport()" title="Informe rentabilidad GLS vs flota">Rentabilidad GLS</button>
       </div>
       <div class="date-bar" style="gap:6px;flex-wrap:wrap">
         <input type="date" id="hFrom" style="flex:1;min-width:110px;padding:4px 6px;font-size:11px">
@@ -508,6 +512,28 @@
           <div><label>Pais origen</label><input id="shipOriginCountry" value="ES" maxlength="2"></div>
         </div>
         <div class="fg">
+          <div>
+            <label>Descuento negociado (multiplicador)</label>
+            <input id="shipPriceMultiplier" type="number" min="0" max="5" step="0.0001" value="1.0000">
+            <div style="font-size:10px;color:var(--text-dim);margin-top:2px">1.0000 = sin descuento, 0.85 = 15% descuento</div>
+          </div>
+          <div>
+            <label>Recargo combustible GLS (%)</label>
+            <div style="display:flex;gap:4px">
+              <input id="shipFuelPct" type="number" min="0" max="100" step="0.01" value="0.00" style="flex:1">
+              <button type="button" class="btn btn-secondary btn-sm" onclick="updateFuelPctOnly()" title="Solo actualizar combustible">Aplicar</button>
+            </div>
+            <div style="font-size:10px;color:var(--text-dim);margin-top:2px">Actualizable mensualmente. Consultar en viagalicia.com/tasa-energetica/</div>
+          </div>
+        </div>
+        <div class="fg">
+          <div style="grid-column:1/-1">
+            <label>Codigos postales remotos (separados por coma)</label>
+            <input id="shipRemotePrefixes" placeholder="07XX, 35XX, 38XX, ...">
+            <div style="font-size:10px;color:var(--text-dim);margin-top:2px">Prefijos de CP donde GLS aplica recargo de zona remota</div>
+          </div>
+        </div>
+        <div class="fg">
           <div><label>Peso por carro (kg)</label><input id="shipWeightPerCarro" type="number" min="0" step="0.1" value="5.0"></div>
           <div><label>Peso por caja (kg)</label><input id="shipWeightPerCaja" type="number" min="0" step="0.1" value="2.5"></div>
         </div>
@@ -534,6 +560,10 @@
         <div style="display:flex;justify-content:flex-end;margin-top:8px">
           <button class="btn btn-primary btn-sm" type="button" onclick="openShippingRateModal()">+ Tarifa</button>
         </div>
+      </div>
+      <div class="msection" id="shippingAlertsSection">
+        <div class="msec-title">Alertas de cobertura GLS</div>
+        <div id="shippingAlertsContent" style="font-size:11px;color:var(--text-dim)">Cargando...</div>
       </div>
     </div>
     <div class="mfoot">
@@ -700,6 +730,168 @@
       <button class="btn btn-danger" id="uDeleteBtn" onclick="deleteUser()" style="display:none;margin-right:auto">Eliminar</button>
       <button class="btn btn-secondary" onclick="closeUserModal()">Cancelar</button>
       <button class="btn btn-primary" onclick="saveUser()">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL VARIABLES DE CALCULO (admin only) -->
+<div class="overlay" id="varsModal">
+  <div class="modal" style="width:760px;max-width:96vw">
+    <div class="mhead">
+      <div class="mtitle">Variables de calculo</div>
+      <button class="mclose" onclick="closeVarsModal()">x</button>
+    </div>
+    <div class="mbody" style="max-height:75vh;overflow-y:auto">
+      <div class="vars-tabs">
+        <button type="button" class="vars-tab active" data-vars-tab="app" onclick="switchVarsTab('app')">App</button>
+        <button type="button" class="vars-tab" data-vars-tab="gls" onclick="switchVarsTab('gls')">Paqueteria GLS</button>
+        <button type="button" class="vars-tab" data-vars-tab="vehicles" onclick="switchVarsTab('vehicles')">Vehiculos</button>
+      </div>
+
+      <!-- ── APP ── -->
+      <div class="vars-section active" data-vars-section="app">
+        <div class="vars-group">
+          <div class="vars-group-title">Optimizacion de rutas</div>
+          <div class="vars-row">
+            <div>
+              <label>Velocidad media (km/h)</label>
+              <div class="help">Usado para calcular tiempo cuando no hay datos OSRM</div>
+            </div>
+            <input type="number" id="vSpeed" min="1" step="1">
+          </div>
+          <div class="vars-row">
+            <div>
+              <label>Tiempo base de descarga (min)</label>
+              <div class="help">Minutos por parada antes de carga adicional</div>
+            </div>
+            <input type="number" id="vBaseUnload" min="0" step="1">
+          </div>
+        </div>
+        <div class="vars-group">
+          <div class="vars-group-title">Pausa de comida</div>
+          <div class="vars-row">
+            <div><label>Duracion (min)</label></div>
+            <input type="number" id="vLunchDur" min="0" step="5">
+          </div>
+          <div class="vars-row">
+            <div><label>Hora minima</label></div>
+            <input type="time" id="vLunchEarly">
+          </div>
+          <div class="vars-row">
+            <div><label>Hora maxima</label></div>
+            <input type="time" id="vLunchLate">
+          </div>
+        </div>
+      </div>
+
+      <!-- ── GLS ── -->
+      <div class="vars-section" data-vars-section="gls">
+        <div class="vars-group">
+          <div class="vars-group-title">Origen y descuento negociado</div>
+          <div class="vars-row">
+            <div><label>CP origen</label><div class="help">CP del almacen de salida</div></div>
+            <input type="text" id="vGlsOriginCp" placeholder="36214">
+          </div>
+          <div class="vars-row">
+            <div><label>Pais origen</label></div>
+            <input type="text" id="vGlsOriginCountry" maxlength="2" placeholder="ES">
+          </div>
+          <div class="vars-row">
+            <div>
+              <label>Descuento (multiplicador)</label>
+              <div class="help">1.0000 = sin descuento, 0.85 = 15% descuento</div>
+            </div>
+            <input type="number" id="vGlsMultiplier" min="0" max="5" step="0.0001">
+          </div>
+          <div class="vars-row">
+            <div>
+              <label>Recargo combustible (%)</label>
+              <div class="help">Actualizable mensualmente</div>
+            </div>
+            <input type="number" id="vGlsFuelPct" min="0" max="100" step="0.01">
+          </div>
+          <div class="vars-row">
+            <div>
+              <label>Codigos postales remotos</label>
+              <div class="help">Prefijos separados por coma</div>
+            </div>
+            <input type="text" id="vGlsRemotePrefixes" placeholder="07XX, 35XX, ...">
+          </div>
+        </div>
+        <div class="vars-group">
+          <div class="vars-group-title">Equivalencia carga -> peso (para tarifas)</div>
+          <div class="vars-row">
+            <div><label>Peso por carro (kg)</label></div>
+            <input type="number" id="vGlsKgCarro" min="0" step="0.1">
+          </div>
+          <div class="vars-row">
+            <div><label>Peso por caja (kg)</label></div>
+            <input type="number" id="vGlsKgCaja" min="0" step="0.1">
+          </div>
+          <div class="vars-row">
+            <div><label>Bultos por carro</label></div>
+            <input type="number" id="vGlsParcCarro" min="0" step="0.01">
+          </div>
+          <div class="vars-row">
+            <div><label>Bultos por caja</label></div>
+            <input type="number" id="vGlsParcCaja" min="0" step="0.01">
+          </div>
+          <div class="vars-row">
+            <div><label>Volumen por carro (cm³)</label></div>
+            <input type="number" id="vGlsVolCarro" min="0" step="1">
+          </div>
+          <div class="vars-row">
+            <div><label>Volumen por caja (cm³)</label></div>
+            <input type="number" id="vGlsVolCaja" min="0" step="1">
+          </div>
+          <div class="vars-row">
+            <div>
+              <label>Usar peso volumetrico</label>
+              <div class="help">Aplica el divisor del transportista (180 kg/m³ para GLS)</div>
+            </div>
+            <select id="vGlsUseVol">
+              <option value="0">No</option>
+              <option value="1">Si</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── VEHICULOS ── -->
+      <div class="vars-section" data-vars-section="vehicles">
+        <div class="vars-group">
+          <div class="vars-group-title">Coste por km de cada vehiculo</div>
+          <div style="font-size:10px;color:var(--text-dim);margin-bottom:8px">
+            Es la base del calculo de coste de flota propia. Si esta a 0 el vehiculo no tendra coste y la comparativa con GLS no funcionara.
+          </div>
+          <div id="varsVehiclesList" style="max-height:380px;overflow-y:auto"></div>
+        </div>
+      </div>
+    </div>
+    <div class="mfoot">
+      <button class="btn btn-secondary" onclick="closeVarsModal()">Cancelar</button>
+      <button class="btn btn-primary" onclick="saveVars()">Guardar todo</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL INFORME DE RENTABILIDAD GLS -->
+<div class="overlay" id="rentReportModal">
+  <div class="modal" style="width:880px;max-width:96vw">
+    <div class="mhead">
+      <div class="mtitle">Informe de rentabilidad: flota propia vs GLS</div>
+      <button class="mclose" onclick="closeRentabilityReport()">x</button>
+    </div>
+    <div class="mbody" style="max-height:75vh;overflow-y:auto">
+      <div class="fg" style="margin-bottom:10px">
+        <div><label>Desde</label><input type="date" id="rentFrom"></div>
+        <div><label>Hasta</label><input type="date" id="rentTo"></div>
+        <div style="display:flex;align-items:flex-end"><button class="btn btn-primary" onclick="loadRentabilityReport()">Calcular</button></div>
+      </div>
+      <div id="rentReportContent" style="font-size:11px"></div>
+    </div>
+    <div class="mfoot">
+      <button class="btn btn-secondary" onclick="closeRentabilityReport()">Cerrar</button>
     </div>
   </div>
 </div>

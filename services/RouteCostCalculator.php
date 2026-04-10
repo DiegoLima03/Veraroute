@@ -56,6 +56,9 @@ class RouteCostCalculator
         }
 
         $calcVars = $this->configModel->getCalculationVariables();
+        $priceMultiplier = $this->configModel->getPriceMultiplier();
+        $fuelPctOverride = $this->configModel->getCurrentFuelPct();
+        $remotePrefixes = $this->configModel->getRemotePostcodePrefixes();
         $vehicle = !empty($hoja['vehicle_id']) ? $this->vehicleModel->getById((int) $hoja['vehicle_id']) : null;
         $vehicleCostPerKm = $vehicle && $vehicle['cost_per_km'] !== null ? (float) $vehicle['cost_per_km'] : null;
         $depot = $this->resolveDepotForHoja($hoja);
@@ -135,12 +138,15 @@ class RouteCostCalculator
                     [
                         'volume_m3' => $volumeM3,
                         'use_volumetric_weight' => $calcVars['use_volumetric_weight'],
+                        'price_multiplier' => $priceMultiplier,
+                        'fuel_pct_override' => $fuelPctOverride,
+                        'remote_postcode_prefixes' => $remotePrefixes,
                     ]
                 );
 
                 if ($bestRate) {
-                    $costCarrierRaw = round((float) ($bestRate['price'] ?? 0), 4);
-                    $costCarrierAdjusted = $costCarrierRaw;
+                    $costCarrierRaw = round((float) ($bestRate['raw_price'] ?? $bestRate['price'] ?? 0), 4);
+                    $costCarrierAdjusted = round((float) ($bestRate['price'] ?? 0), 4);
                     $billableWeightKg = round((float) ($bestRate['billable_weight_kg'] ?? $realWeightKg), 2);
                     $carrierService = trim(
                         (string) ($bestRate['carrier_name'] ?? $bestRate['carrier_code'] ?? '')
@@ -199,7 +205,7 @@ class RouteCostCalculator
                 'cost_own_route' => $costOwnRoute ?? 0,
                 'cost_gls_raw' => $costCarrierRaw ?? 0,
                 'cost_gls_adjusted' => $costCarrierAdjusted ?? 0,
-                'price_multiplier_used' => 1,
+                'price_multiplier_used' => $priceMultiplier,
                 'recommendation' => $recommendation,
                 'savings_if_externalized' => $saving,
                 'gls_service' => $carrierService,

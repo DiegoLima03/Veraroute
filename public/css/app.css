@@ -13,6 +13,20 @@ body { background: var(--bg); color: var(--text); font-family: "Segoe UI", Tahom
 .logo { font-size: 20px; font-weight: 800; letter-spacing: -0.5px; color: #ffffff; }
 .logo span { color: var(--bg); }
 .badge { background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.25); color: rgba(255,255,255,0.8); font-size: 10px; padding: 3px 8px; border-radius: 4px; letter-spacing: 1px; }
+.btn-vars { background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.3); color: #fff; font-size: 11px; font-weight: 600; padding: 5px 12px; border-radius: 6px; cursor: pointer; transition: background .15s, transform .1s; letter-spacing: .3px; display: inline-flex; align-items: center; gap: 6px; }
+.btn-vars:hover { background: rgba(255,255,255,0.25); transform: translateY(-1px); }
+.vars-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 14px; }
+.vars-tab { background: transparent; border: none; padding: 8px 14px; font-size: 12px; font-weight: 600; color: var(--text-dim); cursor: pointer; border-bottom: 2px solid transparent; transition: color .15s, border-color .15s; }
+.vars-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.vars-section { display: none; }
+.vars-section.active { display: block; }
+.vars-group { margin-bottom: 18px; padding: 10px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
+.vars-group-title { font-size: 11px; font-weight: 700; color: var(--accent); text-transform: uppercase; letter-spacing: .8px; margin-bottom: 8px; }
+.vars-row { display: grid; grid-template-columns: 1fr 130px; gap: 10px; align-items: center; padding: 6px 0; border-bottom: 1px dashed var(--border); }
+.vars-row:last-child { border-bottom: none; }
+.vars-row label { font-size: 11px; color: var(--text-main); margin: 0; }
+.vars-row .help { font-size: 9px; color: var(--text-dim); margin-top: 2px; }
+.vars-row input, .vars-row select { width: 100%; padding: 5px 8px; font-size: 11px; }
 .stats-bar { margin-left: auto; display: flex; gap: 20px; margin-right: 14px; }
 .user-info { display: flex; align-items: center; gap: 8px; font-size: 12px; flex-shrink: 0; }
 .user-name { color: rgba(255,255,255,.8); }

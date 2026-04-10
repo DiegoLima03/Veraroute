@@ -82,7 +82,7 @@ class ShippingRateTable extends Model
                 'SELECT cz.*, c.nombre AS carrier_name
                  FROM carrier_zones cz
                  JOIN carriers c ON c.id = cz.carrier_id
-                 ORDER BY c.nombre ASC, CHAR_LENGTH(cz.cp_prefix) DESC, cz.cp_prefix ASC'
+                 ORDER BY c.nombre ASC, cz.country_code ASC, CHAR_LENGTH(cz.cp_prefix) DESC, cz.cp_prefix ASC'
             )->fetchAll()
         );
     }
@@ -103,8 +103,8 @@ class ShippingRateTable extends Model
     {
         $zone = $this->normalizeZoneData($data);
         $this->query(
-            'INSERT INTO carrier_zones (carrier_id, cp_prefix, zona, remoto) VALUES (?, ?, ?, ?)',
-            [$zone['carrier_id'], $zone['cp_prefix'], $zone['zona'], $zone['remoto']]
+            'INSERT INTO carrier_zones (carrier_id, country_code, cp_prefix, zona, remoto) VALUES (?, ?, ?, ?, ?)',
+            [$zone['carrier_id'], $zone['country_code'], $zone['cp_prefix'], $zone['zona'], $zone['remoto']]
         );
         return (int) $this->db()->lastInsertId();
     }
@@ -114,9 +114,9 @@ class ShippingRateTable extends Model
         $zone = $this->normalizeZoneData($data);
         $this->query(
             'UPDATE carrier_zones
-             SET carrier_id = ?, cp_prefix = ?, zona = ?, remoto = ?
+             SET carrier_id = ?, country_code = ?, cp_prefix = ?, zona = ?, remoto = ?
              WHERE id = ?',
-            [$zone['carrier_id'], $zone['cp_prefix'], $zone['zona'], $zone['remoto'], $id]
+            [$zone['carrier_id'], $zone['country_code'], $zone['cp_prefix'], $zone['zona'], $zone['remoto'], $id]
         );
         return true;
     }
@@ -131,14 +131,18 @@ class ShippingRateTable extends Model
     {
         $errors = [];
         $carrierId = (int) ($data['carrier_id'] ?? 0);
+        $countryCode = strtoupper(trim((string) ($data['country_code'] ?? 'ES')));
         $prefix = $this->normalizePostcodePrefix((string) ($data['cp_prefix'] ?? ''));
         $zona = (int) ($data['zona'] ?? 0);
 
         if ($carrierId <= 0 || !$this->getCarrierById($carrierId)) {
             $errors[] = 'Selecciona un transportista valido.';
         }
+        if (!preg_match('/^[A-Z]{2}$/', $countryCode)) {
+            $errors[] = 'El pais debe tener 2 letras.';
+        }
         if ($prefix === '') {
-            $errors[] = 'El prefijo postal es obligatorio.';
+            $errors[] = 'El prefijo postal es obligatorio. Usa * para comodin de pais.';
         }
         if ($zona <= 0) {
             $errors[] = 'La zona debe ser mayor que 0.';
@@ -154,7 +158,7 @@ class ShippingRateTable extends Model
                 'SELECT cr.*, c.nombre AS carrier_name
                  FROM carrier_rates cr
                  JOIN carriers c ON c.id = cr.carrier_id
-                 ORDER BY c.nombre ASC, cr.zona ASC, cr.peso_min ASC, cr.vigencia_desde DESC, cr.id ASC'
+                 ORDER BY c.nombre ASC, cr.service_name ASC, cr.zona ASC, cr.rate_type ASC, cr.peso_min ASC, cr.vigencia_desde DESC, cr.id ASC'
             )->fetchAll()
         );
     }
@@ -175,10 +179,12 @@ class ShippingRateTable extends Model
     {
         $rate = $this->normalizeRateData($data);
         $this->query(
-            'INSERT INTO carrier_rates (carrier_id, zona, peso_min, peso_max, precio_base, vigencia_desde, vigencia_hasta)
-             VALUES (?, ?, ?, ?, ?, ?, ?)',
+            'INSERT INTO carrier_rates (carrier_id, service_name, rate_type, zona, peso_min, peso_max, precio_base, vigencia_desde, vigencia_hasta)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
             [
                 $rate['carrier_id'],
+                $rate['service_name'],
+                $rate['rate_type'],
                 $rate['zona'],
                 $rate['peso_min'],
                 $rate['peso_max'],
@@ -195,10 +201,12 @@ class ShippingRateTable extends Model
         $rate = $this->normalizeRateData($data);
         $this->query(
             'UPDATE carrier_rates
-             SET carrier_id = ?, zona = ?, peso_min = ?, peso_max = ?, precio_base = ?, vigencia_desde = ?, vigencia_hasta = ?
+             SET carrier_id = ?, service_name = ?, rate_type = ?, zona = ?, peso_min = ?, peso_max = ?, precio_base = ?, vigencia_desde = ?, vigencia_hasta = ?
              WHERE id = ?',
             [
                 $rate['carrier_id'],
+                $rate['service_name'],
+                $rate['rate_type'],
                 $rate['zona'],
                 $rate['peso_min'],
                 $rate['peso_max'],
@@ -221,6 +229,7 @@ class ShippingRateTable extends Model
     {
         $errors = [];
         $carrierId = (int) ($data['carrier_id'] ?? 0);
+        $rateType = strtolower(trim((string) ($data['rate_type'] ?? 'band')));
         $zona = (int) ($data['zona'] ?? 0);
         $pesoMin = (float) ($data['peso_min'] ?? -1);
         $pesoMax = (float) ($data['peso_max'] ?? -1);
@@ -230,6 +239,9 @@ class ShippingRateTable extends Model
 
         if ($carrierId <= 0 || !$this->getCarrierById($carrierId)) {
             $errors[] = 'Selecciona un transportista valido.';
+        }
+        if (!in_array($rateType, ['band', 'additional_kg'], true)) {
+            $errors[] = 'El tipo de tarifa no es valido.';
         }
         if ($zona <= 0) {
             $errors[] = 'La zona debe ser mayor que 0.';
@@ -345,12 +357,14 @@ class ShippingRateTable extends Model
             'carrier_id' => $quote['carrier_id'],
             'carrier_code' => $quote['carrier_name'],
             'carrier_name' => $quote['carrier_name'],
-            'service_name' => 'Zona ' . $quote['zone'],
+            'service_name' => $quote['service_name'] ?: ('Zona ' . $quote['zone']),
             'price' => $quote['total_price'],
+            'raw_price' => $quote['total_price_raw'],
             'base_price' => $quote['base_price'],
             'fuel_pct' => $quote['fuel_pct'],
             'fuel_amount' => $quote['fuel_amount'],
             'surcharge_total' => $quote['surcharge_total'],
+            'price_multiplier' => $quote['price_multiplier'],
             'postcode_prefix' => $quote['cp_prefix'],
             'zone' => $quote['zone'],
             'remote' => $quote['remote'],
@@ -370,6 +384,13 @@ class ShippingRateTable extends Model
         }
 
         $date = $date ?: date('Y-m-d');
+        $countryCode = strtoupper(trim((string) ($options['country_code'] ?? 'ES')));
+        $priceMultiplier = max(0.0, (float) ($options['price_multiplier'] ?? 1));
+        $fuelPctOverride = isset($options['fuel_pct_override']) ? max(0.0, (float) $options['fuel_pct_override']) : null;
+        $remotePrefixes = array_values(array_filter(array_map(
+            fn ($value) => $this->normalizePostcodePrefix((string) $value),
+            (array) ($options['remote_postcode_prefixes'] ?? [])
+        )));
         $volumeM3 = max(0.0, (float) ($options['volume_m3'] ?? $options['volume_cm3'] ?? 0));
         $useVolumetricWeight = !empty($options['use_volumetric_weight']);
         $carriers = $this->getCarriers();
@@ -380,7 +401,7 @@ class ShippingRateTable extends Model
                 continue;
             }
 
-            $zone = $this->findZoneForCarrier((int) $carrier['id'], $postcode);
+            $zone = $this->findZoneForCarrier((int) $carrier['id'], $countryCode, $postcode);
             if (!$zone) {
                 continue;
             }
@@ -392,18 +413,26 @@ class ShippingRateTable extends Model
             }
             $billableWeightKg = round(max($weightKg, $volumetricWeightKg), 2);
 
-            $rate = $this->findRateForCarrierZone((int) $carrier['id'], (int) $zone['zona'], $billableWeightKg, $date);
+            $rate = $this->resolveRateForCarrierZone(
+                (int) $carrier['id'],
+                (int) $zone['zona'],
+                $billableWeightKg,
+                $date
+            );
             if (!$rate) {
                 continue;
             }
 
-            $basePrice = round((float) $rate['precio_base'], 4);
-            $fuelPct = round((float) ($carrier['fuel_pct'] ?? 0), 2);
+            $basePrice = round((float) $rate['price'], 4);
+            $fuelPct = round($fuelPctOverride !== null && stripos((string) ($carrier['nombre'] ?? ''), 'GLS') !== false
+                ? $fuelPctOverride
+                : (float) ($carrier['fuel_pct'] ?? 0), 2);
             $fuelAmount = round($basePrice * ($fuelPct / 100), 4);
             $surchargeTotal = 0.0;
             $applied = [];
 
-            if ((int) ($zone['remoto'] ?? 0)) {
+            $isRemote = (int) ($zone['remoto'] ?? 0) === 1 || $this->matchesConfiguredRemotePrefix($postcode, $remotePrefixes);
+            if ($isRemote) {
                 $remote = $this->findSurchargeForCarrier((int) $carrier['id'], 'remoto');
                 if ($remote) {
                     $amount = $this->calculateSurchargeAmount($remote, $basePrice);
@@ -415,18 +444,22 @@ class ShippingRateTable extends Model
                 }
             }
 
-            $total = round($basePrice + $fuelAmount + $surchargeTotal, 4);
+            $totalRaw = round($basePrice + $fuelAmount + $surchargeTotal, 4);
+            $total = round($totalRaw * $priceMultiplier, 4);
             $quote = [
                 'carrier_id' => (int) $carrier['id'],
                 'carrier_name' => $carrier['nombre'],
+                'service_name' => $rate['service_name'] ?? '',
                 'zone' => (int) $zone['zona'],
                 'cp_prefix' => $zone['cp_prefix'],
-                'remote' => (int) ($zone['remoto'] ?? 0),
+                'remote' => $isRemote ? 1 : 0,
                 'base_price' => $basePrice,
                 'fuel_pct' => $fuelPct,
                 'fuel_amount' => $fuelAmount,
                 'surcharge_total' => round($surchargeTotal, 4),
+                'total_price_raw' => $totalRaw,
                 'total_price' => $total,
+                'price_multiplier' => round($priceMultiplier, 4),
                 'divisor_vol' => $divisorVol,
                 'real_weight_kg' => round($weightKg, 2),
                 'volumetric_weight_kg' => $volumetricWeightKg,
@@ -451,19 +484,23 @@ class ShippingRateTable extends Model
         return $bestQuote;
     }
 
-    private function findZoneForCarrier(int $carrierId, string $postcode): ?array
+    private function findZoneForCarrier(int $carrierId, string $countryCode, string $postcode): ?array
     {
         $rows = $this->normalizeTextRows(
             $this->query(
                 'SELECT * FROM carrier_zones
                  WHERE carrier_id = ?
+                   AND country_code = ?
                  ORDER BY CHAR_LENGTH(cp_prefix) DESC, cp_prefix ASC',
-                [$carrierId]
+                [$carrierId, $countryCode]
             )->fetchAll()
         );
 
         foreach ($rows as $row) {
             $prefix = $this->normalizePostcodePrefix((string) ($row['cp_prefix'] ?? ''));
+            if ($prefix === '*') {
+                return $row;
+            }
             if ($prefix !== '' && str_starts_with($postcode, $prefix)) {
                 return $row;
             }
@@ -488,6 +525,88 @@ class ShippingRateTable extends Model
         )->fetch();
 
         return $row ? $this->normalizeTextRow($row) : null;
+    }
+
+    private function resolveRateForCarrierZone(int $carrierId, int $zone, float $weightKg, string $date): ?array
+    {
+        $rows = $this->normalizeTextRows(
+            $this->query(
+                'SELECT *
+                 FROM carrier_rates
+                 WHERE carrier_id = ?
+                   AND zona = ?
+                   AND vigencia_desde <= ?
+                   AND (vigencia_hasta IS NULL OR vigencia_hasta >= ?)
+                 ORDER BY service_name ASC, rate_type ASC, peso_max ASC, id ASC',
+                [$carrierId, $zone, $date, $date]
+            )->fetchAll()
+        );
+
+        if (!$rows) {
+            return null;
+        }
+
+        $byService = [];
+        foreach ($rows as $row) {
+            $serviceName = trim((string) ($row['service_name'] ?? ''));
+            $byService[$serviceName][] = $row;
+        }
+
+        $best = null;
+        foreach ($byService as $serviceName => $serviceRows) {
+            $resolved = $this->resolveServiceRate($serviceRows, $weightKg);
+            if (!$resolved) {
+                continue;
+            }
+
+            $resolved['service_name'] = $serviceName;
+            if ($best === null || (float) $resolved['price'] < (float) $best['price']) {
+                $best = $resolved;
+            }
+        }
+
+        return $best;
+    }
+
+    private function resolveServiceRate(array $rows, float $weightKg): ?array
+    {
+        $bandRows = array_values(array_filter($rows, fn ($row) => ($row['rate_type'] ?? 'band') !== 'additional_kg'));
+        $additionalRows = array_values(array_filter($rows, fn ($row) => ($row['rate_type'] ?? 'band') === 'additional_kg'));
+
+        usort($bandRows, fn ($a, $b) => ((float) $a['peso_max'] <=> (float) $b['peso_max']) ?: ((int) $a['id'] <=> (int) $b['id']));
+        usort($additionalRows, fn ($a, $b) => ((float) $a['peso_min'] <=> (float) $b['peso_min']) ?: ((int) $a['id'] <=> (int) $b['id']));
+
+        foreach ($bandRows as $row) {
+            if ($weightKg >= (float) $row['peso_min'] && $weightKg <= (float) $row['peso_max']) {
+                $row['price'] = (float) $row['precio_base'];
+                return $row;
+            }
+        }
+
+        if (!$bandRows || !$additionalRows) {
+            return null;
+        }
+
+        $baseBand = end($bandRows);
+        $additional = null;
+        foreach ($additionalRows as $row) {
+            if ($weightKg > (float) $row['peso_min']) {
+                $additional = $row;
+            }
+        }
+        if (!$additional) {
+            $additional = end($additionalRows);
+        }
+        if (!$baseBand || !$additional || $weightKg <= (float) $baseBand['peso_max']) {
+            return null;
+        }
+
+        $extraKg = (float) ceil(max(0, $weightKg - (float) $baseBand['peso_max']));
+        $price = round((float) $baseBand['precio_base'] + ($extraKg * (float) $additional['precio_base']), 4);
+        $baseBand['price'] = $price;
+        $baseBand['additional_kg_price'] = (float) $additional['precio_base'];
+        $baseBand['additional_rate_id'] = (int) $additional['id'];
+        return $baseBand;
     }
 
     private function findSurchargeForCarrier(int $carrierId, string $type): ?array
@@ -527,6 +646,7 @@ class ShippingRateTable extends Model
     {
         return [
             'carrier_id' => (int) ($data['carrier_id'] ?? 0),
+            'country_code' => strtoupper(trim((string) ($data['country_code'] ?? 'ES'))),
             'cp_prefix' => $this->normalizePostcodePrefix((string) ($data['cp_prefix'] ?? '')),
             'zona' => max(1, (int) ($data['zona'] ?? 1)),
             'remoto' => !empty($data['remoto']) ? 1 : 0,
@@ -537,6 +657,8 @@ class ShippingRateTable extends Model
     {
         return [
             'carrier_id' => (int) ($data['carrier_id'] ?? 0),
+            'service_name' => trim((string) ($data['service_name'] ?? '')),
+            'rate_type' => strtolower(trim((string) ($data['rate_type'] ?? 'band'))) === 'additional_kg' ? 'additional_kg' : 'band',
             'zona' => max(1, (int) ($data['zona'] ?? 1)),
             'peso_min' => round(max(0, (float) ($data['peso_min'] ?? 0)), 2),
             'peso_max' => round(max(0, (float) ($data['peso_max'] ?? 0)), 2),
@@ -559,7 +681,8 @@ class ShippingRateTable extends Model
 
     private function normalizePostcodePrefix(string $value): string
     {
-        return strtoupper(preg_replace('/\s+/', '', trim($value)));
+        $normalized = strtoupper(preg_replace('/\s+/', '', trim($value)));
+        return $normalized === '' ? '' : preg_replace('/[^A-Z0-9\*]/', '', $normalized);
     }
 
     private function isValidDate(string $date): bool
@@ -569,5 +692,128 @@ class ShippingRateTable extends Model
         }
         $dt = DateTime::createFromFormat('Y-m-d', $date);
         return $dt && $dt->format('Y-m-d') === $date;
+    }
+
+    private function matchesConfiguredRemotePrefix(string $postcode, array $prefixes): bool
+    {
+        foreach ($prefixes as $prefix) {
+            if ($prefix !== '' && $prefix !== '*' && str_starts_with($postcode, $prefix)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public function findCarrierByName(string $name): ?array
+    {
+        $row = $this->query('SELECT * FROM carriers WHERE nombre = ? LIMIT 1', [trim($name)])->fetch();
+        return $row ? $this->normalizeTextRow($row) : null;
+    }
+
+    public function findZoneByKey(int $carrierId, string $countryCode, string $prefix): ?array
+    {
+        $row = $this->query(
+            'SELECT * FROM carrier_zones WHERE carrier_id = ? AND country_code = ? AND cp_prefix = ? LIMIT 1',
+            [$carrierId, strtoupper(trim($countryCode)), $this->normalizePostcodePrefix($prefix)]
+        )->fetch();
+        return $row ? $this->normalizeTextRow($row) : null;
+    }
+
+    public function findRateByKey(int $carrierId, string $serviceName, string $rateType, int $zone, float $pesoMin, float $pesoMax, string $desde): ?array
+    {
+        $row = $this->query(
+            'SELECT * FROM carrier_rates
+             WHERE carrier_id = ?
+               AND service_name = ?
+               AND rate_type = ?
+               AND zona = ?
+               AND peso_min = ?
+               AND peso_max = ?
+               AND vigencia_desde = ?
+             LIMIT 1',
+            [$carrierId, trim($serviceName), trim($rateType), $zone, $pesoMin, $pesoMax, $desde]
+        )->fetch();
+        return $row ? $this->normalizeTextRow($row) : null;
+    }
+
+    public function findSurchargeByKey(int $carrierId, string $type): ?array
+    {
+        $row = $this->query(
+            'SELECT * FROM carrier_surcharges WHERE carrier_id = ? AND tipo = ? LIMIT 1',
+            [$carrierId, trim($type)]
+        )->fetch();
+        return $row ? $this->normalizeTextRow($row) : null;
+    }
+
+    public function upsertCarrierByName(array $data): array
+    {
+        $existing = $this->findCarrierByName((string) ($data['nombre'] ?? ''));
+        if ($existing) {
+            $this->updateCarrier((int) $existing['id'], $data);
+            return $this->getCarrierById((int) $existing['id']) ?? $existing;
+        }
+
+        $id = $this->createCarrier($data);
+        return $this->getCarrierById($id) ?? [];
+    }
+
+    public function upsertZoneRule(array $data): array
+    {
+        $normalized = $this->normalizeZoneData($data);
+        $existing = $this->findZoneByKey($normalized['carrier_id'], $normalized['country_code'], $normalized['cp_prefix']);
+        if ($existing) {
+            $this->updateZone((int) $existing['id'], $normalized);
+            return $this->getZoneById((int) $existing['id']) ?? $existing;
+        }
+
+        $id = $this->createZone($normalized);
+        return $this->getZoneById($id) ?? [];
+    }
+
+    public function upsertRateBand(array $data): array
+    {
+        $normalized = $this->normalizeRateData($data);
+        $existing = $this->findRateByKey(
+            $normalized['carrier_id'],
+            $normalized['service_name'],
+            $normalized['rate_type'],
+            $normalized['zona'],
+            $normalized['peso_min'],
+            $normalized['peso_max'],
+            $normalized['vigencia_desde']
+        );
+        if ($existing) {
+            $this->updateRate((int) $existing['id'], $normalized);
+            return $this->getRateById((int) $existing['id']) ?? $existing;
+        }
+
+        $id = $this->createRate($normalized);
+        return $this->getRateById($id) ?? [];
+    }
+
+    public function upsertSurchargeRule(array $data): array
+    {
+        $normalized = $this->normalizeSurchargeData($data);
+        $existing = $this->findSurchargeByKey($normalized['carrier_id'], $normalized['tipo']);
+        if ($existing) {
+            $this->updateSurcharge((int) $existing['id'], $normalized);
+            return $this->getSurchargeById((int) $existing['id']) ?? $existing;
+        }
+
+        $id = $this->createSurcharge($normalized);
+        return $this->getSurchargeById($id) ?? [];
+    }
+
+    public function updateCarrierFuelPctByName(string $carrierName, float $fuelPct): void
+    {
+        $this->query('UPDATE carriers SET fuel_pct = ? WHERE nombre = ?', [round(max(0, $fuelPct), 2), trim($carrierName)]);
+    }
+
+    public function deleteCarrierByName(string $carrierName): void
+    {
+        $carrier = $this->findCarrierByName($carrierName);
+        if ($carrier) {
+            $this->deleteCarrier((int) $carrier['id']);
+        }
     }
 }

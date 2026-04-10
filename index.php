@@ -103,11 +103,14 @@ $router->put('api/settings', 'SettingController@updateSettings');
 
 // API — Paqueteria por tablas + comparativa de costes
 $router->get('api/shipping-config', 'GlsCostController@getConfig');
+$router->get('api/shipping-config/alerts', 'GlsCostController@getAlerts');
+$router->put('api/shipping-config/fuel', 'GlsCostController@updateFuelPct');
 $router->put('api/shipping-config', 'GlsCostController@updateConfig');
 $router->post('api/shipping-costs/calculate', 'GlsCostController@calculateForHoja');
 $router->get('api/shipping-costs/hoja/(\d+)', 'GlsCostController@getCostsForHoja');
 $router->get('api/shipping-costs/client/(\d+)', 'GlsCostController@getClientHistory');
 $router->get('api/shipping-costs/daily-report', 'GlsCostController@getDailyReport');
+$router->get('api/shipping-costs/range-report', 'GlsCostController@getRangeReport');
 $router->post('api/shipping-costs/recalculate', 'GlsCostController@recalculateAll');
 $router->get('api/shipping-rates', 'ShippingRateController@index');
 $router->post('api/shipping-rates', 'ShippingRateController@store');

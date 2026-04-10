@@ -28,6 +28,78 @@ class GlsCostController extends Controller
         $this->json($this->getConfigPayload());
     }
 
+    /** PUT /api/shipping-config/fuel  body: { fuel_pct: 5.80 } */
+    public function updateFuelPct()
+    {
+        Auth::requireRole('admin');
+        $data = $this->getInput();
+        if (!isset($data['fuel_pct'])) {
+            $this->json(['error' => 'fuel_pct es obligatorio'], 400);
+        }
+        $fp = (float) $data['fuel_pct'];
+        if ($fp < 0 || $fp > 100) {
+            $this->json(['error' => 'El % de combustible debe estar entre 0 y 100'], 400);
+        }
+        $this->configModel->updateConfig(['gls_fuel_pct_current' => round($fp, 2)]);
+        $this->json($this->getConfigPayload());
+    }
+
+    /** GET /api/shipping-config/alerts  - CP de clientes que no encuentran zona en el carrier */
+    public function getAlerts()
+    {
+        Auth::requireRole('admin', 'logistica');
+
+        $unmappedCps = $this->query(
+            "SELECT c.postcode, COUNT(*) as num_clientes,
+                    GROUP_CONCAT(DISTINCT c.name ORDER BY c.name SEPARATOR ', ') as ejemplos
+             FROM clients c
+             WHERE c.active = 1
+               AND c.postcode IS NOT NULL
+               AND TRIM(c.postcode) != ''
+               AND NOT EXISTS (
+                   SELECT 1 FROM carrier_zones cz
+                   WHERE cz.carrier_id = (SELECT id FROM carriers WHERE nombre = 'GLS' LIMIT 1)
+                     AND cz.country_code = 'ES'
+                     AND (cz.cp_prefix = '*' OR c.postcode LIKE CONCAT(cz.cp_prefix, '%'))
+               )
+             GROUP BY c.postcode
+             ORDER BY num_clientes DESC
+             LIMIT 50"
+        )->fetchAll();
+
+        // Stats globales
+        $stats = $this->query(
+            "SELECT
+                COUNT(*) as total_clientes,
+                SUM(CASE WHEN postcode IS NULL OR TRIM(postcode) = '' THEN 1 ELSE 0 END) as sin_cp,
+                SUM(CASE WHEN x IS NULL OR y IS NULL THEN 1 ELSE 0 END) as sin_coords
+             FROM clients WHERE active = 1"
+        )->fetch();
+
+        $this->json([
+            'unmapped_postcodes' => array_map(function ($r) {
+                $ej = (string) ($r['ejemplos'] ?? '');
+                return [
+                    'postcode' => $r['postcode'],
+                    'num_clientes' => (int) $r['num_clientes'],
+                    'ejemplos' => mb_strlen($ej) > 80 ? mb_substr($ej, 0, 80) . '...' : $ej,
+                ];
+            }, $unmappedCps),
+            'stats' => [
+                'total_clientes' => (int) $stats['total_clientes'],
+                'sin_cp' => (int) $stats['sin_cp'],
+                'sin_coords' => (int) $stats['sin_coords'],
+            ],
+        ]);
+    }
+
+    private function query(string $sql, array $params = [])
+    {
+        $stmt = Database::connect()->prepare($sql);
+        $stmt->execute($params);
+        return $stmt;
+    }
+
     public function updateConfig()
     {
         Auth::requireRole('admin');
@@ -49,6 +121,20 @@ class GlsCostController extends Controller
 
         if (!empty($data['origin_country']) && strlen(trim((string) $data['origin_country'])) !== 2) {
             $errors[] = 'El pais de origen debe tener 2 caracteres.';
+        }
+
+        if (isset($data['price_multiplier'])) {
+            $pm = (float) $data['price_multiplier'];
+            if ($pm < 0 || $pm > 5) {
+                $errors[] = 'El multiplicador de precio debe estar entre 0 y 5 (ej: 0.85 para 15% descuento).';
+            }
+        }
+
+        if (isset($data['gls_fuel_pct_current'])) {
+            $fp = (float) $data['gls_fuel_pct_current'];
+            if ($fp < 0 || $fp > 100) {
+                $errors[] = 'El recargo de combustible debe estar entre 0 y 100 %.';
+            }
         }
 
         if ($errors) {
@@ -129,6 +215,15 @@ class GlsCostController extends Controller
         $this->json($this->historyModel->getDailySummary($date));
     }
 
+    /** GET /api/shipping-costs/range-report?from=YYYY-MM-DD&to=YYYY-MM-DD */
+    public function getRangeReport()
+    {
+        Auth::requireRole('admin', 'logistica');
+        $from = $_GET['from'] ?? date('Y-m-d', strtotime('-30 days'));
+        $to = $_GET['to'] ?? date('Y-m-d');
+        $this->json($this->historyModel->getRangeReport($from, $to));
+    }
+
     public function recalculateAll()
     {
         Auth::requireRole('admin');
@@ -189,6 +284,9 @@ class GlsCostController extends Controller
         return [
             'origin_postcode' => $config['origin_postcode'] ?? '',
             'origin_country' => $config['origin_country'] ?? 'ES',
+            'price_multiplier' => $config['price_multiplier'] ?? '1.0000',
+            'gls_fuel_pct_current' => $config['gls_fuel_pct_current'] ?? '0.00',
+            'remote_postcode_prefixes' => $config['remote_postcode_prefixes'] ?? '',
             'default_weight_per_carro_kg' => $config['default_weight_per_carro_kg'] ?? '5.00',
             'default_weight_per_caja_kg' => $config['default_weight_per_caja_kg'] ?? '2.50',
             'default_parcels_per_carro' => $config['default_parcels_per_carro'] ?? '1.00',

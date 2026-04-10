@@ -2090,6 +2090,9 @@ async function saveSettings() {
       await api('shipping-config', 'PUT', {
         origin_postcode: document.getElementById('shipOriginPostcode').value.trim(),
         origin_country: document.getElementById('shipOriginCountry').value.trim().toUpperCase(),
+        price_multiplier: document.getElementById('shipPriceMultiplier').value || '1.0000',
+        gls_fuel_pct_current: document.getElementById('shipFuelPct').value || '0.00',
+        remote_postcode_prefixes: document.getElementById('shipRemotePrefixes').value || '',
         default_weight_per_carro_kg: document.getElementById('shipWeightPerCarro').value,
         default_weight_per_caja_kg: document.getElementById('shipWeightPerCaja').value,
         default_parcels_per_carro: document.getElementById('shipParcelsPerCarro').value,
@@ -2110,6 +2113,9 @@ function applyShippingConfigToForm(gls) {
   const defaults = gls || {
     origin_postcode: '',
     origin_country: 'ES',
+    price_multiplier: '1.0000',
+    gls_fuel_pct_current: '0.00',
+    remote_postcode_prefixes: '',
     default_weight_per_carro_kg: '5.00',
     default_weight_per_caja_kg: '2.50',
     default_parcels_per_carro: '1.00',
@@ -2121,6 +2127,9 @@ function applyShippingConfigToForm(gls) {
 
   document.getElementById('shipOriginPostcode').value = defaults.origin_postcode || '';
   document.getElementById('shipOriginCountry').value = defaults.origin_country || 'ES';
+  document.getElementById('shipPriceMultiplier').value = defaults.price_multiplier || '1.0000';
+  document.getElementById('shipFuelPct').value = defaults.gls_fuel_pct_current || '0.00';
+  document.getElementById('shipRemotePrefixes').value = defaults.remote_postcode_prefixes || '';
   document.getElementById('shipWeightPerCarro').value = defaults.default_weight_per_carro_kg || '5.00';
   document.getElementById('shipWeightPerCaja').value = defaults.default_weight_per_caja_kg || '2.50';
   document.getElementById('shipParcelsPerCarro').value = defaults.default_parcels_per_carro || '1.00';
@@ -2133,12 +2142,375 @@ function applyShippingConfigToForm(gls) {
   if (settingsSection) settingsSection.style.display = isAdmin ? '' : 'none';
   const ratesSection = document.getElementById('shippingRatesSection');
   if (ratesSection) ratesSection.style.display = isAdmin ? '' : 'none';
+  const alertsSection = document.getElementById('shippingAlertsSection');
+  if (alertsSection) alertsSection.style.display = isAdmin ? '' : 'none';
 
-  ['shipOriginPostcode', 'shipOriginCountry', 'shipWeightPerCarro', 'shipWeightPerCaja', 'shipParcelsPerCarro', 'shipParcelsPerCaja', 'shipVolumePerCarro', 'shipVolumePerCaja', 'shipUseVolumetric']
+  ['shipOriginPostcode', 'shipOriginCountry', 'shipPriceMultiplier', 'shipFuelPct', 'shipRemotePrefixes', 'shipWeightPerCarro', 'shipWeightPerCaja', 'shipParcelsPerCarro', 'shipParcelsPerCaja', 'shipVolumePerCarro', 'shipVolumePerCaja', 'shipUseVolumetric']
     .forEach(id => {
       const el = document.getElementById(id);
       if (el) el.disabled = !isAdmin;
     });
+
+  if (isAdmin) loadShippingAlerts();
+}
+
+async function updateFuelPctOnly() {
+  const val = parseFloat(document.getElementById('shipFuelPct').value || 0);
+  if (isNaN(val) || val < 0 || val > 100) return showToast('Combustible debe estar entre 0 y 100');
+
+  if (!await appConfirm(`Aplicar nuevo recargo de combustible: <b>${val.toFixed(2)}%</b>?<br><span style="font-size:11px;color:var(--text-dim)">Las hojas calculadas hasta ahora mantendran sus costes; las nuevas usaran el nuevo %.</span>`, { title: 'Actualizar combustible GLS', okText: 'Aplicar', danger: false })) return;
+
+  try {
+    await api('shipping-config/fuel', 'PUT', { fuel_pct: val });
+    showToast('Combustible actualizado: ' + val.toFixed(2) + '%');
+  } catch (e) {
+    showToast('Error: ' + e.message);
+  }
+}
+
+// ── MODAL VARIABLES DE CALCULO (admin) ──
+let varsVehiclesData = [];
+let varsVehiclesEdited = {};
+
+async function openVarsModal() {
+  if (typeof APP_USER === 'undefined' || APP_USER.role !== 'admin') {
+    return showToast('Solo admin');
+  }
+
+  try {
+    const [appSettings, glsConfig, vehiclesList] = await Promise.all([
+      api('settings'),
+      api('shipping-config'),
+      api('vehicles'),
+    ]);
+
+    // App
+    document.getElementById('vSpeed').value = appSettings.default_speed_kmh || 50;
+    document.getElementById('vBaseUnload').value = appSettings.base_unload_min || 5;
+    document.getElementById('vLunchDur').value = appSettings.lunch_duration_min || 60;
+    document.getElementById('vLunchEarly').value = appSettings.lunch_earliest || '12:00';
+    document.getElementById('vLunchLate').value = appSettings.lunch_latest || '15:30';
+
+    // GLS
+    document.getElementById('vGlsOriginCp').value = glsConfig.origin_postcode || '';
+    document.getElementById('vGlsOriginCountry').value = glsConfig.origin_country || 'ES';
+    document.getElementById('vGlsMultiplier').value = glsConfig.price_multiplier || '1.0000';
+    document.getElementById('vGlsFuelPct').value = glsConfig.gls_fuel_pct_current || '0.00';
+    document.getElementById('vGlsRemotePrefixes').value = glsConfig.remote_postcode_prefixes || '';
+    document.getElementById('vGlsKgCarro').value = glsConfig.default_weight_per_carro_kg || '5.00';
+    document.getElementById('vGlsKgCaja').value = glsConfig.default_weight_per_caja_kg || '2.50';
+    document.getElementById('vGlsParcCarro').value = glsConfig.default_parcels_per_carro || '1.00';
+    document.getElementById('vGlsParcCaja').value = glsConfig.default_parcels_per_caja || '1.00';
+    document.getElementById('vGlsVolCarro').value = glsConfig.default_volume_per_carro_cm3 || '0';
+    document.getElementById('vGlsVolCaja').value = glsConfig.default_volume_per_caja_cm3 || '0';
+    document.getElementById('vGlsUseVol').value = parseInt(glsConfig.use_volumetric_weight || 0, 10) ? '1' : '0';
+
+    // Vehiculos
+    varsVehiclesData = Array.isArray(vehiclesList) ? vehiclesList : [];
+    varsVehiclesEdited = {};
+    renderVarsVehicles();
+
+    switchVarsTab('app');
+    document.getElementById('varsModal').classList.add('open');
+  } catch (e) {
+    showToast('Error cargando variables: ' + e.message);
+  }
+}
+
+function closeVarsModal() {
+  document.getElementById('varsModal').classList.remove('open');
+}
+
+function switchVarsTab(tab) {
+  document.querySelectorAll('.vars-tab').forEach(b => {
+    b.classList.toggle('active', b.dataset.varsTab === tab);
+  });
+  document.querySelectorAll('.vars-section').forEach(s => {
+    s.classList.toggle('active', s.dataset.varsSection === tab);
+  });
+}
+
+function renderVarsVehicles() {
+  const el = document.getElementById('varsVehiclesList');
+  if (!el) return;
+  if (!varsVehiclesData.length) {
+    el.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-dim)">No hay vehiculos cargados.</div>';
+    return;
+  }
+  let html = '';
+  varsVehiclesData.forEach(v => {
+    const cost = v.cost_per_km !== null && v.cost_per_km !== undefined ? v.cost_per_km : '0.00';
+    const inactive = !parseInt(v.active) ? ' style="opacity:0.5"' : '';
+    html += `<div class="vars-row"${inactive}>
+      <div>
+        <label><b>${esc(v.name)}</b>${v.plate ? ' · ' + esc(v.plate) : ''}${!parseInt(v.active) ? ' [INACTIVO]' : ''}</label>
+        <div class="help">€/km recorrido</div>
+      </div>
+      <input type="number" min="0" step="0.01" value="${cost}" data-vehicle-id="${v.id}" oninput="onVehicleCostChange(${v.id}, this.value)">
+    </div>`;
+  });
+  el.innerHTML = html;
+}
+
+function onVehicleCostChange(vehicleId, value) {
+  varsVehiclesEdited[vehicleId] = parseFloat(value || 0);
+}
+
+async function saveVars() {
+  try {
+    // 1. App settings
+    await api('settings', 'PUT', {
+      default_speed_kmh: document.getElementById('vSpeed').value,
+      base_unload_min: document.getElementById('vBaseUnload').value,
+      lunch_duration_min: document.getElementById('vLunchDur').value,
+      lunch_earliest: document.getElementById('vLunchEarly').value,
+      lunch_latest: document.getElementById('vLunchLate').value,
+    });
+
+    // 2. GLS config
+    await api('shipping-config', 'PUT', {
+      origin_postcode: document.getElementById('vGlsOriginCp').value.trim(),
+      origin_country: document.getElementById('vGlsOriginCountry').value.trim().toUpperCase(),
+      price_multiplier: document.getElementById('vGlsMultiplier').value || '1.0000',
+      gls_fuel_pct_current: document.getElementById('vGlsFuelPct').value || '0.00',
+      remote_postcode_prefixes: document.getElementById('vGlsRemotePrefixes').value || '',
+      default_weight_per_carro_kg: document.getElementById('vGlsKgCarro').value,
+      default_weight_per_caja_kg: document.getElementById('vGlsKgCaja').value,
+      default_parcels_per_carro: document.getElementById('vGlsParcCarro').value,
+      default_parcels_per_caja: document.getElementById('vGlsParcCaja').value,
+      default_volume_per_carro_cm3: document.getElementById('vGlsVolCarro').value,
+      default_volume_per_caja_cm3: document.getElementById('vGlsVolCaja').value,
+      use_volumetric_weight: document.getElementById('vGlsUseVol').value === '1' ? 1 : 0,
+    });
+
+    // 3. Vehiculos editados (solo los que cambiaron)
+    const vehicleIds = Object.keys(varsVehiclesEdited);
+    if (vehicleIds.length) {
+      await Promise.all(vehicleIds.map(async (id) => {
+        const veh = varsVehiclesData.find(v => parseInt(v.id) === parseInt(id));
+        if (!veh) return;
+        await api('vehicles/' + id, 'PUT', {
+          name: veh.name,
+          plate: veh.plate || '',
+          delegation_id: veh.delegation_id || null,
+          max_weight_kg: veh.max_weight_kg,
+          max_volume_m3: veh.max_volume_m3,
+          max_items: veh.max_items,
+          cost_per_km: varsVehiclesEdited[id],
+        });
+      }));
+    }
+
+    showToast('Variables guardadas');
+    closeVarsModal();
+    // Recargar vehiculos en cache
+    if (typeof loadVehicles === 'function') loadVehicles();
+  } catch (e) {
+    showToast('Error: ' + e.message);
+  }
+}
+
+// ── INFORME DE RENTABILIDAD GLS ──
+function openRentabilityReport() {
+  const today = todayStr();
+  const monthAgo = new Date();
+  monthAgo.setDate(monthAgo.getDate() - 30);
+  const fromStr = monthAgo.toISOString().slice(0, 10);
+
+  document.getElementById('rentFrom').value = fromStr;
+  document.getElementById('rentTo').value = today;
+  document.getElementById('rentReportContent').innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-dim)">Pulsa "Calcular" para generar el informe.</div>';
+  document.getElementById('rentReportModal').classList.add('open');
+}
+
+function closeRentabilityReport() {
+  document.getElementById('rentReportModal').classList.remove('open');
+}
+
+async function loadRentabilityReport() {
+  const from = document.getElementById('rentFrom').value;
+  const to = document.getElementById('rentTo').value;
+  if (!from || !to) return showToast('Selecciona fechas');
+
+  const el = document.getElementById('rentReportContent');
+  el.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-dim)">Cargando...</div>';
+
+  try {
+    const r = await api(`shipping-costs/range-report?from=${from}&to=${to}`);
+    renderRentabilityReport(r);
+  } catch (e) {
+    el.innerHTML = '<div style="padding:20px;color:var(--danger);text-align:center">Error: ' + esc(e.message) + '</div>';
+  }
+}
+
+function renderRentabilityReport(r) {
+  const el = document.getElementById('rentReportContent');
+  const t = r.totals || {};
+  const entregas = parseInt(t.entregas || 0);
+
+  if (!entregas) {
+    el.innerHTML = `<div style="padding:30px;text-align:center;color:var(--text-dim)">
+      No hay datos de coste calculados en el rango ${esc(r.from)} a ${esc(r.to)}.<br>
+      <span style="font-size:10px">Calcula la paqueteria de las hojas primero (boton "Calcular paqueteria" en cada hoja).</span>
+    </div>`;
+    return;
+  }
+
+  const totalKm = numVal(t.total_km);
+  const totalOwn = numVal(t.total_own);
+  const totalGls = numVal(t.total_gls);
+  const ahorro = numVal(t.ahorro_potencial);
+  const nExt = parseInt(t.n_externalize || 0);
+  const nOwn = parseInt(t.n_own || 0);
+  const pctExt = entregas > 0 ? Math.round(100 * nExt / entregas) : 0;
+
+  let html = '';
+
+  // ── Resumen totales ──
+  html += `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:14px">
+    <div style="padding:10px;background:var(--surface);border:1px solid var(--border);border-radius:8px">
+      <div style="font-size:10px;color:var(--text-dim)">Entregas</div>
+      <div style="font-size:20px;font-weight:800">${entregas}</div>
+    </div>
+    <div style="padding:10px;background:var(--surface);border:1px solid var(--border);border-radius:8px">
+      <div style="font-size:10px;color:var(--text-dim)">Total km flota</div>
+      <div style="font-size:20px;font-weight:800">${formatQty(totalKm)}</div>
+    </div>
+    <div style="padding:10px;background:var(--surface);border:1px solid var(--border);border-radius:8px">
+      <div style="font-size:10px;color:var(--text-dim)">Coste flota propia</div>
+      <div style="font-size:20px;font-weight:800;color:var(--accent3)">${formatMoney(totalOwn)}</div>
+    </div>
+    <div style="padding:10px;background:var(--surface);border:1px solid var(--border);border-radius:8px">
+      <div style="font-size:10px;color:var(--text-dim)">Coste GLS estimado</div>
+      <div style="font-size:20px;font-weight:800;color:var(--accent2)">${formatMoney(totalGls)}</div>
+    </div>
+    <div style="padding:10px;background:rgba(45,125,45,0.1);border:1px solid #2d7d2d;border-radius:8px">
+      <div style="font-size:10px;color:#2d7d2d">Ahorro potencial si se externaliza lo barato</div>
+      <div style="font-size:20px;font-weight:800;color:#2d7d2d">${formatMoney(ahorro)}</div>
+    </div>
+  </div>`;
+
+  html += `<div style="margin-bottom:10px;font-size:11px;color:var(--text-dim)">
+    <b>${nExt}</b> entregas (${pctExt}%) saldrian mas baratas por GLS · <b>${nOwn}</b> mejor en flota propia
+  </div>`;
+
+  // ── Por dia ──
+  if (r.daily && r.daily.length) {
+    html += '<div style="font-weight:700;margin:14px 0 6px;color:var(--accent)">Por dia</div>';
+    html += '<table style="width:100%;border-collapse:collapse;font-size:11px"><thead><tr style="background:var(--surface)">'
+      + '<th style="padding:5px;text-align:left;border-bottom:1px solid var(--border)">Fecha</th>'
+      + '<th style="padding:5px;text-align:right;border-bottom:1px solid var(--border)">Entregas</th>'
+      + '<th style="padding:5px;text-align:right;border-bottom:1px solid var(--border)">Km</th>'
+      + '<th style="padding:5px;text-align:right;border-bottom:1px solid var(--border)">Flota</th>'
+      + '<th style="padding:5px;text-align:right;border-bottom:1px solid var(--border)">GLS</th>'
+      + '<th style="padding:5px;text-align:right;border-bottom:1px solid var(--border)">Ahorro</th>'
+      + '</tr></thead><tbody>';
+    r.daily.forEach(d => {
+      html += `<tr>
+        <td style="padding:4px 5px;border-bottom:1px solid var(--border)">${esc(d.fecha)}</td>
+        <td style="padding:4px 5px;text-align:right;border-bottom:1px solid var(--border)">${d.entregas}</td>
+        <td style="padding:4px 5px;text-align:right;border-bottom:1px solid var(--border)">${formatQty(numVal(d.total_km))}</td>
+        <td style="padding:4px 5px;text-align:right;border-bottom:1px solid var(--border)">${formatMoney(numVal(d.total_own))}</td>
+        <td style="padding:4px 5px;text-align:right;border-bottom:1px solid var(--border)">${formatMoney(numVal(d.total_gls))}</td>
+        <td style="padding:4px 5px;text-align:right;border-bottom:1px solid var(--border);color:#2d7d2d;font-weight:700">${formatMoney(numVal(d.ahorro_potencial))}</td>
+      </tr>`;
+    });
+    html += '</tbody></table>';
+  }
+
+  // ── Por ruta ──
+  if (r.by_ruta && r.by_ruta.length) {
+    html += '<div style="font-weight:700;margin:14px 0 6px;color:var(--accent)">Por ruta comercial</div>';
+    html += '<table style="width:100%;border-collapse:collapse;font-size:11px"><thead><tr style="background:var(--surface)">'
+      + '<th style="padding:5px;text-align:left;border-bottom:1px solid var(--border)">Ruta</th>'
+      + '<th style="padding:5px;text-align:right;border-bottom:1px solid var(--border)">Entregas</th>'
+      + '<th style="padding:5px;text-align:right;border-bottom:1px solid var(--border)">Km flota</th>'
+      + '<th style="padding:5px;text-align:right;border-bottom:1px solid var(--border)">Flota</th>'
+      + '<th style="padding:5px;text-align:right;border-bottom:1px solid var(--border)">GLS</th>'
+      + '<th style="padding:5px;text-align:right;border-bottom:1px solid var(--border)">Ahorro</th>'
+      + '<th style="padding:5px;text-align:right;border-bottom:1px solid var(--border)">% Ext</th>'
+      + '</tr></thead><tbody>';
+    r.by_ruta.forEach(ru => {
+      const pct = ru.entregas > 0 ? Math.round(100 * ru.n_externalize / ru.entregas) : 0;
+      html += `<tr>
+        <td style="padding:4px 5px;border-bottom:1px solid var(--border)"><b>${esc(ru.ruta_name)}</b></td>
+        <td style="padding:4px 5px;text-align:right;border-bottom:1px solid var(--border)">${ru.entregas}</td>
+        <td style="padding:4px 5px;text-align:right;border-bottom:1px solid var(--border)">${formatQty(numVal(ru.total_km))}</td>
+        <td style="padding:4px 5px;text-align:right;border-bottom:1px solid var(--border)">${formatMoney(numVal(ru.total_own))}</td>
+        <td style="padding:4px 5px;text-align:right;border-bottom:1px solid var(--border)">${formatMoney(numVal(ru.total_gls))}</td>
+        <td style="padding:4px 5px;text-align:right;border-bottom:1px solid var(--border);color:#2d7d2d;font-weight:700">${formatMoney(numVal(ru.ahorro_potencial))}</td>
+        <td style="padding:4px 5px;text-align:right;border-bottom:1px solid var(--border)">${pct}%</td>
+      </tr>`;
+    });
+    html += '</tbody></table>';
+  }
+
+  // ── Top clientes ──
+  if (r.top_externalize && r.top_externalize.length) {
+    html += '<div style="font-weight:700;margin:14px 0 6px;color:var(--accent)">Top 25 clientes a externalizar (mas ahorro)</div>';
+    html += '<table style="width:100%;border-collapse:collapse;font-size:11px"><thead><tr style="background:var(--surface)">'
+      + '<th style="padding:5px;text-align:left;border-bottom:1px solid var(--border)">#</th>'
+      + '<th style="padding:5px;text-align:left;border-bottom:1px solid var(--border)">Cliente</th>'
+      + '<th style="padding:5px;text-align:left;border-bottom:1px solid var(--border)">CP</th>'
+      + '<th style="padding:5px;text-align:right;border-bottom:1px solid var(--border)">Entregas</th>'
+      + '<th style="padding:5px;text-align:right;border-bottom:1px solid var(--border)">Km medio</th>'
+      + '<th style="padding:5px;text-align:right;border-bottom:1px solid var(--border)">Flota</th>'
+      + '<th style="padding:5px;text-align:right;border-bottom:1px solid var(--border)">GLS</th>'
+      + '<th style="padding:5px;text-align:right;border-bottom:1px solid var(--border)">Ahorro</th>'
+      + '</tr></thead><tbody>';
+    r.top_externalize.forEach((c, i) => {
+      html += `<tr>
+        <td style="padding:4px 5px;border-bottom:1px solid var(--border);color:var(--text-dim)">${i+1}</td>
+        <td style="padding:4px 5px;border-bottom:1px solid var(--border)"><b>${esc(c.client_name)}</b></td>
+        <td style="padding:4px 5px;border-bottom:1px solid var(--border)">${esc(c.postcode || '')}</td>
+        <td style="padding:4px 5px;text-align:right;border-bottom:1px solid var(--border)">${c.entregas}</td>
+        <td style="padding:4px 5px;text-align:right;border-bottom:1px solid var(--border)">${formatQty(numVal(c.avg_km))}</td>
+        <td style="padding:4px 5px;text-align:right;border-bottom:1px solid var(--border)">${formatMoney(numVal(c.total_own))}</td>
+        <td style="padding:4px 5px;text-align:right;border-bottom:1px solid var(--border)">${formatMoney(numVal(c.total_gls))}</td>
+        <td style="padding:4px 5px;text-align:right;border-bottom:1px solid var(--border);color:#2d7d2d;font-weight:700">${formatMoney(numVal(c.ahorro_potencial))}</td>
+      </tr>`;
+    });
+    html += '</tbody></table>';
+  }
+
+  el.innerHTML = html;
+}
+
+async function loadShippingAlerts() {
+  const el = document.getElementById('shippingAlertsContent');
+  if (!el) return;
+  el.innerHTML = 'Cargando alertas...';
+  try {
+    const data = await api('shipping-config/alerts');
+    const stats = data.stats || {};
+    const unmapped = data.unmapped_postcodes || [];
+
+    let html = '';
+    html += `<div style="display:flex;gap:14px;margin-bottom:8px;flex-wrap:wrap">`;
+    html += `<span><b>${stats.total_clientes || 0}</b> clientes activos</span>`;
+    if (stats.sin_cp) html += `<span style="color:var(--danger)"><b>${stats.sin_cp}</b> sin codigo postal</span>`;
+    if (stats.sin_coords) html += `<span style="color:var(--accent2)"><b>${stats.sin_coords}</b> sin coordenadas</span>`;
+    html += `</div>`;
+
+    if (unmapped.length === 0) {
+      html += '<div style="color:#2d7d2d">✓ Todos los CP de clientes activos tienen zona GLS asignada.</div>';
+    } else {
+      html += `<div style="color:var(--danger);font-weight:700;margin-bottom:4px">⚠ ${unmapped.length} codigos postales sin zona GLS:</div>`;
+      html += '<div style="max-height:160px;overflow-y:auto;border:1px solid var(--border);border-radius:6px;padding:4px">';
+      unmapped.forEach(u => {
+        html += `<div style="padding:3px 6px;border-bottom:1px solid var(--border);font-size:10px">`
+          + `<b>${esc(u.postcode)}</b> · ${u.num_clientes} cliente${u.num_clientes > 1 ? 's' : ''}`
+          + (u.ejemplos ? ` · <span style="color:var(--text-dim)">${esc(u.ejemplos)}</span>` : '')
+          + `</div>`;
+      });
+      html += '</div>';
+      html += '<div style="font-size:10px;color:var(--text-dim);margin-top:4px">Anade prefijos en la tabla de tarifas para que estos CP tengan zona asignada.</div>';
+    }
+
+    el.innerHTML = html;
+  } catch (e) {
+    el.innerHTML = '<div style="color:var(--danger)">Error cargando alertas: ' + esc(e.message) + '</div>';
+  }
 }
 
 function renderShippingRatesList() {

@@ -4,6 +4,8 @@ class Controller
 {
     protected function json($data, int $code = 200)
     {
+        // Limpiar cualquier output previo (warnings PHP con display_errors)
+        if (ob_get_level()) ob_end_clean();
         http_response_code($code);
         header('Content-Type: application/json');
         $json = json_encode($data, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);

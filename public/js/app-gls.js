@@ -485,25 +485,60 @@ async function loadDashboard() {
   const el = document.getElementById('dashboardPanel');
 
   try {
-    const s = await api('stats?from=' + from + '&to=' + to);
-    el.innerHTML = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">'
+    const [s, g] = await Promise.all([
+      api('stats?from=' + from + '&to=' + to),
+      api('stats/gls').catch(() => null)
+    ]);
+
+    let html = '<h4 style="margin:0 0 8px;color:var(--accent3);font-size:13px">Rutas (periodo)</h4>'
+      + '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px">'
       + dashCard('Dias planificados', s.days)
       + dashCard('Rutas totales', s.total_routes)
       + dashCard('Km totales', parseFloat(s.total_km).toFixed(1) + ' km')
       + dashCard('Horas totales', parseFloat(s.total_hours).toFixed(1) + ' h')
-      + dashCard('Media km/ruta', parseFloat(s.avg_km_per_route).toFixed(1) + ' km')
-      + dashCard('Media h/ruta', parseFloat(s.avg_h_per_route).toFixed(1) + ' h')
       + dashCard('Paradas totales', s.total_stops)
-      + dashCard('Completadas', s.completed_stops + ' (' + (s.total_stops > 0 ? Math.round(s.completed_stops / s.total_stops * 100) : 0) + '%)')
-      + dashCard('Saltadas', s.skipped_stops || 0)
       + dashCard('Coste estimado', parseFloat(s.total_cost).toFixed(2) + ' EUR')
-    + '</div>';
-  } catch (e) { el.innerHTML = '<div style="padding:10px;color:var(--text-dim)">Sin datos</div>'; }
+      + '</div>';
+
+    if (g) {
+      const pctGeo = g.geocode_total > 0 ? Math.round(g.geocode_con_coords / g.geocode_total * 100) : 0;
+      html += '<h4 style="margin:0 0 8px;color:var(--accent3);font-size:13px">Comparativa GLS (historico)</h4>'
+        + '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px">'
+        + dashCard('Hojas analizadas', g.hojas_analizadas)
+        + dashCard('Lineas analizadas', g.lineas_analizadas)
+        + dashCard('Ahorro externalizable', formatMoney(g.ahorro_externalizables))
+        + dashCard('Lineas ruta propia', g.lineas_ruta_propia, '#2d7d2d')
+        + dashCard('Lineas externalizar', g.lineas_externalizar, '#e67e22')
+        + dashCard('Lineas empate', g.lineas_empate, '#85725e')
+        + '</div>';
+
+      html += '<h4 style="margin:0 0 8px;color:var(--accent3);font-size:13px">Flota y cobertura</h4>'
+        + '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px">'
+        + dashCard('Geocodificacion', g.geocode_con_coords + '/' + g.geocode_total + ' (' + pctGeo + '%)', pctGeo >= 95 ? '#2d7d2d' : '#e67e22')
+        + dashCard('Vehiculos sin usar', g.vehiculos_sin_usar, g.vehiculos_sin_usar > 10 ? '#e67e22' : null)
+        + '</div>';
+
+      if (g.top_vehiculos && g.top_vehiculos.length) {
+        html += '<h4 style="margin:0 0 8px;color:var(--accent3);font-size:13px">Top vehiculos</h4>'
+          + '<div style="display:grid;grid-template-columns:1fr;gap:4px;margin-bottom:14px">';
+        g.top_vehiculos.forEach(function (v, i) {
+          html += '<div style="display:flex;justify-content:space-between;padding:4px 8px;background:var(--surface);border:1px solid var(--border);border-radius:6px;font-size:11px">'
+            + '<span>' + (i + 1) + '. ' + esc(v.name) + '</span>'
+            + '<span style="font-weight:700">' + v.num_hojas + ' hojas</span>'
+            + '</div>';
+        });
+        html += '</div>';
+      }
+    }
+
+    el.innerHTML = html;
+  } catch (e) { el.innerHTML = '<div style="padding:10px;color:var(--text-dim)">Sin datos: ' + esc(e.message) + '</div>'; }
 }
 
-function dashCard(label, value) {
+function dashCard(label, value, color) {
+  const c = color || 'var(--text-bright, var(--accent3))';
   return '<div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:8px 10px">'
-    + '<div style="font-size:16px;font-weight:700;color:var(--text-bright)">' + value + '</div>'
+    + '<div style="font-size:16px;font-weight:700;color:' + c + '">' + value + '</div>'
     + '<div style="font-size:9px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px">' + label + '</div>'
   + '</div>';
 }

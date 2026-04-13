@@ -12,6 +12,178 @@ let mapMarkers = [];
 let clientMarkerMap = {};
 let mapRouteLine = null;
 let mapPreviewMarker = null;
+let clusteringEnabled = localStorage.getItem('veraroute.clusterEnabled') !== 'false';
+let markerClusterGroup = (map && typeof L.markerClusterGroup === 'function')
+  ? L.markerClusterGroup({ maxClusterRadius: clusterRadius, spiderfyOnMaxZoom: true, disableClusteringAtZoom: clusterDisableZoom, iconCreateFunction: function(cluster) {
+      const count = cluster.getChildCount();
+      let size = 32, bg = '#8e8b30', border = 'rgba(255,255,255,0.9)';
+      if (count >= 50) { size = 44; bg = '#46331f'; }
+      else if (count >= 20) { size = 38; bg = '#6b6520'; }
+      const fontSize = size < 38 ? 11 : 13;
+      return L.divIcon({
+        html: '<div style="background:' + bg + ';color:#fff;width:' + size + 'px;height:' + size + 'px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:' + fontSize + 'px;font-weight:700;border:2.5px solid ' + border + ';box-shadow:0 2px 8px rgba(0,0,0,.35);">' + count + '</div>',
+        className: 'map-cluster-icon',
+        iconSize: [size, size],
+      });
+    }})
+  : null;
+if (markerClusterGroup && map && clusteringEnabled) map.addLayer(markerClusterGroup);
+
+// Control de ajustes de mapa (esquina superior derecha)
+let clusterRadius = parseInt(localStorage.getItem('veraroute.clusterRadius') || '40', 10);
+let clusterDisableZoom = parseInt(localStorage.getItem('veraroute.clusterZoom') || '15', 10);
+
+function clusterIcon(cluster) {
+  const count = cluster.getChildCount();
+  let size = 32, bg = '#8e8b30', border = 'rgba(255,255,255,0.9)';
+  if (count >= 50) { size = 44; bg = '#46331f'; }
+  else if (count >= 20) { size = 38; bg = '#6b6520'; }
+  const fontSize = size < 38 ? 11 : 13;
+  return L.divIcon({
+    html: '<div style="background:' + bg + ';color:#fff;width:' + size + 'px;height:' + size + 'px;'
+      + 'border-radius:50%;display:flex;align-items:center;justify-content:center;'
+      + 'font-size:' + fontSize + 'px;font-weight:700;border:2.5px solid ' + border + ';'
+      + 'box-shadow:0 2px 8px rgba(0,0,0,.35);">' + count + '</div>',
+    className: 'map-cluster-icon',
+    iconSize: [size, size],
+  });
+}
+
+function rebuildClusterGroup() {
+  if (!map) return;
+  if (markerClusterGroup) map.removeLayer(markerClusterGroup);
+  markerClusterGroup = L.markerClusterGroup({
+    maxClusterRadius: clusterRadius,
+    spiderfyOnMaxZoom: true,
+    disableClusteringAtZoom: clusterDisableZoom,
+    iconCreateFunction: clusterIcon
+  });
+  if (clusteringEnabled) map.addLayer(markerClusterGroup);
+  drawMap();
+}
+
+if (map && markerClusterGroup) {
+  const MapSettings = L.Control.extend({
+    options: { position: 'topright' },
+    onAdd: function () {
+      const wrapper = L.DomUtil.create('div', 'leaflet-bar leaflet-control map-settings-ctrl');
+      wrapper.style.cssText = 'position:relative;';
+      L.DomEvent.disableClickPropagation(wrapper);
+      L.DomEvent.disableScrollPropagation(wrapper);
+
+      // Boton rueda
+      const btn = L.DomUtil.create('a', 'map-settings-btn', wrapper);
+      btn.href = '#';
+      btn.title = 'Ajustes del mapa';
+      btn.style.cssText = 'display:flex;align-items:center;justify-content:center;width:34px;height:34px;font-size:18px;text-decoration:none;color:#333;';
+      btn.innerHTML = '\u2699';
+
+      // Panel desplegable
+      const panel = L.DomUtil.create('div', 'map-settings-panel', wrapper);
+      panel.style.cssText = 'display:none;position:absolute;top:38px;right:0;background:#fff;border-radius:8px;'
+        + 'box-shadow:0 4px 16px rgba(0,0,0,.18);padding:14px 16px;width:220px;font-size:11px;color:#333;z-index:1000;';
+
+      panel.innerHTML = ''
+        // Toggle agrupar
+        + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">'
+        + '  <span style="font-weight:700;font-size:12px;">Agrupar marcadores</span>'
+        + '  <label style="position:relative;display:inline-block;width:36px;height:20px;margin:0;cursor:pointer;">'
+        + '    <input type="checkbox" id="mcToggle"' + (clusteringEnabled ? ' checked' : '') + ' style="opacity:0;width:0;height:0;">'
+        + '    <span id="mcTrack" style="position:absolute;inset:0;background:' + (clusteringEnabled ? '#2d7d2d' : '#ccc') + ';border-radius:10px;transition:background .2s;"></span>'
+        + '    <span id="mcKnob" style="position:absolute;top:3px;left:' + (clusteringEnabled ? '19' : '3') + 'px;width:14px;height:14px;background:#fff;border-radius:50%;transition:left .2s;box-shadow:0 1px 2px rgba(0,0,0,.3);"></span>'
+        + '  </label>'
+        + '</div>'
+        // Slider radio
+        + '<div id="mcRadiusGroup" style="margin-bottom:10px;">'
+        + '  <div style="display:flex;justify-content:space-between;margin-bottom:3px;">'
+        + '    <span>Radio de agrupacion</span><span id="mcRadiusVal" style="font-weight:600;">' + clusterRadius + ' px</span>'
+        + '  </div>'
+        + '  <input type="range" id="mcRadius" min="20" max="120" step="5" value="' + clusterRadius + '"'
+        + '    style="width:100%;accent-color:#8e8b30;cursor:pointer;">'
+        + '  <div style="display:flex;justify-content:space-between;color:#999;font-size:9px;"><span>Poco</span><span>Mucho</span></div>'
+        + '</div>'
+        // Slider zoom
+        + '<div id="mcZoomGroup" style="margin-bottom:4px;">'
+        + '  <div style="display:flex;justify-content:space-between;margin-bottom:3px;">'
+        + '    <span>Desagrupar a zoom</span><span id="mcZoomVal" style="font-weight:600;">' + clusterDisableZoom + '</span>'
+        + '  </div>'
+        + '  <input type="range" id="mcZoom" min="10" max="19" step="1" value="' + clusterDisableZoom + '"'
+        + '    style="width:100%;accent-color:#8e8b30;cursor:pointer;">'
+        + '  <div style="display:flex;justify-content:space-between;color:#999;font-size:9px;"><span>Lejos</span><span>Cerca</span></div>'
+        + '</div>';
+
+      // Toggle abrir/cerrar
+      btn.addEventListener('click', function (e) {
+        e.preventDefault();
+        const open = panel.style.display === 'none';
+        panel.style.display = open ? 'block' : 'none';
+      });
+
+      // Cerrar al clicar fuera
+      document.addEventListener('click', function (e) {
+        if (!wrapper.contains(e.target)) panel.style.display = 'none';
+      });
+
+      // Eventos del panel
+      setTimeout(function () {
+        const toggle = document.getElementById('mcToggle');
+        const track = document.getElementById('mcTrack');
+        const knob = document.getElementById('mcKnob');
+        const radiusSlider = document.getElementById('mcRadius');
+        const radiusVal = document.getElementById('mcRadiusVal');
+        const zoomSlider = document.getElementById('mcZoom');
+        const zoomVal = document.getElementById('mcZoomVal');
+        const radiusGroup = document.getElementById('mcRadiusGroup');
+        const zoomGroup = document.getElementById('mcZoomGroup');
+
+        function updateDisabledState() {
+          const disabled = !clusteringEnabled;
+          radiusGroup.style.opacity = disabled ? '0.4' : '1';
+          zoomGroup.style.opacity = disabled ? '0.4' : '1';
+          radiusSlider.disabled = disabled;
+          zoomSlider.disabled = disabled;
+        }
+
+        if (toggle) toggle.addEventListener('change', function () {
+          clusteringEnabled = this.checked;
+          localStorage.setItem('veraroute.clusterEnabled', clusteringEnabled);
+          track.style.background = clusteringEnabled ? '#2d7d2d' : '#ccc';
+          knob.style.left = clusteringEnabled ? '19px' : '3px';
+          updateDisabledState();
+          if (clusteringEnabled) {
+            map.addLayer(markerClusterGroup);
+          } else {
+            map.removeLayer(markerClusterGroup);
+          }
+          drawMap();
+        });
+
+        if (radiusSlider) radiusSlider.addEventListener('input', function () {
+          clusterRadius = parseInt(this.value, 10);
+          radiusVal.textContent = clusterRadius + ' px';
+        });
+        if (radiusSlider) radiusSlider.addEventListener('change', function () {
+          localStorage.setItem('veraroute.clusterRadius', clusterRadius);
+          rebuildClusterGroup();
+        });
+
+        if (zoomSlider) zoomSlider.addEventListener('input', function () {
+          clusterDisableZoom = parseInt(this.value, 10);
+          zoomVal.textContent = clusterDisableZoom;
+        });
+        if (zoomSlider) zoomSlider.addEventListener('change', function () {
+          localStorage.setItem('veraroute.clusterZoom', clusterDisableZoom);
+          rebuildClusterGroup();
+        });
+
+        updateDisabledState();
+      }, 0);
+
+      return wrapper;
+    }
+  });
+  map.addControl(new MapSettings());
+}
 
 function delegationIcon(label) {
   return L.divIcon({ className: 'map-icon delegation-icon', html: '<div>' + label + '</div>', iconSize: [28, 28], iconAnchor: [14, 14] });
@@ -100,6 +272,7 @@ function drawMap() {
   mapMarkers.forEach(m => map.removeLayer(m));
   mapMarkers = [];
   clientMarkerMap = {};
+  if (markerClusterGroup) markerClusterGroup.clearLayers();
   routeLines.forEach(l => map.removeLayer(l));
   routeLines = [];
   if (mapRouteLine) { map.removeLayer(mapRouteLine); mapRouteLine = null; }
@@ -150,9 +323,13 @@ function drawMap() {
     }
 
     const marker = L.marker([c.x, c.y], { icon: clientIcon(routeColors.length ? routeColors : '#85725e', label), zIndexOffset: inRoute ? 500 : 100 })
-      .bindTooltip(c.name, { direction: 'top', offset: [0, -10] })
-      .addTo(map);
+      .bindTooltip(c.name, { direction: 'top', offset: [0, -10] });
     marker.on('click', () => openClientModal(c.id));
+    if (clusteringEnabled && markerClusterGroup) {
+      markerClusterGroup.addLayer(marker);
+    } else {
+      marker.addTo(map);
+    }
     mapMarkers.push(marker);
     clientMarkerMap[c.id] = marker;
   });
@@ -204,6 +381,7 @@ function fitMapToMarkers() {
 function clearGeneralMapLayers() {
   mapMarkers.forEach(m => map.removeLayer(m));
   mapMarkers = [];
+  if (markerClusterGroup) markerClusterGroup.clearLayers();
   routeLines.forEach(l => map.removeLayer(l));
   routeLines = [];
   if (mapRouteLine) { map.removeLayer(mapRouteLine); mapRouteLine = null; }

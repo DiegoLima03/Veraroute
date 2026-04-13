@@ -1,4 +1,5 @@
 <?php
+ob_start();
 
 require_once __DIR__ . '/config/env.php';
 Env::load();
@@ -27,6 +28,11 @@ if ($pos !== false) {
     $uri = substr($requestUri, $pos + strlen($basePath));
 }
 $uri = trim($uri, '/');
+
+// Versionado API: api/v1/xxx se resuelve como api/xxx (compatibilidad)
+if (strpos($uri, 'api/v1/') === 0) {
+    $uri = 'api/' . substr($uri, 7);
+}
 
 // Servir ficheros estáticos (css, js) directamente
 if (preg_match('#^public/.+#', $uri) && file_exists(__DIR__ . '/' . $uri)) {
@@ -134,6 +140,7 @@ $router->delete('api/shipping-rates/(\d+)', 'ShippingRateController@destroy');
 
 // API — Dashboard stats
 $router->get('api/stats', 'RouteController@stats');
+$router->get('api/stats/gls', 'GlsCostController@dashboardStats');
 
 // API — Rutas comerciales (asignación de clientes)
 $router->get('api/rutas', 'RutaController@index');
@@ -170,5 +177,31 @@ $router->delete('api/users/(\d+)', 'UserController@destroy');
 $router->get('api/templates', 'TemplateController@index');
 $router->post('api/templates', 'TemplateController@store');
 $router->delete('api/templates/(\d+)', 'TemplateController@destroy');
+
+// Manejador global de excepciones — devuelve JSON limpio en API
+set_exception_handler(function (Throwable $e) {
+    if (ob_get_level()) ob_end_clean();
+    $isApi = strpos($_SERVER['REQUEST_URI'] ?? '', '/api/') !== false;
+    $debug = Env::bool('APP_DEBUG', false);
+    $logDir = __DIR__ . '/logs';
+    if (!is_dir($logDir)) @mkdir($logDir, 0775, true);
+    error_log(
+        date('[Y-m-d H:i:s] ') . get_class($e) . ': ' . $e->getMessage()
+        . ' in ' . $e->getFile() . ':' . $e->getLine() . "\n" . $e->getTraceAsString() . "\n",
+        3,
+        $logDir . '/error.log'
+    );
+    if ($isApi) {
+        http_response_code(500);
+        header('Content-Type: application/json');
+        echo json_encode([
+            'error' => $debug ? get_class($e) . ': ' . $e->getMessage() : 'Error interno del servidor',
+        ]);
+    } else {
+        http_response_code(500);
+        echo $debug ? '<pre>' . htmlspecialchars($e) . '</pre>' : 'Error interno. Contacta con el administrador.';
+    }
+    exit;
+});
 
 $router->dispatch($uri, $_SERVER['REQUEST_METHOD']);

@@ -6,7 +6,7 @@ async function api(endpoint, method = 'GET', body = null) {
   }
   const opts = { method, headers };
   if (body) opts.body = JSON.stringify(body);
-  const res = await fetch('api/' + endpoint, opts);
+  const res = await fetch('api/v1/' + endpoint, opts);
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.error || 'Error ' + res.status);
@@ -17,8 +17,65 @@ async function api(endpoint, method = 'GET', body = null) {
 // ── MODAL HELPER ──────────────────────────────────────────
 function closeModal(id) {
   const el = document.getElementById(id);
-  if (el) el.classList.remove('open');
+  if (el) {
+    el.classList.remove('open');
+    el.setAttribute('aria-hidden', 'true');
+  }
 }
+
+function openModalA11y(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.classList.add('open');
+  el.setAttribute('aria-hidden', 'false');
+  // Focus al primer input visible o al boton de cerrar
+  setTimeout(() => {
+    const focusable = el.querySelector('input:not([type=hidden]):not([disabled]), select:not([disabled]), textarea:not([disabled]), button:not([disabled]), [tabindex]:not([tabindex="-1"])');
+    if (focusable) focusable.focus();
+  }, 50);
+}
+
+// D2: Accesibilidad — aria-modal, Escape, focus trap en todos los overlays
+(function initModalA11y() {
+  document.querySelectorAll('.overlay').forEach(function (overlay) {
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    overlay.setAttribute('aria-hidden', 'true');
+  });
+
+  // Cierre global con Escape
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Escape') return;
+    const openModals = document.querySelectorAll('.overlay.open');
+    if (openModals.length) {
+      const last = openModals[openModals.length - 1];
+      // Buscar el boton de cierre del modal y hacer click
+      const closeBtn = last.querySelector('.mhead button, .mhead [onclick*="close"]');
+      if (closeBtn) { closeBtn.click(); return; }
+      // Fallback: quitar open
+      last.classList.remove('open');
+      last.setAttribute('aria-hidden', 'true');
+    }
+  });
+
+  // Focus trap: Tab dentro del modal abierto
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Tab') return;
+    const openModal = document.querySelector('.overlay.open');
+    if (!openModal) return;
+    const focusable = openModal.querySelectorAll('input:not([type=hidden]):not([disabled]), select:not([disabled]), textarea:not([disabled]), button:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])');
+    if (!focusable.length) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  });
+})();
 
 // ── OSRM ROAD ROUTING ─────────────────────────────────────
 async function fetchOSRMRoute(waypoints) {

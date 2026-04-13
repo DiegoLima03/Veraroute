@@ -4,9 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>VeraRoute — Gestor de Rutas</title>
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<link rel="stylesheet" href="public/vendor/leaflet/leaflet.css" />
 <link rel="stylesheet" href="public/css/app.css?v=<?= time() ?>">
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+<link rel="stylesheet" href="public/vendor/bootstrap-icons/bootstrap-icons.min.css">
 </head>
 <body>
 <?php $u = Auth::currentUser(); ?>
@@ -929,8 +929,10 @@
 <div class="toast" id="toast"></div>
 
 <?php if ($u['role'] !== 'comercial'): ?>
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js"></script>
+<script src="public/vendor/leaflet/leaflet.js"></script>
+<link rel="stylesheet" href="public/vendor/leaflet-markercluster/MarkerCluster.css">
+<script src="public/vendor/leaflet-markercluster/leaflet.markercluster.js"></script>
+<script src="public/vendor/sortable/Sortable.min.js"></script>
 <?php endif; ?>
 <script src="public/js/app-core.js?v=<?= time() ?>"></script>
 <script src="public/js/app-map.js?v=<?= time() ?>"></script>

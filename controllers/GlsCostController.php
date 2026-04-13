@@ -6,6 +6,7 @@ require_once __DIR__ . '/../models/GlsShippingConfig.php';
 require_once __DIR__ . '/../models/ClientCostHistory.php';
 require_once __DIR__ . '/../models/HojaRuta.php';
 require_once __DIR__ . '/../services/RouteCostCalculator.php';
+require_once __DIR__ . '/../models/AuditLog.php';
 
 class GlsCostController extends Controller
 {
@@ -40,7 +41,9 @@ class GlsCostController extends Controller
         if ($fp < 0 || $fp > 100) {
             $this->json(['error' => 'El % de combustible debe estar entre 0 y 100'], 400);
         }
+        $oldFuel = $this->configModel->getCurrentFuelPct();
         $this->configModel->updateConfig(['gls_fuel_pct_current' => round($fp, 2)]);
+        AuditLog::log('update_fuel_pct', 'gls_shipping_config', 'gls_fuel_pct_current', $oldFuel, round($fp, 2));
         $this->json($this->getConfigPayload());
     }
 
@@ -148,7 +151,9 @@ class GlsCostController extends Controller
             $data['use_volumetric_weight'] = !empty($data['use_volumetric_weight']) ? 1 : 0;
         }
 
+        $oldConfig = $this->configModel->getCalculationVariables();
         $this->configModel->updateConfig($data);
+        AuditLog::log('update_shipping_config', 'gls_shipping_config', null, $oldConfig, $data);
         $this->json($this->getConfigPayload());
     }
 
@@ -295,6 +300,80 @@ class GlsCostController extends Controller
             'date' => $date,
             'results' => $results,
             'totals' => $totals,
+        ]);
+    }
+
+    /** GET /api/stats/gls — metricas ejecutivas para dashboard */
+    public function dashboardStats()
+    {
+        Auth::requireRole('admin', 'logistica');
+        $db = Database::connect();
+
+        // Ahorro acumulado historico
+        $savings = $db->query("
+            SELECT
+                COUNT(DISTINCT hoja_ruta_id) as hojas_analizadas,
+                SUM(CASE WHEN recommendation = 'externalize' THEN savings_if_externalized ELSE 0 END) as ahorro_externalizables,
+                SUM(cost_own_route) as total_coste_marginal,
+                SUM(cost_gls_adjusted) as total_coste_gls,
+                COUNT(*) as lineas_analizadas,
+                SUM(CASE WHEN recommendation = 'own_route' THEN 1 ELSE 0 END) as lineas_ruta_propia,
+                SUM(CASE WHEN recommendation = 'externalize' THEN 1 ELSE 0 END) as lineas_externalizar,
+                SUM(CASE WHEN recommendation = 'break_even' THEN 1 ELSE 0 END) as lineas_empate
+            FROM client_cost_history
+            WHERE cost_gls_adjusted > 0
+        ")->fetch();
+
+        // Top 5 vehiculos mas usados (por num hojas)
+        $topVehicles = $db->query("
+            SELECT v.name, COUNT(hr.id) as num_hojas
+            FROM hojas_ruta hr
+            JOIN vehicles v ON v.id = hr.vehicle_id
+            GROUP BY hr.vehicle_id
+            ORDER BY num_hojas DESC
+            LIMIT 5
+        ")->fetchAll();
+
+        // Vehiculos sin usar
+        $unusedVehicles = $db->query("
+            SELECT COUNT(*) as total
+            FROM vehicles v
+            WHERE v.active = 1
+              AND v.id NOT IN (SELECT DISTINCT vehicle_id FROM hojas_ruta WHERE vehicle_id IS NOT NULL)
+        ")->fetch();
+
+        // Cobertura geocodificacion
+        $geocode = $db->query("
+            SELECT
+                COUNT(*) as total,
+                SUM(CASE WHEN x IS NOT NULL AND x != 0 THEN 1 ELSE 0 END) as con_coords
+            FROM clients
+        ")->fetch();
+
+        // Clientes por ruta
+        $clientsByRoute = $db->query("
+            SELECT r.name, r.color, COUNT(cr.client_id) as num_clientes
+            FROM rutas r
+            LEFT JOIN client_rutas cr ON cr.ruta_id = r.id
+            GROUP BY r.id
+            ORDER BY num_clientes DESC
+            LIMIT 10
+        ")->fetchAll();
+
+        $this->json([
+            'hojas_analizadas' => (int) ($savings['hojas_analizadas'] ?? 0),
+            'lineas_analizadas' => (int) ($savings['lineas_analizadas'] ?? 0),
+            'ahorro_externalizables' => round((float) ($savings['ahorro_externalizables'] ?? 0), 2),
+            'total_coste_marginal' => round((float) ($savings['total_coste_marginal'] ?? 0), 2),
+            'total_coste_gls' => round((float) ($savings['total_coste_gls'] ?? 0), 2),
+            'lineas_ruta_propia' => (int) ($savings['lineas_ruta_propia'] ?? 0),
+            'lineas_externalizar' => (int) ($savings['lineas_externalizar'] ?? 0),
+            'lineas_empate' => (int) ($savings['lineas_empate'] ?? 0),
+            'top_vehiculos' => $topVehicles,
+            'vehiculos_sin_usar' => (int) ($unusedVehicles['total'] ?? 0),
+            'geocode_total' => (int) ($geocode['total'] ?? 0),
+            'geocode_con_coords' => (int) ($geocode['con_coords'] ?? 0),
+            'clientes_por_ruta' => $clientsByRoute,
         ]);
     }
 

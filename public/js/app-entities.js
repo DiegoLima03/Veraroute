@@ -498,8 +498,7 @@ function renderClientList() {
         (hasOrd ? '<span class="pill has-ord">PEDIDO</span>' : '') +
         (c.rutas && c.rutas.length ? c.rutas.map(r => {
           const color = normalizeHexColor(r.color) || getRutaColor(r.id);
-          const textColor = getReadableTextColor(color);
-          return '<span class="pill" style="border-color:' + color + '66;color:' + textColor + ';background:' + color + '18">' + r.name + '</span>';
+          return '<span class="pill" style="border-color:' + color + '66;color:#333;background:' + color + '18">' + r.name + '</span>';
         }).join('') : '') +
         (!c.active ? '<span class="pill closed">INACTIVO</span>' : '') +
       '</div>' +

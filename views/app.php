@@ -51,7 +51,7 @@
 <div class="main comercial-main">
   <div class="panel comercial-panel">
     <input type="hidden" id="rDate" value="">
-    <span id="bhr" style="display:none">0</span>
+    <span id="bhr" class="d-none">0</span>
 
     <!-- Tabs comercial -->
     <div class="tabs comercial-tabs">
@@ -95,21 +95,21 @@
     </div>
 
     <!-- ══ TAB: NUEVO PEDIDO RAPIDO ══ -->
-    <div id="comViewNuevo" class="comercial-view" style="display:none">
+    <div id="comViewNuevo" class="comercial-view d-none">
       <div class="comercial-quick-order">
         <!-- Paso 1: Seleccionar cliente -->
         <div class="comercial-qo-section comercial-qo-section-fill">
           <div class="comercial-qo-label">Cliente</div>
           <input type="search" id="comQoClientSearch" placeholder="Buscar cliente por nombre..." oninput="comQoFilterClients(this.value)" autocomplete="off">
           <div id="comQoClientList" class="comercial-qo-client-list"></div>
-          <div id="comQoSelectedClient" class="comercial-qo-selected" style="display:none">
+          <div id="comQoSelectedClient" class="comercial-qo-selected d-none">
             <div class="comercial-qo-selected-name" id="comQoSelectedName"></div>
             <div class="comercial-qo-selected-addr" id="comQoSelectedAddr"></div>
             <button class="btn btn-secondary btn-sm" onclick="comQoClearClient()">Cambiar</button>
           </div>
         </div>
         <!-- Paso 2: Cantidades -->
-        <div class="comercial-qo-section" id="comQoFormFields" style="display:none">
+        <div class="comercial-qo-section d-none" id="comQoFormFields">
           <div class="comercial-qo-label">Cantidades</div>
           <div class="comercial-qo-fields">
             <div class="comercial-qo-field">
@@ -121,7 +121,7 @@
               <input type="number" id="comQoCajas" min="0" step="1" placeholder="0" inputmode="numeric">
             </div>
           </div>
-          <div class="comercial-qo-field" style="margin-top:8px">
+          <div class="comercial-qo-field mt-8">
             <label>Observaciones</label>
             <textarea id="comQoObs" placeholder="Notas del pedido..." rows="2"></textarea>
           </div>
@@ -131,31 +131,31 @@
     </div>
 
     <!-- ══ TAB: HOJAS DE RUTA ══ -->
-    <div id="comViewHojas" class="comercial-view" style="display:none">
+    <div id="comViewHojas" class="comercial-view d-none">
       <!-- Vista listado (principal) -->
-      <div id="hrListView" style="display:flex;flex-direction:column;flex:1;overflow:hidden">
-        <div class="scroll-list" id="hrList" style="flex:1">
-          <div style="padding:40px 20px;text-align:center;color:var(--text-dim)">Cargando rutas...</div>
+      <div id="hrListView" class="flex-col-full">
+        <div class="scroll-list flex-1" id="hrList">
+          <div class="loading-placeholder">Cargando rutas...</div>
         </div>
       </div>
 
       <!-- Vista detalle de una hoja -->
-      <div id="hrDetailView" style="display:none;flex-direction:column;flex:1;overflow:hidden">
-        <div class="panel-header" style="gap:8px">
+      <div id="hrDetailView" class="flex-col-full d-none">
+        <div class="panel-header panel-header-gap">
           <button class="btn btn-secondary btn-sm" onclick="closeHojaDetail()">&larr; Volver</button>
-          <div class="panel-title" id="hrDetailTitle" style="flex:1">--</div>
+          <div class="panel-title flex-1" id="hrDetailTitle">--</div>
         </div>
-        <div style="padding:8px 14px;border-bottom:1px solid var(--border);display:flex;gap:6px;flex-wrap:wrap;background:var(--surface);flex-shrink:0">
-          <div style="display:flex;align-items:center;gap:4px;min-width:0;flex:1">
-            <input id="hrClientSearch" type="search" placeholder="Buscar cliente..." autocomplete="off" oninput="setHojaClientSearch(this.value)" style="min-width:0;width:100%;padding:6px 10px;font-size:12px;border-radius:8px">
+        <div class="hr-detail-toolbar">
+          <div class="flex-center-gap4">
+            <input id="hrClientSearch" type="search" placeholder="Buscar cliente..." autocomplete="off" oninput="setHojaClientSearch(this.value)" class="input-compact-search">
           </div>
         </div>
-        <div class="scroll-list" id="hrLineasList" style="flex:1"></div>
-        <div style="padding:10px 14px;border-top:1px solid var(--border);background:var(--surface);font-size:12px;display:flex;gap:16px;flex-shrink:0">
+        <div class="scroll-list flex-1" id="hrLineasList"></div>
+        <div class="hr-detail-footer-com">
           <span><b id="hrTotalClientes">0</b> clientes</span>
           <span><b id="hrTotalCarros">0</b> carros</span>
           <span><b id="hrTotalCajas">0</b> cajas</span>
-          <span id="hrRouteInfo" style="margin-left:auto;color:var(--accent);font-weight:700"></span>
+          <span id="hrRouteInfo" class="hr-route-info-right"></span>
         </div>
       </div>
     </div>
@@ -178,10 +178,10 @@
     </div>
 
     <!-- CLIENTES -->
-    <div id="vc" style="display:flex;flex-direction:column;flex:1;overflow:hidden">
+    <div id="vc" class="flex-col-full">
       <div class="panel-header">
         <div class="panel-title">Cartera de clientes</div>
-        <div style="display:flex;gap:6px">
+        <div class="flex-row-gap6">
           <button class="btn btn-primary" onclick="openClientModal()">+ Nuevo</button>
         </div>
       </div>
@@ -202,7 +202,7 @@
     <input type="hidden" id="rDate" value="">
 
     <!-- HOJAS DE RUTA -->
-    <div id="vhr" style="display:none;flex-direction:column;flex:1;overflow:hidden">
+    <div id="vhr" class="flex-col-full d-none">
       <div class="date-bar">
         <div class="date-label">Fecha</div>
         <input type="date" id="hrDate" onchange="onHrDateChange()">
@@ -211,59 +211,59 @@
         <button class="btn btn-secondary btn-sm" onclick="hrDateNav(1)" title="Dia siguiente">&rarr;</button>
       </div>
       <!-- Panel listado de hojas (vista principal) -->
-      <div id="hrListView" style="display:flex;flex-direction:column;flex:1;overflow:hidden">
+      <div id="hrListView" class="flex-col-full">
         <div class="panel-header">
           <div class="panel-title">Hojas del dia</div>
-          <div style="display:flex;gap:6px">
-            <button class="btn btn-primary btn-sm" id="btnGenerarDesde" onclick="generarHojasFromPedidos()" title="Generar hojas automaticamente desde pedidos confirmados" style="background:var(--accent2);border-color:var(--accent2)">Generar desde pedidos</button>
+          <div class="flex-row-gap6">
+            <button class="btn btn-primary btn-sm btn-accent2" id="btnGenerarDesde" onclick="generarHojasFromPedidos()" title="Generar hojas automaticamente desde pedidos confirmados">Generar desde pedidos</button>
             <button class="btn btn-primary" onclick="openCreateHojaModal()">+ Nueva hoja</button>
           </div>
         </div>
         <!-- Panel resumen logistica: pedidos del dia -->
-        <div id="hrPedidosPanel" style="display:none"></div>
+        <div id="hrPedidosPanel" class="d-none"></div>
         <div class="scroll-list" id="hrList"></div>
       </div>
       <!-- Vista detalle de una hoja -->
-      <div id="hrDetailView" style="display:none;flex-direction:column;flex:1;overflow:hidden">
-        <div class="panel-header" style="gap:8px">
+      <div id="hrDetailView" class="flex-col-full d-none">
+        <div class="panel-header panel-header-gap">
           <button class="btn btn-secondary btn-sm" onclick="closeHojaDetail()">&larr; Volver</button>
-          <div class="panel-title" id="hrDetailTitle" style="flex:1">—</div>
+          <div class="panel-title flex-1" id="hrDetailTitle">—</div>
           <span class="hr-estado-badge" id="hrDetailEstado"></span>
         </div>
-        <div style="padding:8px 14px;border-bottom:1px solid var(--border);display:flex;gap:6px;flex-wrap:wrap;background:var(--surface);flex-shrink:0">
+        <div class="hr-detail-toolbar">
           <button class="btn btn-primary btn-sm" id="btnAddLinea" onclick="openAddLineaModal()">+ Cliente</button>
           <button class="btn btn-secondary btn-sm" onclick="autoOrdenarHoja()">Auto-ordenar</button>
           <button class="btn btn-secondary btn-sm" onclick="printHoja()">Imprimir</button>
           <button class="btn btn-secondary btn-sm" onclick="exportHojaHtml()">Email HTML</button>
           <button class="btn btn-secondary btn-sm" onclick="duplicarHoja()">Duplicar</button>
           <button class="btn btn-secondary btn-sm" id="btnCalcGlsCosts" onclick="calculateHojaGlsCosts()">Calcular paqueteria</button>
-          <span id="hrGlsCalcStatus" style="align-self:center;font-size:10px;color:var(--text-dim)"></span>
-          <div style="display:flex;align-items:center;gap:4px;min-width:220px;flex:0 1 280px">
-            <input id="hrVehicleSearch" type="search" list="hrVehicleOptions" placeholder="Buscar vehiculo..." autocomplete="off" oninput="syncHojaVehicleSearch(this.value)" onchange="submitHojaVehicleSearch()" onkeydown="if(event.key==='Enter'){event.preventDefault();submitHojaVehicleSearch()}" style="min-width:0;padding:4px 8px;font-size:10px;border-radius:6px">
+          <span id="hrGlsCalcStatus" class="hr-calc-status"></span>
+          <div class="hr-vehicle-search-wrap">
+            <input id="hrVehicleSearch" type="search" list="hrVehicleOptions" placeholder="Buscar vehiculo..." autocomplete="off" oninput="syncHojaVehicleSearch(this.value)" onchange="submitHojaVehicleSearch()" onkeydown="if(event.key==='Enter'){event.preventDefault();submitHojaVehicleSearch()}" class="input-compact-sm">
             <input type="hidden" id="hrVehicleId" value="">
             <datalist id="hrVehicleOptions"></datalist>
           </div>
-          <select id="hrEstadoSel" onchange="changeHojaEstado(this.value)" style="width:auto;padding:4px 8px;font-size:10px;border-radius:6px">
+          <select id="hrEstadoSel" onchange="changeHojaEstado(this.value)" class="select-compact-sm">
             <option value="borrador">Borrador</option>
             <option value="cerrada">Cerrada</option>
             <option value="en_reparto">En reparto</option>
             <option value="completada">Completada</option>
           </select>
         </div>
-        <div id="hrGlsSummary" class="hr-gls-summary" style="display:none"></div>
-        <div class="scroll-list" id="hrLineasList" style="flex:1"></div>
-        <div id="hrSimulationPanel" class="hr-sim-panel" style="display:none"></div>
-        <div style="padding:8px 14px;border-top:1px solid var(--border);background:var(--surface);font-size:11px;display:flex;gap:16px;flex-shrink:0">
+        <div id="hrGlsSummary" class="hr-gls-summary d-none"></div>
+        <div class="scroll-list flex-1" id="hrLineasList"></div>
+        <div id="hrSimulationPanel" class="hr-sim-panel d-none"></div>
+        <div class="hr-detail-footer">
           <span><b id="hrTotalClientes">0</b> clientes</span>
           <span><b id="hrTotalCarros">0</b> carros</span>
           <span><b id="hrTotalCajas">0</b> cajas</span>
-          <span id="hrRouteInfo" style="margin-left:auto;color:var(--accent);font-weight:700"></span>
+          <span id="hrRouteInfo" class="hr-route-info-right"></span>
         </div>
       </div>
     </div>
 
     <!-- FLOTA -->
-    <div id="vf" style="display:none;flex-direction:column;flex:1;overflow:hidden">
+    <div id="vf" class="flex-col-full d-none">
       <div class="panel-header">
         <div class="panel-title">Delegaciones</div>
         <button class="btn btn-primary" onclick="openDelegationModal()">+ Delegacion</button>
@@ -278,28 +278,28 @@
     </div>
 
     <!-- HISTORIAL -->
-    <div id="vh" style="display:none;flex-direction:column;flex:1;overflow:hidden">
+    <div id="vh" class="flex-col-full d-none">
       <div class="panel-header">
         <div class="panel-title">Historial de rutas</div>
         <button class="btn btn-primary btn-sm" onclick="openRentabilityReport()" title="Informe rentabilidad GLS vs flota">Rentabilidad GLS</button>
       </div>
-      <div class="date-bar" style="gap:6px;flex-wrap:wrap">
-        <input type="date" id="hFrom" style="flex:1;min-width:110px;padding:4px 6px;font-size:11px">
-        <span style="font-size:10px;color:var(--text-dim)">a</span>
-        <input type="date" id="hTo" style="flex:1;min-width:110px;padding:4px 6px;font-size:11px">
+      <div class="date-bar date-bar-wrap">
+        <input type="date" id="hFrom" class="date-input-range">
+        <span class="text-dim-sm">a</span>
+        <input type="date" id="hTo" class="date-input-range">
         <button class="btn btn-secondary btn-sm" onclick="loadHistory()">Buscar</button>
       </div>
       <div class="scroll-list" id="historyList"></div>
-      <div class="panel-header" style="border-top:1px solid var(--border)">
+      <div class="panel-header panel-header-border-top">
         <div class="panel-title">Dashboard</div>
         <button class="btn btn-secondary btn-sm" onclick="loadDashboard()">Actualizar</button>
       </div>
-      <div id="dashboardPanel" style="padding:10px;font-size:11px;overflow-y:auto;flex:0.5"></div>
+      <div id="dashboardPanel" class="dashboard-panel"></div>
     </div>
 
     <?php if ($u['role'] === 'admin'): ?>
     <!-- USUARIOS -->
-    <div id="vu" style="display:none;flex-direction:column;flex:1;overflow:hidden">
+    <div id="vu" class="flex-col-full d-none">
       <div class="panel-header">
         <div class="panel-title">Gestion de usuarios</div>
         <button class="btn btn-primary" onclick="openUserModal()">+ Nuevo usuario</button>
@@ -308,7 +308,7 @@
     </div>
     <?php endif; ?>
 
-    <div class="optimize-bar" style="display:none">
+    <div class="optimize-bar d-none">
       <button class="btn btn-primary" onclick="optimizeFleetRoutes()">Optimizar rutas</button>
       <button class="btn btn-secondary" onclick="clearRoute()" title="Limpiar">Limpiar</button>
       <button class="icon-btn" onclick="openSettingsModal()" title="Configuracion">&#9881;</button>
@@ -358,18 +358,18 @@
           <div><label>Direccion / Referencia</label><input id="cAddr" placeholder="Calle, numero..."></div>
           <div><label>Codigo postal</label><input id="cPostcode" placeholder="ej. 36700" maxlength="10" oninput="updateClientPostcodeHint()"></div>
         </div>
-        <div class="ff" id="cPostcodeHint" style="font-size:10px;color:var(--text-dim)">Sin codigo postal no se puede cotizar paqueteria.</div>
+        <div class="ff field-hint" id="cPostcodeHint">Sin codigo postal no se puede cotizar paqueteria.</div>
         <div class="fg">
           <div><label>Telefono</label><input id="cPhone" placeholder="600 000 000"></div>
           <div></div>
         </div>
         <div class="ff"><label>Notas internas</label><textarea id="cNotes" placeholder="Instrucciones de entrega, acceso, contacto..."></textarea></div>
         <div class="ff">
-          <label>Rutas <span style="font-weight:400;text-transform:none;letter-spacing:0">(puede tener varias)</span></label>
-          <div id="cRutasGrid" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px"></div>
+          <label>Rutas <span class="label-normal">(puede tener varias)</span></label>
+          <div id="cRutasGrid" class="tag-grid"></div>
         </div>
-        <div style="display:flex;align-items:center;gap:6px;margin-top:4px">
-          <input type="checkbox" id="cContado" style="width:auto"><label for="cContado" style="margin:0;cursor:pointer">Al contado</label>
+        <div class="checkbox-row">
+          <input type="checkbox" id="cContado" class="chk-inline"><label for="cContado" class="label-inline">Al contado</label>
         </div>
         <div class="ff">
           <label>Comercial asignado</label>
@@ -385,17 +385,17 @@
       </div>
       <div class="msection">
         <div class="msec-title">Horario semanal</div>
-        <div id="cScheduleGrid" style="font-size:12px"></div>
+        <div id="cScheduleGrid" class="text-dim-lg"></div>
       </div>
       <div class="msection">
         <div class="msec-title">Historial paqueteria</div>
-        <div id="cGlsHistory" style="font-size:11px;color:var(--text-dim)">Sin historial de comparativa todavia.</div>
+        <div id="cGlsHistory" class="text-dim-md">Sin historial de comparativa todavia.</div>
       </div>
     </div>
     <div class="mfoot">
       <button class="btn btn-danger" id="cDeleteBtn" onclick="deleteFromModal()" style="display:none">Eliminar</button>
       <button class="btn btn-danger" id="cToggleBtn" onclick="toggleFromModal()" style="display:none">Desactivar</button>
-      <button class="btn btn-secondary" id="cDuplicateBtn" onclick="duplicateFromModal()" style="margin-right:auto;display:none">Duplicar</button>
+      <button class="btn btn-secondary mr-auto" id="cDuplicateBtn" onclick="duplicateFromModal()" style="display:none">Duplicar</button>
       <button class="btn btn-secondary" onclick="closeCModal()">Cancelar</button>
       <button class="btn btn-primary" onclick="saveClient()">Guardar cliente</button>
     </div>
@@ -504,8 +504,8 @@
       </div>
       <div class="msection">
         <div class="msec-title">Plantillas guardadas</div>
-        <div id="templateList" style="max-height:150px;overflow-y:auto"></div>
-        <button class="add-item" onclick="saveCurrentAsTemplate()" id="btnSaveTemplate" style="display:none">+ Guardar ruta actual como plantilla</button>
+        <div id="templateList" class="scroll-container-sm"></div>
+        <button class="add-item d-none" onclick="saveCurrentAsTemplate()" id="btnSaveTemplate">+ Guardar ruta actual como plantilla</button>
       </div>
       <div class="msection" id="shippingSettingsSection">
         <div class="msec-title">Paqueteria por tablas</div>
@@ -517,29 +517,29 @@
           <div>
             <label>Descuento negociado (multiplicador)</label>
             <input id="shipPriceMultiplier" type="number" min="0" max="5" step="0.0001" value="1.0000">
-            <div style="font-size:10px;color:var(--text-dim);margin-top:2px">1.0000 = sin descuento, 0.85 = 15% descuento</div>
+            <div class="text-hint">1.0000 = sin descuento, 0.85 = 15% descuento</div>
           </div>
           <div>
             <label>Recargo combustible GLS (%)</label>
-            <div style="display:flex;gap:4px">
-              <input id="shipFuelPct" type="number" min="0" max="100" step="0.01" value="0.00" style="flex:1">
+            <div class="fuel-pct-row">
+              <input id="shipFuelPct" type="number" min="0" max="100" step="0.01" value="0.00" class="fuel-pct-input">
               <button type="button" class="btn btn-secondary btn-sm" onclick="updateFuelPctOnly()" title="Solo actualizar combustible">Aplicar</button>
             </div>
-            <div style="font-size:10px;color:var(--text-dim);margin-top:2px">Actualizable mensualmente. Consultar en viagalicia.com/tasa-energetica/</div>
+            <div class="text-hint">Actualizable mensualmente. Consultar en viagalicia.com/tasa-energetica/</div>
           </div>
         </div>
         <div class="fg">
-          <div style="grid-column:1/-1">
+          <div class="fg-full">
             <label>Codigos postales remotos (separados por coma)</label>
             <input id="shipRemotePrefixes" placeholder="07XX, 35XX, 38XX, ...">
-            <div style="font-size:10px;color:var(--text-dim);margin-top:2px">Prefijos de CP donde GLS aplica recargo de zona remota</div>
+            <div class="text-hint">Prefijos de CP donde GLS aplica recargo de zona remota</div>
           </div>
         </div>
         <div class="fg">
           <div><label>Peso por carro (kg)</label><input id="shipWeightPerCarro" type="number" min="0" step="0.1" value="5.0"></div>
           <div><label>Peso por caja (kg)</label><input id="shipWeightPerCaja" type="number" min="0" step="0.1" value="2.5"></div>
         </div>
-        <div class="msec-title" style="margin-top:14px">Variables de calculo</div>
+        <div class="msec-title mt-14">Variables de calculo</div>
         <div class="fg">
           <div><label>Bultos por carro</label><input id="shipParcelsPerCarro" type="number" min="0" step="0.01" value="1.00"></div>
           <div><label>Bultos por caja</label><input id="shipParcelsPerCaja" type="number" min="0" step="0.01" value="1.00"></div>
@@ -548,24 +548,24 @@
           <div><label>Volumen por carro (m3)</label><input id="shipVolumePerCarro" type="number" min="0" step="0.01" value="0"></div>
           <div><label>Volumen por caja (m3)</label><input id="shipVolumePerCaja" type="number" min="0" step="0.01" value="0"></div>
         </div>
-        <div style="display:flex;align-items:center;gap:6px;margin-top:8px">
-          <input type="checkbox" id="shipUseVolumetric" style="width:auto">
-          <label for="shipUseVolumetric" style="margin:0;cursor:pointer">Usar peso volumetrico segun divisor del transportista</label>
+        <div class="checkbox-row-mt8">
+          <input type="checkbox" id="shipUseVolumetric" class="chk-inline">
+          <label for="shipUseVolumetric" class="label-inline">Usar peso volumetrico segun divisor del transportista</label>
         </div>
-        <div style="font-size:10px;color:var(--text-dim);margin-top:4px">
+        <div class="text-hint" style="margin-top:4px">
           Estas variables alimentan el peso facturable y el numero de bultos antes de consultar la tabla de tarifas. Si activas el volumetrico, el sistema usara el volumen en m3 multiplicado por el factor del transportista.
         </div>
       </div>
       <div class="msection" id="shippingRatesSection">
         <div class="msec-title">Tabla de tarifas</div>
-        <div id="shippingRatesList" style="max-height:220px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:6px;background:var(--surface2)"></div>
-        <div style="display:flex;justify-content:flex-end;margin-top:8px">
+        <div id="shippingRatesList" class="scroll-container-lg"></div>
+        <div class="flex-right mt-8">
           <button class="btn btn-primary btn-sm" type="button" onclick="openShippingRateModal()">+ Tarifa</button>
         </div>
       </div>
       <div class="msection" id="shippingAlertsSection">
         <div class="msec-title">Alertas de cobertura GLS</div>
-        <div id="shippingAlertsContent" style="font-size:11px;color:var(--text-dim)">Cargando...</div>
+        <div id="shippingAlertsContent" class="text-dim-md">Cargando...</div>
       </div>
     </div>
     <div class="mfoot">
@@ -577,7 +577,7 @@
 
 <!-- MODAL TARIFA PAQUETERIA -->
 <div class="overlay" id="shippingRateModal" role="dialog" aria-modal="true" aria-hidden="true">
-  <div class="modal" style="width:560px">
+  <div class="modal modal-xl">
     <div class="mhead">
       <div class="mtitle" id="shippingRateModalTitle">Nueva tarifa</div>
       <button class="mclose" onclick="closeShippingRateModal()">x</button>
@@ -606,15 +606,15 @@
       </div>
       <div class="fg">
         <div><label>Precio EUR *</label><input type="number" id="shippingPrice" min="0" step="0.0001"></div>
-        <div style="display:flex;align-items:center;gap:6px;padding-top:18px">
-          <input type="checkbox" id="shippingActive" checked style="width:auto">
-          <label for="shippingActive" style="margin:0;cursor:pointer">Activa</label>
+        <div class="flex-center-gap6" style="padding-top:18px">
+          <input type="checkbox" id="shippingActive" checked class="chk-inline">
+          <label for="shippingActive" class="label-inline">Activa</label>
         </div>
       </div>
       <div class="ff"><label>Notas</label><input id="shippingNotes" placeholder="Observaciones opcionales"></div>
     </div>
     <div class="mfoot">
-      <button class="btn btn-danger" id="shippingDeleteBtn" onclick="deleteShippingRate()" style="display:none;margin-right:auto">Eliminar</button>
+      <button class="btn btn-danger mr-auto" id="shippingDeleteBtn" onclick="deleteShippingRate()" style="display:none">Eliminar</button>
       <button class="btn btn-secondary" onclick="closeShippingRateModal()">Cancelar</button>
       <button class="btn btn-primary" onclick="saveShippingRate()">Guardar</button>
     </div>
@@ -623,7 +623,7 @@
 
 <!-- MODAL CREAR HOJA -->
 <div class="overlay" id="hrCreateModal" role="dialog" aria-modal="true" aria-hidden="true">
-  <div class="modal" style="width:380px">
+  <div class="modal modal-sm">
     <div class="mhead">
       <div class="mtitle">Nueva hoja de ruta</div>
       <button class="mclose" onclick="closeHrCreateModal()">x</button>
@@ -642,14 +642,14 @@
 
 <!-- MODAL AÑADIR CLIENTE A HOJA -->
 <div class="overlay" id="hrAddLineaModal" role="dialog" aria-modal="true" aria-hidden="true">
-  <div class="modal" style="width:440px">
+  <div class="modal modal-md">
     <div class="mhead">
       <div class="mtitle">Añadir cliente a la hoja</div>
       <button class="mclose" onclick="closeAddLineaModal()">x</button>
     </div>
     <div class="mbody">
       <div class="ff"><label>Buscar cliente</label><input id="hrLineaSearch" placeholder="Nombre del cliente..." oninput="filterLineaClients(this.value)"></div>
-      <div id="hrLineaClientList" style="max-height:200px;overflow-y:auto;overflow-x:hidden;margin-bottom:10px"></div>
+      <div id="hrLineaClientList" class="scroll-container-md"></div>
       <div class="fg">
         <div><label>Carros</label><input type="number" id="hrLineaCarros" step="1" min="0" placeholder="0"></div>
         <div><label>Cajas</label><input type="number" id="hrLineaCajas" step="1" min="0" placeholder="0"></div>
@@ -665,7 +665,7 @@
 
 <!-- MODAL EDITAR LINEA -->
 <div class="overlay" id="hrEditLineaModal" role="dialog" aria-modal="true" aria-hidden="true">
-  <div class="modal" style="width:380px">
+  <div class="modal modal-sm">
     <div class="mhead">
       <div class="mtitle" id="hrEditLineaTitle">Editar linea</div>
       <button class="mclose" onclick="closeEditLineaModal()">x</button>
@@ -698,7 +698,7 @@
 
 <!-- MODAL USUARIO -->
 <div class="overlay" id="uModal" role="dialog" aria-modal="true" aria-hidden="true">
-  <div class="modal" style="width:520px">
+  <div class="modal modal-lg">
     <div class="mhead">
       <div class="mtitle" id="uModalTitle">Nuevo usuario</div>
       <button class="mclose" onclick="closeUserModal()">x</button>
@@ -724,11 +724,11 @@
       </div>
       <div class="msection" id="uComercialesSection">
         <div class="msec-title">Comerciales asociados</div>
-        <div id="uComercialesList" style="max-height:220px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:6px"></div>
+        <div id="uComercialesList" class="scroll-container-lg"></div>
       </div>
     </div>
     <div class="mfoot">
-      <button class="btn btn-danger" id="uDeleteBtn" onclick="deleteUser()" style="display:none;margin-right:auto">Eliminar</button>
+      <button class="btn btn-danger mr-auto" id="uDeleteBtn" onclick="deleteUser()" style="display:none">Eliminar</button>
       <button class="btn btn-secondary" onclick="closeUserModal()">Cancelar</button>
       <button class="btn btn-primary" onclick="saveUser()">Guardar</button>
     </div>
@@ -737,12 +737,12 @@
 
 <!-- MODAL VARIABLES DE CALCULO (admin only) -->
 <div class="overlay" id="varsModal" role="dialog" aria-modal="true" aria-hidden="true">
-  <div class="modal" style="width:840px;max-width:96vw">
+  <div class="modal modal-wide">
     <div class="mhead">
       <div class="mtitle">Variables de calculo</div>
       <button class="mclose" onclick="closeVarsModal()">x</button>
     </div>
-    <div class="mbody" style="max-height:75vh;overflow-y:auto">
+    <div class="mbody mbody-scroll">
       <div class="vars-tabs">
         <button type="button" class="vars-tab active" data-vars-tab="app" onclick="switchVarsTab('app')">App</button>
         <button type="button" class="vars-tab" data-vars-tab="gls" onclick="switchVarsTab('gls')">Paqueteria GLS</button>
@@ -863,10 +863,10 @@
       <div class="vars-section" data-vars-section="vehicles">
         <div class="vars-group">
           <div class="vars-group-title">Coste por km de cada vehiculo</div>
-          <div style="font-size:10px;color:var(--text-dim);margin-bottom:8px">
+          <div class="text-desc">
             Es la base del calculo de coste de flota propia. Si esta a 0 el vehiculo no tendra coste y la comparativa con GLS no funcionara.
           </div>
-          <div id="varsVehiclesList" style="max-height:380px;overflow-y:auto"></div>
+          <div id="varsVehiclesList" class="scroll-container-xl"></div>
         </div>
       </div>
 
@@ -874,10 +874,10 @@
       <div class="vars-section" data-vars-section="routes">
         <div class="vars-group">
           <div class="vars-group-title">Colores de rutas</div>
-          <div style="font-size:10px;color:var(--text-dim);margin-bottom:8px">
+          <div class="text-desc">
             Este color se usa en los circulitos de los clientes, las etiquetas y los chips de ruta.
           </div>
-          <div id="varsRoutesList" class="vars-route-list" style="max-height:380px;overflow-y:auto"></div>
+          <div id="varsRoutesList" class="vars-route-list scroll-container-xl"></div>
         </div>
       </div>
     </div>
@@ -890,18 +890,18 @@
 
 <!-- MODAL INFORME DE RENTABILIDAD GLS -->
 <div class="overlay" id="rentReportModal" role="dialog" aria-modal="true" aria-hidden="true">
-  <div class="modal" style="width:880px;max-width:96vw">
+  <div class="modal modal-extra-wide">
     <div class="mhead">
       <div class="mtitle">Informe de rentabilidad: flota propia vs GLS</div>
       <button class="mclose" onclick="closeRentabilityReport()">x</button>
     </div>
-    <div class="mbody" style="max-height:75vh;overflow-y:auto">
-      <div class="fg" style="margin-bottom:10px">
+    <div class="mbody mbody-scroll">
+      <div class="fg rent-filter-row">
         <div><label>Desde</label><input type="date" id="rentFrom"></div>
         <div><label>Hasta</label><input type="date" id="rentTo"></div>
-        <div style="display:flex;align-items:flex-end"><button class="btn btn-primary" onclick="loadRentabilityReport()">Calcular</button></div>
+        <div class="flex-end"><button class="btn btn-primary" onclick="loadRentabilityReport()">Calcular</button></div>
       </div>
-      <div id="rentReportContent" style="font-size:11px"></div>
+      <div id="rentReportContent" class="rent-report-content"></div>
     </div>
     <div class="mfoot">
       <button class="btn btn-secondary" onclick="closeRentabilityReport()">Cerrar</button>
@@ -911,13 +911,13 @@
 
 <!-- MODAL CONFIRMACION GLOBAL -->
 <div class="overlay" id="confirmModal" role="dialog" aria-modal="true" aria-hidden="true">
-  <div class="modal" style="width:360px">
+  <div class="modal modal-xs">
     <div class="mhead">
       <div class="mtitle" id="confirmTitle">Confirmar</div>
       <button class="mclose" onclick="closeConfirmModal(false)">x</button>
     </div>
     <div class="mbody">
-      <p id="confirmMsg" style="margin:0;font-size:13px;line-height:1.5;color:var(--text-main)"></p>
+      <p id="confirmMsg" class="confirm-msg"></p>
     </div>
     <div class="mfoot">
       <button class="btn btn-secondary" id="confirmCancelBtn" onclick="closeConfirmModal(false)">Cancelar</button>

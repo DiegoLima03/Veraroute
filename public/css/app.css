@@ -484,6 +484,119 @@ textarea { resize: none; height: 54px; }
 .com-quick-add-btn { background: none; border: 1px dashed var(--accent); color: var(--accent); border-radius: 10px; padding: 10px; font-size: 12px; font-weight: 700; cursor: pointer; width: 100%; text-align: center; transition: all .15s; margin-bottom: 6px; }
 .com-quick-add-btn:hover, .com-quick-add-btn:active { background: var(--accent-soft); }
 
+/* ═══ CLASES UTILITARIAS (extraidas de inline styles) ═══ */
+.d-none { display: none; }
+.flex-col-full { display: flex; flex-direction: column; flex: 1; overflow: hidden; }
+.flex-row-gap6 { display: flex; gap: 6px; }
+.flex-row-gap4 { display: flex; gap: 4px; }
+.flex-1 { flex: 1; }
+.flex-center-gap6 { display: flex; align-items: center; gap: 6px; }
+.flex-center-gap4 { display: flex; align-items: center; gap: 4px; min-width: 0; flex: 1; }
+.flex-end { display: flex; align-items: flex-end; }
+.flex-right { display: flex; justify-content: flex-end; }
+.ml-auto { margin-left: auto; }
+.mr-auto { margin-right: auto; }
+.mt-4 { margin-top: 4px; }
+.mt-8 { margin-top: 8px; }
+.mt-14 { margin-top: 14px; }
+.mb-10 { margin-bottom: 10px; }
+
+/* Texto auxiliar / hints */
+.text-hint { font-size: 10px; color: var(--text-dim); margin-top: 2px; }
+.text-dim-sm { font-size: 10px; color: var(--text-dim); }
+.text-dim-md { font-size: 11px; color: var(--text-dim); }
+.text-dim-lg { font-size: 12px; color: var(--text-dim); }
+.text-desc { font-size: 10px; color: var(--text-dim); margin-bottom: 8px; }
+
+/* Toolbar de detalle hoja (botonera con filtros/acciones) */
+.hr-detail-toolbar { padding: 8px 14px; border-bottom: 1px solid var(--border); display: flex; gap: 6px; flex-wrap: wrap; background: var(--surface); flex-shrink: 0; }
+
+/* Footer de totales de hoja */
+.hr-detail-footer { padding: 8px 14px; border-top: 1px solid var(--border); background: var(--surface); font-size: 11px; display: flex; gap: 16px; flex-shrink: 0; }
+.hr-detail-footer-com { padding: 10px 14px; border-top: 1px solid var(--border); background: var(--surface); font-size: 12px; display: flex; gap: 16px; flex-shrink: 0; }
+
+/* Info de ruta alineada a la derecha */
+.hr-route-info-right { margin-left: auto; color: var(--accent); font-weight: 700; }
+
+/* Status calc inline */
+.hr-calc-status { align-self: center; font-size: 10px; color: var(--text-dim); }
+
+/* Buscador vehiculo en toolbar hoja */
+.hr-vehicle-search-wrap { display: flex; align-items: center; gap: 4px; min-width: 220px; flex: 0 1 280px; }
+
+/* Inputs compactos para toolbar */
+.input-compact-sm { min-width: 0; padding: 4px 8px; font-size: 10px; border-radius: 6px; }
+.input-compact-search { min-width: 0; width: 100%; padding: 6px 10px; font-size: 12px; border-radius: 8px; }
+.select-compact-sm { width: auto; padding: 4px 8px; font-size: 10px; border-radius: 6px; }
+
+/* Boton con estilo accent2 */
+.btn-accent2 { background: var(--accent2); border-color: var(--accent2); }
+
+/* Checkbox inline (no ocupa todo el ancho) */
+.chk-inline { width: auto; }
+
+/* Label para checkbox (sin margen, con cursor) */
+.label-inline { margin: 0; cursor: pointer; }
+
+/* Fila checkbox + label alineados */
+.checkbox-row { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
+.checkbox-row-mt8 { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
+
+/* Span label normal dentro de un label bold */
+.label-normal { font-weight: 400; text-transform: none; letter-spacing: 0; }
+
+/* Grid de tags/chips (rutas, etc.) */
+.tag-grid { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+
+/* Panel header con gap extra */
+.panel-header-gap { gap: 8px; }
+
+/* Texto de carga inicial */
+.loading-placeholder { padding: 40px 20px; text-align: center; color: var(--text-dim); }
+
+/* Contenedores scrollable con limites */
+.scroll-container-sm { max-height: 150px; overflow-y: auto; }
+.scroll-container-md { max-height: 200px; overflow-y: auto; overflow-x: hidden; margin-bottom: 10px; }
+.scroll-container-lg { max-height: 220px; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; padding: 6px; background: var(--surface2); }
+.scroll-container-xl { max-height: 380px; overflow-y: auto; }
+
+/* Modal body scrollable */
+.mbody-scroll { max-height: 75vh; overflow-y: auto; }
+
+/* Modal sizes (anchos especificos) */
+.modal-xs { width: 360px; }
+.modal-sm { width: 380px; }
+.modal-md { width: 440px; }
+.modal-lg { width: 520px; }
+.modal-xl { width: 560px; }
+.modal-wide { width: 840px; max-width: 96vw; }
+.modal-extra-wide { width: 880px; max-width: 96vw; }
+
+/* Confirm msg */
+.confirm-msg { margin: 0; font-size: 13px; line-height: 1.5; color: var(--text-main); }
+
+/* Panel historial (date bar, dashboard) */
+.date-bar-wrap { gap: 6px; flex-wrap: wrap; }
+.date-input-range { flex: 1; min-width: 110px; padding: 4px 6px; font-size: 11px; }
+.dashboard-panel { padding: 10px; font-size: 11px; overflow-y: auto; flex: 0.5; }
+
+/* Panel-header con borde superior */
+.panel-header-border-top { border-top: 1px solid var(--border); }
+
+/* Postcode hint */
+.field-hint { font-size: 10px; color: var(--text-dim); }
+
+/* Grid-column full */
+.fg-full { grid-column: 1 / -1; }
+
+/* Fuel pct inline row */
+.fuel-pct-row { display: flex; gap: 4px; }
+.fuel-pct-input { flex: 1; }
+
+/* Rent report */
+.rent-report-content { font-size: 11px; }
+.rent-filter-row { margin-bottom: 10px; }
+
 /* Responsive movil */
 @media (max-width: 768px) {
   .main { grid-template-columns: 1fr; }

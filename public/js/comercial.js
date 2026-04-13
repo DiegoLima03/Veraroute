@@ -156,7 +156,7 @@ function comQoFilterClients(query) {
   const ids = getUserComercialIds();
   let rows = activeClients().filter(function(c) { return c.ruta_id; });
   if (ids.length) {
-    rows = rows.filter(function(c) { return c.comercial_id && ids.includes(c.comercial_id); });
+    rows = rows.filter(function(c) { return clientMatchesCommercialIds(c, ids); });
   }
 
   const q = comQoSearchQuery.trim().toLowerCase();
@@ -235,7 +235,7 @@ async function comQoSave() {
 
   const date = getHrDate();
   const comercialIds = getUserComercialIds();
-  const comercialId = comercialIds.length ? comercialIds[0] : null;
+  const comercialId = pickClientCommercialId(client, comercialIds);
 
   try {
     // 1. Crear pedido en orders

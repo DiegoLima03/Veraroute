@@ -38,6 +38,17 @@ class Router
             if (preg_match($regex, $uri, $matches)) {
                 array_shift($matches);
 
+                // Validar CSRF en peticiones que modifican datos
+                if (in_array($method, ['POST', 'PUT', 'DELETE'], true)) {
+                    $token = $_SERVER['HTTP_X_CSRF_TOKEN'] ?? null;
+                    if (!Auth::validateCsrf($token)) {
+                        http_response_code(403);
+                        header('Content-Type: application/json');
+                        echo json_encode(['error' => 'Token CSRF invalido o ausente']);
+                        return;
+                    }
+                }
+
                 list($controllerName, $methodName) = explode('@', $action);
 
                 $controllerFile = __DIR__ . '/../controllers/' . $controllerName . '.php';

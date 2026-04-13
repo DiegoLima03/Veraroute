@@ -4,6 +4,44 @@ require_once __DIR__ . '/../core/Model.php';
 
 class HojaRuta extends Model
 {
+    private function clientCommercialIds(array $client): array
+    {
+        $ids = [];
+        foreach (['comercial_id', 'comercial_planta_id', 'comercial_flor_id', 'comercial_accesorio_id'] as $field) {
+            if (!empty($client[$field])) {
+                $ids[] = (int) $client[$field];
+            }
+        }
+
+        return array_values(array_unique($ids));
+    }
+
+    private function matchesAnyCommercial(array $client, array $commercialIds): bool
+    {
+        $commercialIds = array_values(array_filter(array_map('intval', $commercialIds)));
+        if (empty($commercialIds)) {
+            return false;
+        }
+
+        return (bool) array_intersect($this->clientCommercialIds($client), $commercialIds);
+    }
+
+    private function pickMatchingCommercialId(array $client, array $commercialIds): ?int
+    {
+        $commercialIds = array_values(array_filter(array_map('intval', $commercialIds)));
+        if (empty($commercialIds)) {
+            return null;
+        }
+
+        foreach ($this->clientCommercialIds($client) as $clientCommercialId) {
+            if (in_array($clientCommercialId, $commercialIds, true)) {
+                return $clientCommercialId;
+            }
+        }
+
+        return null;
+    }
+
     /* ── Listar hojas por fecha (y opcionalmente por ruta) ── */
     public function getByFecha(string $fecha, ?int $rutaId = null, ?int $userId = null)
     {
@@ -70,6 +108,10 @@ class HojaRuta extends Model
             "SELECT l.*, c.name as client_name, c.address as client_address,
                     c.postcode as client_postcode,
                     c.x as client_x, c.y as client_y,
+                    c.comercial_id as client_comercial_id,
+                    c.comercial_planta_id as client_comercial_planta_id,
+                    c.comercial_flor_id as client_comercial_flor_id,
+                    c.comercial_accesorio_id as client_comercial_accesorio_id,
                     com.name as comercial_name
              FROM hoja_ruta_lineas l
              JOIN clients c ON c.id = l.client_id
@@ -83,9 +125,14 @@ class HojaRuta extends Model
     public function getLineaById(int $lineaId)
     {
         return $this->query(
-            "SELECT l.*, h.id as hoja_ruta_id, h.user_id as hoja_user_id, h.ruta_id
+            "SELECT l.*, h.id as hoja_ruta_id, h.user_id as hoja_user_id, h.ruta_id,
+                    c.comercial_id as client_comercial_id,
+                    c.comercial_planta_id as client_comercial_planta_id,
+                    c.comercial_flor_id as client_comercial_flor_id,
+                    c.comercial_accesorio_id as client_comercial_accesorio_id
              FROM hoja_ruta_lineas l
              JOIN hojas_ruta h ON h.id = l.hoja_ruta_id
+             LEFT JOIN clients c ON c.id = l.client_id
              WHERE l.id = ?",
             [$lineaId]
         )->fetch();
@@ -110,13 +157,18 @@ class HojaRuta extends Model
         }
 
         $placeholders = implode(',', array_fill(0, count($comercialIds), '?'));
-        $params = array_merge([(int) $hoja['ruta_id']], $comercialIds, [$hojaId]);
+        $params = array_merge([(int) $hoja['ruta_id']], $comercialIds, $comercialIds, $comercialIds, $comercialIds, [$hojaId]);
         $clients = $this->query(
-            "SELECT c.id, c.comercial_id
+            "SELECT c.id, c.comercial_id, c.comercial_planta_id, c.comercial_flor_id, c.comercial_accesorio_id
              FROM clients c
              WHERE c.active = 1
                AND c.ruta_id = ?
-               AND c.comercial_id IN ($placeholders)
+               AND (
+                   c.comercial_id IN ($placeholders)
+                   OR c.comercial_planta_id IN ($placeholders)
+                   OR c.comercial_flor_id IN ($placeholders)
+                   OR c.comercial_accesorio_id IN ($placeholders)
+               )
                AND NOT EXISTS (
                    SELECT 1
                    FROM hoja_ruta_lineas l
@@ -132,10 +184,15 @@ class HojaRuta extends Model
         }
 
         foreach ($clients as $client) {
+            $matchedCommercialId = $this->pickMatchingCommercialId($client, $comercialIds);
+            if (!$matchedCommercialId) {
+                continue;
+            }
+
             $this->query(
                 "INSERT INTO hoja_ruta_lineas (hoja_ruta_id, client_id, comercial_id, carros, cajas, cc_aprox)
                  VALUES (?, ?, ?, 0, 0, 0)",
-                [$hojaId, (int) $client['id'], (int) $client['comercial_id']]
+                [$hojaId, (int) $client['id'], $matchedCommercialId]
             );
         }
 
@@ -151,14 +208,20 @@ class HojaRuta extends Model
         }
 
         $placeholders = implode(',', array_fill(0, count($comercialIds), '?'));
+        $params = array_merge($comercialIds, $comercialIds, $comercialIds, $comercialIds);
         $rows = $this->query(
             "SELECT DISTINCT ruta_id
              FROM clients
              WHERE active = 1
                AND ruta_id IS NOT NULL
-               AND comercial_id IN ($placeholders)
+               AND (
+                   comercial_id IN ($placeholders)
+                   OR comercial_planta_id IN ($placeholders)
+                   OR comercial_flor_id IN ($placeholders)
+                   OR comercial_accesorio_id IN ($placeholders)
+               )
              ORDER BY ruta_id",
-            $comercialIds
+            $params
         )->fetchAll();
 
         return array_values(array_map('intval', array_column($rows, 'ruta_id')));

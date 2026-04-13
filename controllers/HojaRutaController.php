@@ -5,6 +5,7 @@ require_once __DIR__ . '/../core/Auth.php';
 require_once __DIR__ . '/../models/HojaRuta.php';
 require_once __DIR__ . '/../models/Client.php';
 require_once __DIR__ . '/../models/DistanceCache.php';
+require_once __DIR__ . '/../services/RouteOptimizer.php';
 
 class HojaRutaController extends Controller
 {
@@ -183,7 +184,7 @@ class HojaRutaController extends Controller
             }
 
             $allowedComercialIds = Auth::comercialIds();
-            $clientComercialId = !empty($client['comercial_id']) ? (int) $client['comercial_id'] : null;
+            $clientComercialId = $this->pickMatchingCommercialId($client, $allowedComercialIds);
 
             if (!$clientComercialId || !in_array($clientComercialId, $allowedComercialIds, true)) {
                 $this->json(['error' => 'Ese cliente no pertenece a tus comerciales asociados'], 403);
@@ -210,9 +211,7 @@ class HojaRutaController extends Controller
 
         if (Auth::isComercial()) {
             $allowedIds = Auth::comercialIds();
-            $lineaComercialId = !empty($linea['comercial_id']) ? (int) $linea['comercial_id'] : null;
-
-            if (!$lineaComercialId || !in_array($lineaComercialId, $allowedIds, true)) {
+            if (!$this->matchesCommercialIds($linea, $allowedIds)) {
                 $this->json(['error' => 'No puedes editar una linea de otro comercial'], 403);
             }
 
@@ -312,6 +311,9 @@ class HojaRutaController extends Controller
         // Construir matriz de distancias/duraciones reales via OSRM
         $distCache = new DistanceCache();
         $matrix = $distCache->buildMatrix($points);
+        if (empty($matrix['durations'])) {
+            return $this->json(['error' => 'No se pudo calcular la matriz de duraciones. OSRM puede estar caido.'], 503);
+        }
         $durations = $matrix['durations'];
 
         // Nearest-neighbor usando duraciones reales
@@ -419,6 +421,53 @@ class HojaRutaController extends Controller
 
     /* ── Helpers privados ── */
 
+    private function commercialIdsFromRow(array $row): array
+    {
+        $ids = [];
+        foreach ([
+            'comercial_id',
+            'comercial_planta_id',
+            'comercial_flor_id',
+            'comercial_accesorio_id',
+            'client_comercial_id',
+            'client_comercial_planta_id',
+            'client_comercial_flor_id',
+            'client_comercial_accesorio_id',
+        ] as $field) {
+            if (!empty($row[$field])) {
+                $ids[] = (int) $row[$field];
+            }
+        }
+
+        return array_values(array_unique($ids));
+    }
+
+    private function matchesCommercialIds(array $row, array $allowedIds): bool
+    {
+        $allowedIds = array_values(array_filter(array_map('intval', $allowedIds)));
+        if (empty($allowedIds)) {
+            return false;
+        }
+
+        return (bool) array_intersect($this->commercialIdsFromRow($row), $allowedIds);
+    }
+
+    private function pickMatchingCommercialId(array $row, array $allowedIds): ?int
+    {
+        $allowedIds = array_values(array_filter(array_map('intval', $allowedIds)));
+        if (empty($allowedIds)) {
+            return null;
+        }
+
+        foreach ($this->commercialIdsFromRow($row) as $commercialId) {
+            if (in_array($commercialId, $allowedIds, true)) {
+                return $commercialId;
+            }
+        }
+
+        return null;
+    }
+
     private function getDelegationForHoja(array $hoja)
     {
         return $this->model->getDelegationForHoja((int) $hoja['id']);
@@ -429,7 +478,7 @@ class HojaRutaController extends Controller
         $allowedIds = array_values(array_filter(array_map('intval', $allowedIds)));
         $hoja['lineas'] = array_values(array_filter(
             $hoja['lineas'] ?? [],
-            fn ($linea) => !empty($linea['comercial_id']) && in_array((int) $linea['comercial_id'], $allowedIds, true)
+            fn ($linea) => $this->matchesCommercialIds($linea, $allowedIds)
         ));
         $hoja['num_lineas'] = count($hoja['lineas']);
         $hoja['total_carros'] = array_reduce(
@@ -487,99 +536,19 @@ class HojaRutaController extends Controller
         return $data;
     }
 
+    /** Delegados a RouteOptimizer */
     private function haversine(float $lat1, float $lng1, float $lat2, float $lng2): float
     {
-        $r = 6371;
-        $dLat = deg2rad($lat2 - $lat1);
-        $dLng = deg2rad($lng2 - $lng1);
-        $a = sin($dLat / 2) ** 2 + cos(deg2rad($lat1)) * cos(deg2rad($lat2)) * sin($dLng / 2) ** 2;
-        return $r * 2 * atan2(sqrt($a), sqrt(1 - $a));
+        return (new RouteOptimizer())->haversine($lat1, $lng1, $lat2, $lng2);
     }
 
     private function twoOpt(array $route, ?array $delegation): array
     {
-        $n = count($route);
-        if ($n < 3) return $route;
-
-        $improved = true;
-        $maxIter = 50;
-        $iter = 0;
-
-        while ($improved && $iter < $maxIter) {
-            $improved = false;
-            $iter++;
-
-            for ($i = 0; $i < $n - 1; $i++) {
-                for ($j = $i + 1; $j < $n; $j++) {
-                    $d1 = $this->segDist($route, $i - 1, $i, $delegation)
-                        + $this->segDist($route, $j, $j + 1, $delegation);
-                    $d2 = $this->segDist($route, $i - 1, $j, $delegation)
-                        + $this->segDist($route, $i, $j + 1, $delegation);
-
-                    if ($d2 < $d1 - 0.001) {
-                        $reversed = array_reverse(array_slice($route, $i, $j - $i + 1));
-                        array_splice($route, $i, $j - $i + 1, $reversed);
-                        $improved = true;
-                    }
-                }
-            }
-        }
-
-        return $route;
+        return (new RouteOptimizer())->twoOptHaversine($route, $delegation);
     }
 
-    private function segDist(array $route, int $a, int $b, ?array $delegation): float
-    {
-        $n = count($route);
-        if ($a < 0 || $a >= $n) {
-            if ($delegation) return $this->haversine($delegation['x'], $delegation['y'], $route[$b]['lat'], $route[$b]['lng']);
-            return 0;
-        }
-        if ($b < 0 || $b >= $n) {
-            if ($delegation) return $this->haversine($route[$a]['lat'], $route[$a]['lng'], $delegation['x'], $delegation['y']);
-            return 0;
-        }
-        return $this->haversine($route[$a]['lat'], $route[$a]['lng'], $route[$b]['lat'], $route[$b]['lng']);
-    }
-
-    /**
-     * 2-opt improvement usando matriz de duraciones reales (OSRM).
-     * $route = array de indices en la matriz de puntos.
-     * $durations = float[][] matriz NxN de duraciones.
-     * $depotIdx = indice del depot en la matriz (o null).
-     */
     private function twoOptMatrix(array $route, array $durations, ?int $depotIdx): array
     {
-        $n = count($route);
-        if ($n < 3) return $route;
-
-        $improved = true;
-        $maxIter = 50;
-        $iter = 0;
-
-        while ($improved && $iter < $maxIter) {
-            $improved = false;
-            $iter++;
-
-            for ($i = 0; $i < $n - 1; $i++) {
-                for ($j = $i + 1; $j < $n; $j++) {
-                    $prevI = $i === 0 ? $depotIdx : $route[$i - 1];
-                    $nextJ = $j === $n - 1 ? $depotIdx : $route[$j + 1];
-
-                    $d1 = ($prevI !== null ? $durations[$prevI][$route[$i]] : 0)
-                         + ($nextJ !== null ? $durations[$route[$j]][$nextJ] : 0);
-                    $d2 = ($prevI !== null ? $durations[$prevI][$route[$j]] : 0)
-                         + ($nextJ !== null ? $durations[$route[$i]][$nextJ] : 0);
-
-                    if ($d2 < $d1 - 0.1) {
-                        $reversed = array_reverse(array_slice($route, $i, $j - $i + 1));
-                        array_splice($route, $i, $j - $i + 1, $reversed);
-                        $improved = true;
-                    }
-                }
-            }
-        }
-
-        return $route;
+        return (new RouteOptimizer())->twoOptDurationMatrix($route, $durations, $depotIdx);
     }
 }

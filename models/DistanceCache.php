@@ -82,13 +82,15 @@ class DistanceCache extends Model
     /**
      * Construye matriz NxN de distancias usando OSRM table API.
      * $points = [['lat' => ..., 'lng' => ...], ...]
-     * Devuelve ['distances' => float[][], 'durations' => float[][]]
+     * Devuelve ['distances' => float[][], 'durations' => float[][], 'osrm_status' => string]
+     * osrm_status: 'ok' | 'fallback_haversine' | 'partial_haversine'
      */
     public function buildMatrix(array $points): array
     {
         $n = count($points);
         $distances = array_fill(0, $n, array_fill(0, $n, 0.0));
         $durations = array_fill(0, $n, array_fill(0, $n, 0.0));
+        $osrmStatus = 'ok';
 
         // Primero: intentar llenar desde cache
         $missing = [];
@@ -106,10 +108,11 @@ class DistanceCache extends Model
         }
 
         if (empty($missing)) {
-            return ['distances' => $distances, 'durations' => $durations];
+            return ['distances' => $distances, 'durations' => $durations, 'osrm_status' => 'ok'];
         }
 
         // Intentar OSRM table API (max ~100 puntos)
+        $tableApiFailed = false;
         if ($n <= 100) {
             $coords = implode(';', array_map(
                 fn($p) => $p['lng'] . ',' . $p['lat'],
@@ -135,21 +138,75 @@ class DistanceCache extends Model
                         );
                     }
                 }
-                return ['distances' => $distances, 'durations' => $durations];
+                return ['distances' => $distances, 'durations' => $durations, 'osrm_status' => 'ok'];
             }
+            $tableApiFailed = true;
         }
 
         // Fallback: consultar par a par los que faltan
+        $haversineFallbackCount = 0;
         foreach ($missing as [$i, $j]) {
-            $result = $this->getOrFetch(
+            $result = $this->getOrFetchTracked(
                 $points[$i]['lat'], $points[$i]['lng'],
-                $points[$j]['lat'], $points[$j]['lng']
+                $points[$j]['lat'], $points[$j]['lng'],
+                $haversineFallbackCount
             );
             $distances[$i][$j] = $result['distance_km'];
             $durations[$i][$j] = $result['duration_s'];
         }
 
-        return ['distances' => $distances, 'durations' => $durations];
+        if ($haversineFallbackCount === count($missing)) {
+            $osrmStatus = 'fallback_haversine';
+        } elseif ($haversineFallbackCount > 0) {
+            $osrmStatus = 'partial_haversine';
+        } elseif ($tableApiFailed) {
+            // Table API fallo pero route individual funciono
+            $osrmStatus = 'ok';
+        }
+
+        return ['distances' => $distances, 'durations' => $durations, 'osrm_status' => $osrmStatus];
+    }
+
+    /** Cache-through con tracking de fallback haversine */
+    private function getOrFetchTracked(float $lat1, float $lng1, float $lat2, float $lng2, int &$haversineCount): array
+    {
+        $cached = $this->get($lat1, $lng1, $lat2, $lng2);
+        if ($cached) return $cached;
+
+        $result = $this->fetchOSRMTracked($lat1, $lng1, $lat2, $lng2, $usedHaversine);
+        if ($usedHaversine) {
+            $haversineCount++;
+        }
+        $this->set($lat1, $lng1, $lat2, $lng2, $result['distance_km'], $result['duration_s']);
+        return $result;
+    }
+
+    /** Llama a OSRM route con tracking de si se uso haversine */
+    private function fetchOSRMTracked(float $lat1, float $lng1, float $lat2, float $lng2, bool &$usedHaversine): array
+    {
+        $usedHaversine = false;
+        $url = sprintf(
+            'https://router.project-osrm.org/route/v1/driving/%s,%s;%s,%s?overview=false',
+            $lng1, $lat1, $lng2, $lat2
+        );
+
+        $json = @file_get_contents($url);
+        if ($json === false) {
+            $usedHaversine = true;
+            return $this->haversineFallback($lat1, $lng1, $lat2, $lng2);
+        }
+
+        $data = json_decode($json, true);
+        if (($data['code'] ?? '') !== 'Ok' || empty($data['routes'])) {
+            $usedHaversine = true;
+            return $this->haversineFallback($lat1, $lng1, $lat2, $lng2);
+        }
+
+        $route = $data['routes'][0];
+        return [
+            'distance_km' => round($route['distance'] / 1000, 3),
+            'duration_s'   => round($route['duration'], 1),
+        ];
     }
 
     private function haversine(float $lat1, float $lon1, float $lat2, float $lon2): float

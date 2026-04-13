@@ -9,6 +9,7 @@ require_once __DIR__ . '/../models/Client.php';
 require_once __DIR__ . '/../models/DistanceCache.php';
 require_once __DIR__ . '/../models/ClientSchedule.php';
 require_once __DIR__ . '/../models/AppSetting.php';
+require_once __DIR__ . '/../services/RouteOptimizer.php';
 
 class RouteController extends Controller
 {
@@ -389,6 +390,9 @@ class RouteController extends Controller
 
         // Matriz OSRM (con cache)
         $matrix = $this->distCache->buildMatrix($points);
+        if (empty($matrix['distances'])) {
+            return $this->json(['error' => 'No se pudo calcular la matriz de distancias. OSRM puede estar caido.'], 503);
+        }
         $dist = $matrix['distances']; // dist[i][j] en km
         $dur  = $matrix['durations']; // dur[i][j] en segundos
 
@@ -620,34 +624,10 @@ class RouteController extends Controller
         return $t - $tNoLunch;
     }
 
-    /** 2-opt para mejorar la ruta (trabaja con indices y matriz de distancias) */
+    /** 2-opt delegado a RouteOptimizer */
     private function twoOpt(array $order, array $distMatrix): array
     {
-        $n = count($order);
-        if ($n < 4) return $order;
-
-        $improved = true;
-        while ($improved) {
-            $improved = false;
-            for ($i = 0; $i < $n - 1; $i++) {
-                for ($j = $i + 2; $j < $n; $j++) {
-                    $ai = $i === 0 ? 0 : $order[$i - 1] + 1;
-                    $bi = $order[$i] + 1;
-                    $ci = $order[$j] + 1;
-                    $di = $j + 1 < $n ? $order[$j + 1] + 1 : 0;
-
-                    $before = $distMatrix[$ai][$bi] + $distMatrix[$ci][$di];
-                    $after  = $distMatrix[$ai][$ci] + $distMatrix[$bi][$di];
-
-                    if ($after < $before - 0.001) {
-                        $segment = array_slice($order, $i, $j - $i + 1);
-                        array_splice($order, $i, $j - $i + 1, array_reverse($segment));
-                        $improved = true;
-                    }
-                }
-            }
-        }
-        return $order;
+        return (new RouteOptimizer())->twoOptDistanceMatrix($order, $distMatrix);
     }
 
     /** Obtiene las ventanas horarias del dia para un cliente (_day_windows o fallback) */

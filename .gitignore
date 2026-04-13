@@ -1,0 +1,20 @@
+# Variables de entorno con credenciales
+config/.env
+
+# Logs
+logs/
+*.log
+
+# Cachés locales
+geocode_cache.json
+reverse_geocode_cache.json
+
+# Datos exportados / temporales (no son parte del código)
+clientes_sin_cp.csv
+sin_coordenadas.csv
+db_clients_coords.csv
+
+# Sistema operativo
+Thumbs.db
+.DS_Store
+desktop.ini

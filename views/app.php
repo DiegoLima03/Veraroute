@@ -19,6 +19,7 @@
     'comercial_id' => $u['comercial_id'] ?? null,
     'comercial_ids'=> Auth::comercialIds(),
   ]) ?>;
+  var CSRF_TOKEN = <?= json_encode(Auth::csrfToken()) ?>;
 </script>
 
 <header class="header">
@@ -251,6 +252,7 @@
         </div>
         <div id="hrGlsSummary" class="hr-gls-summary" style="display:none"></div>
         <div class="scroll-list" id="hrLineasList" style="flex:1"></div>
+        <div id="hrSimulationPanel" class="hr-sim-panel" style="display:none"></div>
         <div style="padding:8px 14px;border-top:1px solid var(--border);background:var(--surface);font-size:11px;display:flex;gap:16px;flex-shrink:0">
           <span><b id="hrTotalClientes">0</b> clientes</span>
           <span><b id="hrTotalCarros">0</b> carros</span>
@@ -649,7 +651,6 @@
       <div class="ff"><label>Buscar cliente</label><input id="hrLineaSearch" placeholder="Nombre del cliente..." oninput="filterLineaClients(this.value)"></div>
       <div id="hrLineaClientList" style="max-height:200px;overflow-y:auto;overflow-x:hidden;margin-bottom:10px"></div>
       <div class="fg">
-        <div id="hrLineaComercialWrap"><label>Comercial</label><select id="hrLineaComercial"><option value="">—</option></select></div>
         <div><label>Carros</label><input type="number" id="hrLineaCarros" step="1" min="0" placeholder="0"></div>
         <div><label>Cajas</label><input type="number" id="hrLineaCajas" step="1" min="0" placeholder="0"></div>
       </div>
@@ -736,7 +737,7 @@
 
 <!-- MODAL VARIABLES DE CALCULO (admin only) -->
 <div class="overlay" id="varsModal">
-  <div class="modal" style="width:760px;max-width:96vw">
+  <div class="modal" style="width:840px;max-width:96vw">
     <div class="mhead">
       <div class="mtitle">Variables de calculo</div>
       <button class="mclose" onclick="closeVarsModal()">x</button>
@@ -746,6 +747,7 @@
         <button type="button" class="vars-tab active" data-vars-tab="app" onclick="switchVarsTab('app')">App</button>
         <button type="button" class="vars-tab" data-vars-tab="gls" onclick="switchVarsTab('gls')">Paqueteria GLS</button>
         <button type="button" class="vars-tab" data-vars-tab="vehicles" onclick="switchVarsTab('vehicles')">Vehiculos</button>
+        <button type="button" class="vars-tab" data-vars-tab="routes" onclick="switchVarsTab('routes')">Colores rutas</button>
       </div>
 
       <!-- ── APP ── -->
@@ -867,6 +869,17 @@
           <div id="varsVehiclesList" style="max-height:380px;overflow-y:auto"></div>
         </div>
       </div>
+
+      <!-- â”€â”€ COLORES RUTAS â”€â”€ -->
+      <div class="vars-section" data-vars-section="routes">
+        <div class="vars-group">
+          <div class="vars-group-title">Colores de rutas</div>
+          <div style="font-size:10px;color:var(--text-dim);margin-bottom:8px">
+            Este color se usa en los circulitos de los clientes, las etiquetas y los chips de ruta.
+          </div>
+          <div id="varsRoutesList" class="vars-route-list" style="max-height:380px;overflow-y:auto"></div>
+        </div>
+      </div>
     </div>
     <div class="mfoot">
       <button class="btn btn-secondary" onclick="closeVarsModal()">Cancelar</button>
@@ -919,7 +932,12 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js"></script>
 <?php endif; ?>
-<script src="public/js/app.js?v=<?= time() ?>"></script>
+<script src="public/js/app-core.js?v=<?= time() ?>"></script>
+<script src="public/js/app-map.js?v=<?= time() ?>"></script>
+<script src="public/js/app-entities.js?v=<?= time() ?>"></script>
+<script src="public/js/app-routes.js?v=<?= time() ?>"></script>
+<script src="public/js/app-gls.js?v=<?= time() ?>"></script>
+<script src="public/js/app-hojas.js?v=<?= time() ?>"></script>
 <?php if (($u['role'] ?? '') === 'comercial'): ?>
 <script src="public/js/comercial.js?v=<?= time() ?>"></script>
 <?php endif; ?>

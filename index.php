@@ -1,7 +1,21 @@
 <?php
 
-error_reporting(E_ALL);
-ini_set('display_errors', '1');
+require_once __DIR__ . '/config/env.php';
+Env::load();
+
+if (Env::bool('APP_DEBUG', false)) {
+    error_reporting(E_ALL);
+    ini_set('display_errors', '1');
+} else {
+    error_reporting(E_ALL & ~E_DEPRECATED & ~E_STRICT);
+    ini_set('display_errors', '0');
+    ini_set('log_errors', '1');
+    $logDir = __DIR__ . '/logs';
+    if (!is_dir($logDir)) {
+        @mkdir($logDir, 0775, true);
+    }
+    ini_set('error_log', $logDir . '/error.log');
+}
 
 // Determinar la URI relativa al proyecto
 $requestUri = urldecode(parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH));
@@ -107,6 +121,7 @@ $router->get('api/shipping-config/alerts', 'GlsCostController@getAlerts');
 $router->put('api/shipping-config/fuel', 'GlsCostController@updateFuelPct');
 $router->put('api/shipping-config', 'GlsCostController@updateConfig');
 $router->post('api/shipping-costs/calculate', 'GlsCostController@calculateForHoja');
+$router->post('api/shipping-costs/simulate', 'GlsCostController@simulateForHoja');
 $router->get('api/shipping-costs/hoja/(\d+)', 'GlsCostController@getCostsForHoja');
 $router->get('api/shipping-costs/client/(\d+)', 'GlsCostController@getClientHistory');
 $router->get('api/shipping-costs/daily-report', 'GlsCostController@getDailyReport');

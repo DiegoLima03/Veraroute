@@ -38,7 +38,7 @@ class ClientCostHistory extends Model
                 (float) ($data['cajas'] ?? 0),
                 (float) ($data['weight_kg'] ?? 0),
                 max(1, (int) ($data['num_parcels'] ?? 1)),
-                (float) ($data['detour_km'] ?? 0),
+                isset($data['detour_km']) && $data['detour_km'] !== null ? (float) $data['detour_km'] : null,
                 (float) ($data['vehicle_cost_per_km'] ?? 0),
                 (float) ($data['cost_own_route'] ?? 0),
                 (float) ($data['cost_gls_raw'] ?? 0),

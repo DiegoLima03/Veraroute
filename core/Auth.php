@@ -135,6 +135,26 @@ class Auth
         ];
     }
 
+    /** Devuelve el token CSRF de la sesion actual (lo genera si no existe) */
+    public static function csrfToken(): string
+    {
+        self::init();
+        if (empty($_SESSION['csrf_token'])) {
+            $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+        }
+        return $_SESSION['csrf_token'];
+    }
+
+    /** Valida un token CSRF contra el de la sesion */
+    public static function validateCsrf(?string $token): bool
+    {
+        self::init();
+        if (empty($_SESSION['csrf_token']) || empty($token)) {
+            return false;
+        }
+        return hash_equals($_SESSION['csrf_token'], $token);
+    }
+
     public static function logout()
     {
         self::init();

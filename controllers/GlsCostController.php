@@ -169,6 +169,26 @@ class GlsCostController extends Controller
         $this->json($summary);
     }
 
+    /** POST /api/shipping-costs/simulate body: { hoja_ruta_id, client_ids_in_fleet } */
+    public function simulateForHoja()
+    {
+        Auth::requireRole('admin', 'logistica');
+        $data = $this->getInput();
+        $hojaRutaId = (int) ($data['hoja_ruta_id'] ?? 0);
+        if ($hojaRutaId <= 0) {
+            $this->json(['error' => 'hoja_ruta_id es obligatorio'], 400);
+        }
+        $clientIds = $data['client_ids_in_fleet'] ?? [];
+        if (!is_array($clientIds)) {
+            $this->json(['error' => 'client_ids_in_fleet debe ser un array'], 400);
+        }
+        if (!$this->hojaModel->getById($hojaRutaId)) {
+            $this->json(['error' => 'Hoja no encontrada'], 404);
+        }
+        $result = $this->calculator->simulateRouteForClients($hojaRutaId, array_map('intval', $clientIds));
+        $this->json($result);
+    }
+
     public function getCostsForHoja($id)
     {
         Auth::requireRole('admin', 'logistica');

@@ -1,7 +1,22 @@
 <?php
 declare(strict_types=1);
-ini_set('display_errors', '1');
-error_reporting(E_ALL);
+
+require_once __DIR__ . '/config/env.php';
+Env::load();
+
+if (Env::bool('APP_DEBUG', false)) {
+    error_reporting(E_ALL);
+    ini_set('display_errors', '1');
+} else {
+    error_reporting(E_ALL & ~E_DEPRECATED & ~E_STRICT);
+    ini_set('display_errors', '0');
+    ini_set('log_errors', '1');
+    $logDir = __DIR__ . '/logs';
+    if (!is_dir($logDir)) {
+        @mkdir($logDir, 0775, true);
+    }
+    ini_set('error_log', $logDir . '/error.log');
+}
 
 require_once __DIR__ . '/config/database.php';
 require_once __DIR__ . '/core/Auth.php';
@@ -31,10 +46,17 @@ if (Auth::isLoggedIn() && !$login_success) {
 $error = null;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    // Validar CSRF
+    $csrfOk = Auth::validateCsrf($_POST['_csrf'] ?? null);
+    if (!$csrfOk) {
+        $error = 'Sesion expirada. Recarga la pagina e intentalo de nuevo.';
+    }
+
     $username = trim($_POST['username'] ?? '');
     $password = (string) ($_POST['password'] ?? '');
     $ip = $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
 
+    if (!$error) {
     $stmt = $pdo->prepare("
         SELECT id, username, pass_hash, full_name, role, comercial_id, failed_logins, locked
         FROM app_users
@@ -91,6 +113,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $error = 'Error interno. Inténtalo de nuevo.';
         }
     }
+    } // fin if (!$error) — CSRF
 }
 ?>
 
@@ -415,6 +438,7 @@ body.logging-in .logging-overlay{ opacity:1; }
           <?php endif; ?>
 
           <form method="post" autocomplete="off" novalidate>
+            <input type="hidden" name="_csrf" value="<?= htmlspecialchars(Auth::csrfToken()) ?>">
                       <div class="mb-3">
   <label for="user" class="form-label">Usuario</label>
   <div class="input-group">

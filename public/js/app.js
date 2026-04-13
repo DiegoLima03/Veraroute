@@ -1,6 +1,10 @@
 // ── API HELPER ────────────────────────────────────────────
 async function api(endpoint, method = 'GET', body = null) {
-  const opts = { method, headers: { 'Content-Type': 'application/json' } };
+  const headers = { 'Content-Type': 'application/json' };
+  if (method !== 'GET' && typeof CSRF_TOKEN !== 'undefined') {
+    headers['X-CSRF-TOKEN'] = CSRF_TOKEN;
+  }
+  const opts = { method, headers };
   if (body) opts.body = JSON.stringify(body);
   const res = await fetch('api/' + endpoint, opts);
   if (!res.ok) {
@@ -8,6 +12,12 @@ async function api(endpoint, method = 'GET', body = null) {
     throw new Error(err.error || 'Error ' + res.status);
   }
   return res.json();
+}
+
+// ── MODAL HELPER ──────────────────────────────────────────
+function closeModal(id) {
+  const el = document.getElementById(id);
+  if (el) el.classList.remove('open');
 }
 
 // ── OSRM ROAD ROUTING ─────────────────────────────────────
@@ -62,6 +72,11 @@ let hrMapLine = null;
 let hrAutoOrderFocusMode = false;
 let hrGlsAutoCalcTimer = null;
 let hrGlsAutoCalcRunning = false;
+let lastGlsCalcResult = null; // { hojaId, total_route_km, total_route_cost, optimized_savings, line_recommendations, ... }
+let simulationOverrides = {}; // lineaId -> 'fleet' | 'externalize'  (override local del simulador)
+let lastSimResult = null; // { hojaId, fleet_km, fleet_cost, gls_total, total }
+let simulationDebounceTimer = null;
+let simulationInFlight = false;
 let glsConfigState = null;
 let shippingRates = [];
 let rentabilityData = null;
@@ -81,6 +96,64 @@ function getUserComercialIds() {
   }
 
   return Array.from(new Set(ids));
+}
+
+function getClientCommercialIds(client) {
+  if (!client) return [];
+
+  const source = Array.isArray(client.comercial_ids) && client.comercial_ids.length
+    ? client.comercial_ids
+    : [client.comercial_id, client.comercial_planta_id, client.comercial_flor_id, client.comercial_accesorio_id];
+
+  return Array.from(new Set(source.map(id => parseInt(id, 10)).filter(Boolean)));
+}
+
+function normalizeHexColor(color) {
+  if (typeof color !== 'string') return null;
+  const value = color.trim();
+  if (/^#[0-9a-f]{6}$/i.test(value)) return value.toLowerCase();
+  if (/^#[0-9a-f]{3}$/i.test(value)) {
+    return ('#' + value.slice(1).split('').map(ch => ch + ch).join('')).toLowerCase();
+  }
+  return null;
+}
+
+function getReadableTextColor(color) {
+  const hex = normalizeHexColor(color);
+  if (!hex) return '#ffffff';
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  const luminance = (0.299 * r) + (0.587 * g) + (0.114 * b);
+  return luminance > 165 ? '#10180e' : '#ffffff';
+}
+
+function clientMatchesCommercialIds(client, ids) {
+  const commercialIds = Array.isArray(ids)
+    ? ids.map(id => parseInt(id, 10)).filter(Boolean)
+    : [];
+  if (!commercialIds.length) return false;
+
+  return getClientCommercialIds(client).some(id => commercialIds.includes(id));
+}
+
+function pickClientCommercialId(client, allowedIds) {
+  const commercialIds = getClientCommercialIds(client);
+  const allowed = Array.isArray(allowedIds)
+    ? allowedIds.map(id => parseInt(id, 10)).filter(Boolean)
+    : [];
+
+  for (const id of commercialIds) {
+    if (!allowed.length || allowed.includes(id)) {
+      return id;
+    }
+  }
+
+  return allowed[0] || commercialIds[0] || null;
+}
+
+function clientHasRenderableCoords(client) {
+  return Number.isFinite(client?.x) && Number.isFinite(client?.y);
 }
 
 function shouldHideComercialSelector() {
@@ -166,10 +239,87 @@ function getHojaRouteDelegation(lineas) {
 
 function glsRecommendationMeta(recommendation) {
   const rec = recommendation || 'unavailable';
-  if (rec === 'own_route') return { cls: 'own', label: 'Ruta propia' };
-  if (rec === 'externalize') return { cls: 'externalize', label: 'Enviar por paqueteria' };
-  if (rec === 'break_even') return { cls: 'break_even', label: 'Empate tecnico' };
-  return { cls: 'unavailable', label: 'No calculable' };
+  const isOptimal = typeof rec === 'string' && rec.endsWith('_optimal');
+  const baseRec = isOptimal ? rec.slice(0, -'_optimal'.length) : rec;
+  const star = isOptimal ? ' \u2605' : '';
+  if (baseRec === 'own_route') return { cls: 'own', label: 'Ruta propia' + star, optimal: isOptimal };
+  if (baseRec === 'externalize') return { cls: 'externalize', label: 'Enviar por paqueteria' + star, optimal: isOptimal };
+  if (baseRec === 'break_even') return { cls: 'break_even', label: 'Empate tecnico', optimal: false };
+  return { cls: 'unavailable', label: 'No calculable', optimal: false };
+}
+
+function isExternalizeRecommendation(rec) {
+  const r = rec || '';
+  return r === 'externalize' || r === 'externalize_optimal';
+}
+
+function getEffectiveLineaRecommendation(linea) {
+  return linea?.gls_recommendation_effective || linea?.gls_recommendation || 'unavailable';
+}
+
+function getEffectiveLineaRecommendationNote(linea) {
+  return (linea?.gls_recommendation_effective_note || '').trim();
+}
+
+function getGlobalGlsRecommendationMeta(summary) {
+  const recommendation = summary?.globalRecommendation || 'unavailable';
+  const totalRouteCost = numVal(summary?.totalRouteCost);
+  const totalGlsAllClients = numVal(summary?.totalGlsAllClients);
+  const globalSavings = numVal(summary?.globalSavings);
+
+  if (recommendation === 'externalize_all') {
+    return {
+      bannerHtml: `<div class="hr-gls-banner externalize">
+        <div class="hr-gls-banner-title">Externaliza TODOS los clientes - ahorro real: ${esc(formatMoney(globalSavings))}</div>
+        <div class="hr-gls-banner-sub">El camion no merece salir. Flota: ${esc(formatMoney(totalRouteCost))} · GLS: ${esc(formatMoney(totalGlsAllClients))}</div>
+      </div>`,
+      note: 'Las recomendaciones por linea asumen que el resto de la ruta se mantiene. Para la decision de toda la hoja, mira el banner de arriba.',
+      savingsLabel: 'Ahorro real',
+      savingsValue: globalSavings,
+      systemTotalCost: totalGlsAllClients,
+    };
+  }
+
+  if (recommendation === 'do_route') {
+    return {
+      bannerHtml: `<div class="hr-gls-banner do-route">
+        <div class="hr-gls-banner-title">La ruta merece la pena en flota propia - ahorro: ${esc(formatMoney(globalSavings))} vs GLS</div>
+        <div class="hr-gls-banner-sub">Flota: ${esc(formatMoney(totalRouteCost))} · GLS si todo externalizado: ${esc(formatMoney(totalGlsAllClients))}</div>
+      </div>`,
+      note: 'Las recomendaciones por linea asumen que el resto de la ruta se mantiene. Para la decision de toda la hoja, mira el banner de arriba.',
+      savingsLabel: 'Ahorro real',
+      savingsValue: globalSavings,
+      systemTotalCost: totalRouteCost,
+    };
+  }
+
+  return {
+    bannerHtml: '',
+    note: '',
+    savingsLabel: 'Ahorro potencial',
+    savingsValue: numVal(summary?.savings),
+    systemTotalCost: numVal(summary?.optimalTotalCost) > 0
+      ? numVal(summary.optimalTotalCost)
+      : (numVal(summary?.optimizedTotalCost) > 0 ? numVal(summary.optimizedTotalCost) : totalRouteCost),
+  };
+}
+
+function applyLastGlsPlanToHoja(hoja) {
+  if (!hoja || !Array.isArray(hoja.lineas)) return hoja;
+  if (!lastGlsCalcResult || parseInt(lastGlsCalcResult.hojaId, 10) !== parseInt(hoja.id, 10)) {
+    return hoja;
+  }
+
+  const recommendations = lastGlsCalcResult.line_recommendations || {};
+  const notes = lastGlsCalcResult.line_recommendation_notes || {};
+  return {
+    ...hoja,
+    lineas: hoja.lineas.map(linea => ({
+      ...linea,
+      gls_recommendation_effective: recommendations[linea.id] ?? recommendations[String(linea.id)] ?? null,
+      gls_recommendation_effective_note: notes[linea.id] ?? notes[String(linea.id)] ?? '',
+    })),
+  };
 }
 
 function friendlyGlsNote(note) {
@@ -187,7 +337,7 @@ function getComercialQuickSearchClients() {
   const ids = getUserComercialIds();
   let rows = activeClients().filter(c => c.ruta_id);
   if (ids.length) {
-    rows = rows.filter(c => c.comercial_id && ids.includes(c.comercial_id));
+    rows = rows.filter(c => clientMatchesCommercialIds(c, ids));
   }
 
   const q = hrQuickClientSearchQuery.trim().toLowerCase();
@@ -317,7 +467,7 @@ async function saveQuickHojaLine(clientId) {
     if (!linea) {
       await api('hojas-ruta/' + hoja.id + '/lineas', 'POST', {
         client_id: client.id,
-        comercial_id: client.comercial_id || null,
+        comercial_id: pickClientCommercialId(client, getUserComercialIds()),
         carros: 0,
         cajas: 0,
         zona: client.addr || '',
@@ -443,12 +593,66 @@ async function loadDelegations() {
 }
 
 function getRutaColor(rutaId) {
+  const route = rutas.find(r => r.id == rutaId);
+  const explicitColor = normalizeHexColor(route?.color);
+  if (explicitColor) return explicitColor;
+
   const rIdx = rutas.findIndex(r => r.id == rutaId);
   return rIdx >= 0 ? RUTA_COLORS[rIdx % RUTA_COLORS.length] : '#85725e';
 }
 
+// Devuelve el id de ruta que se usara para colorear al cliente.
+// Prioriza la asignacion N:M (c.rutas[]) sobre el legacy c.ruta_id, y entre
+// varias rutas escoge la que tenga menor indice en el array global `rutas`,
+// para que dos clientes de la misma ruta siempre salgan del mismo color.
+function pickClientRutaIdForColor(c) {
+  if (c && Array.isArray(c.rutas) && c.rutas.length) {
+    let bestId = null;
+    let bestIdx = Infinity;
+    c.rutas.forEach(r => {
+      const idx = rutas.findIndex(gr => gr.id == r.id);
+      if (idx >= 0 && idx < bestIdx) {
+        bestIdx = idx;
+        bestId = r.id;
+      }
+    });
+    if (bestId !== null) return bestId;
+  }
+  return c && c.ruta_id ? c.ruta_id : null;
+}
+
+// Devuelve los colores de todas las rutas asociadas al cliente, ordenados por
+// el orden global de rutas, para poder pintar marcadores divididos.
+function getClientRouteColors(c) {
+  const routeItems = [];
+
+  if (c && Array.isArray(c.rutas)) {
+    c.rutas.forEach(r => {
+      const id = parseInt(r.id, 10);
+      if (Number.isFinite(id) && !routeItems.some(item => item.id === id)) {
+        routeItems.push({ id, color: r.color || null });
+      }
+    });
+  }
+
+  const legacyId = parseInt(c?.ruta_id, 10);
+  if (Number.isFinite(legacyId) && !routeItems.some(item => item.id === legacyId)) {
+    routeItems.push({ id: legacyId, color: null });
+  }
+
+  const routeOrder = Array.isArray(rutas) ? rutas : [];
+  routeItems.sort((a, b) => {
+    const ai = routeOrder.findIndex(r => r.id == a.id);
+    const bi = routeOrder.findIndex(r => r.id == b.id);
+    return (ai === -1 ? 9999 : ai) - (bi === -1 ? 9999 : bi);
+  });
+
+  return routeItems.map(item => normalizeHexColor(item.color) || getRutaColor(item.id)).filter(Boolean);
+}
+
 async function loadRutas() {
   try { rutas = await api('rutas'); } catch (e) { rutas = []; }
+  return rutas;
 }
 
 async function loadVehicles() {
@@ -475,9 +679,31 @@ function delegationIcon(label) {
 }
 
 function clientIcon(color, label) {
+  const colors = Array.isArray(color)
+    ? color.map(normalizeHexColor).filter(Boolean)
+    : [normalizeHexColor(color)].filter(Boolean);
+  const uniqueColors = [...new Set(colors)];
+  const primaryColor = uniqueColors[0] || '#85725e';
+  const split = uniqueColors.length > 1;
+
+  let background = primaryColor;
+  if (split) {
+    if (uniqueColors.length === 2) {
+      background = 'linear-gradient(90deg, ' + uniqueColors[0] + ' 0 50%, ' + uniqueColors[1] + ' 50% 100%)';
+    } else {
+      const step = 100 / uniqueColors.length;
+      background = 'conic-gradient(' + uniqueColors
+        .map((c, idx) => c + ' ' + (idx * step) + '% ' + ((idx + 1) * step) + '%')
+        .join(', ') + ')';
+    }
+  }
+
+  const labelColor = split ? '#ffffff' : getReadableTextColor(primaryColor);
+  const borderColor = split ? 'rgba(255,255,255,0.92)' : (labelColor === '#ffffff' ? 'rgba(255,255,255,0.92)' : 'rgba(16,24,14,0.45)');
+  const textShadow = split ? 'text-shadow:0 1px 2px rgba(0,0,0,0.8),0 0 1px rgba(0,0,0,0.8);' : '';
   return L.divIcon({
     className: 'map-icon',
-    html: '<div style="background:' + color + ';color:#fff;width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,0.3)">' + label + '</div>',
+    html: '<div style="background:' + background + ';color:' + labelColor + ';width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;border:2px solid ' + borderColor + ';box-shadow:0 2px 6px rgba(0,0,0,0.3);' + textShadow + '">' + label + '</div>',
     iconSize: [24, 24],
     iconAnchor: [12, 12],
   });
@@ -543,7 +769,7 @@ function drawMap() {
   const date = getDate();
   const day = orders[date] || {};
   const now = nowMin();
-  const visibleClients = activeClients();
+  const visibleClients = activeClients().filter(clientHasRenderableCoords);
 
   // Marcadores de todas las delegaciones
   if (delegations.length) {
@@ -569,20 +795,11 @@ function drawMap() {
     });
   }
 
-  // Marcadores clientes activos
+  // Marcadores clientes activos — el color SOLO depende de la ruta comercial
   visibleClients.forEach((c, i) => {
-    const isOpen = clientOpen(c, now);
-    const hasOrd = !!day[c.id];
     const inRoute = clientVehicle[c.id] !== undefined || currentRoute?.includes(c.id);
     const vIdx = clientVehicle[c.id];
-
-    let color = '#85725e';
-    if (c.ruta_id) {
-      const rIdx = rutas.findIndex(r => r.id == c.ruta_id);
-      color = rIdx >= 0 ? RUTA_COLORS[rIdx % RUTA_COLORS.length] : '#85725e';
-    }
-    if (hasOrd) color = isOpen ? '#8e8b30' : '#c83c32';
-    if (inRoute) color = vIdx !== undefined ? ROUTE_COLORS[vIdx % ROUTE_COLORS.length] : '#d4a830';
+    const routeColors = getClientRouteColors(c);
 
     let label = i + 1;
     if (vIdx !== undefined) {
@@ -593,7 +810,7 @@ function drawMap() {
       label = currentRoute.indexOf(c.id) + 1;
     }
 
-    const marker = L.marker([c.x, c.y], { icon: clientIcon(color, label), zIndexOffset: inRoute ? 500 : 100 })
+    const marker = L.marker([c.x, c.y], { icon: clientIcon(routeColors.length ? routeColors : '#85725e', label), zIndexOffset: inRoute ? 500 : 100 })
       .bindTooltip(c.name, { direction: 'top', offset: [0, -10] })
       .addTo(map);
     marker.on('click', () => openClientModal(c.id));
@@ -608,12 +825,13 @@ function drawMap() {
       const pts = [[parseFloat(r.delegation.x), parseFloat(r.delegation.y)]];
       r.stops.forEach(s => pts.push([parseFloat(s.x), parseFloat(s.y)]));
       pts.push([parseFloat(r.delegation.x), parseFloat(r.delegation.y)]);
+      const validPts = pts.filter(([lat, lng]) => Number.isFinite(lat) && Number.isFinite(lng));
 
       // Si tenemos geometria OSRM para esta ruta, usarla
-      if (r.geometry) {
+      if (r.geometry && Array.isArray(r.geometry) && r.geometry.length > 1) {
         routeLines.push(L.polyline(r.geometry, { color, weight: 4, opacity: 0.85 }).addTo(map));
-      } else {
-        routeLines.push(L.polyline(pts, { color, weight: 3, opacity: 0.7, dashArray: '8, 5' }).addTo(map));
+      } else if (validPts.length > 1) {
+        routeLines.push(L.polyline(validPts, { color, weight: 3, opacity: 0.7, dashArray: '8, 5' }).addTo(map));
       }
     });
   } else if (currentRoute?.length) {
@@ -621,15 +839,19 @@ function drawMap() {
       mapRouteLine = L.polyline(routeGeometry, { color: '#d4a830', weight: 4, opacity: 0.85 }).addTo(map);
     } else {
       const pts = [delegation, ...currentRoute.map(gp), delegation];
-      const latlngs = pts.map(p => [p.x, p.y]);
-      mapRouteLine = L.polyline(latlngs, { color: '#8e8b30', weight: 3, opacity: 0.7, dashArray: '8, 5' }).addTo(map);
+      const latlngs = pts
+        .map(p => [p.x, p.y])
+        .filter(([lat, lng]) => Number.isFinite(lat) && Number.isFinite(lng));
+      if (latlngs.length > 1) {
+        mapRouteLine = L.polyline(latlngs, { color: '#8e8b30', weight: 3, opacity: 0.7, dashArray: '8, 5' }).addTo(map);
+      }
     }
   }
 }
 
 function fitMapToMarkers() {
   if (!map) return;
-  const ac = activeClients();
+  const ac = activeClients().filter(clientHasRenderableCoords);
   if (!ac.length) {
     map.setView([delegation.x, delegation.y], 12);
     return;
@@ -670,9 +892,15 @@ async function loadClients() {
       active: c.active !== undefined ? !!parseInt(c.active) : true,
       ruta_id: c.ruta_id ? parseInt(c.ruta_id) : null,
       ruta_name: c.ruta_name || '',
-      rutas: (c.rutas || []).map(r => ({ id: parseInt(r.id), name: r.name })),
+      rutas: (c.rutas || []).map(r => ({ id: parseInt(r.id), name: r.name, color: r.color || null })),
       delegation_id: c.delegation_id ? parseInt(c.delegation_id) : null,
       comercial_id: c.comercial_id ? parseInt(c.comercial_id) : null,
+      comercial_planta_id: c.comercial_planta_id ? parseInt(c.comercial_planta_id) : null,
+      comercial_flor_id: c.comercial_flor_id ? parseInt(c.comercial_flor_id) : null,
+      comercial_accesorio_id: c.comercial_accesorio_id ? parseInt(c.comercial_accesorio_id) : null,
+      comercial_ids: Array.isArray(c.comercial_ids)
+        ? c.comercial_ids.map(id => parseInt(id, 10)).filter(Boolean)
+        : getClientCommercialIds(c),
       comercial_name: c.comercial_name || '',
       al_contado: !!parseInt(c.al_contado || 0),
     }));
@@ -867,8 +1095,13 @@ async function openClientModal(id = null) {
   const rutasGrid = document.getElementById('cRutasGrid');
   rutasGrid.innerHTML = rutas.map(r => {
     const checked = clientRutaIds.includes(r.id) ? 'checked' : '';
-    return '<label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:11px;padding:3px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);white-space:nowrap">' +
-      '<input type="checkbox" class="cRutaCb" value="' + r.id + '" ' + checked + ' style="width:auto;margin:0"> ' + esc(r.name) +
+    const color = normalizeHexColor(r.color) || getRutaColor(r.id);
+    return '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:11px;padding:3px 8px;border:1px solid ' + color + '44;border-radius:6px;background:' + color + '14;white-space:nowrap">' +
+      '<input type="checkbox" class="cRutaCb" value="' + r.id + '" ' + checked + ' style="width:auto;margin:0">' +
+      '<span style="display:inline-flex;align-items:center;gap:6px;min-width:0">' +
+        '<span style="width:10px;height:10px;border-radius:50%;background:' + color + ';border:1px solid rgba(0,0,0,0.12);flex-shrink:0"></span>' +
+        '<span>' + esc(r.name) + '</span>' +
+      '</span>' +
     '</label>';
   }).join('');
   await loadComerciales();
@@ -1105,7 +1338,7 @@ function openOrderModal(preId) {
   if (document.getElementById('itemsContainer').children.length === 0) addItemRow();
   document.getElementById('pModal').classList.add('open');
 }
-function closePModal() { document.getElementById('pModal').classList.remove('open'); }
+function closePModal() { closeModal('pModal'); }
 
 function addItemRow(name = '', qty = 1) {
   const id = itemCnt++;
@@ -1201,10 +1434,14 @@ function renderClientList() {
         '<span class="card-addr">' + (c.addr || (c.x.toFixed(4) + ', ' + c.y.toFixed(4))) + '</span>' +
         (c.comercial_name ? '<span class="card-comercial">' + c.comercial_name + '</span>' : '') +
       '</div>' +
-      '<div class="pills">' +
+        '<div class="pills">' +
         '<span class="pill ' + (isOpen ? 'open' : 'closed') + '">' + (isOpen ? 'ABIERTO' : 'CERRADO') + ' ' + clientHoursText(c, todayDb) + '</span>' +
         (hasOrd ? '<span class="pill has-ord">PEDIDO</span>' : '') +
-        (c.rutas && c.rutas.length ? c.rutas.map(r => '<span class="pill" style="border-color:' + getRutaColor(r.id) + '44;color:' + getRutaColor(r.id) + ';background:' + getRutaColor(r.id) + '18">' + r.name + '</span>').join('') : '') +
+        (c.rutas && c.rutas.length ? c.rutas.map(r => {
+          const color = normalizeHexColor(r.color) || getRutaColor(r.id);
+          const textColor = getReadableTextColor(color);
+          return '<span class="pill" style="border-color:' + color + '66;color:' + textColor + ';background:' + color + '18">' + r.name + '</span>';
+        }).join('') : '') +
         (!c.active ? '<span class="pill closed">INACTIVO</span>' : '') +
       '</div>' +
     '</div>';
@@ -1323,7 +1560,7 @@ function openDelegationModal(id = null) {
   document.getElementById('dClose').value = (d?.close_time || '22:00').substring(0, 5);
   document.getElementById('dModal').classList.add('open');
 }
-function closeDModal() { document.getElementById('dModal').classList.remove('open'); }
+function closeDModal() { closeModal('dModal'); }
 
 async function saveDelegation() {
   const name = document.getElementById('dName').value.trim();
@@ -1380,7 +1617,7 @@ function openVehicleModal(id = null) {
 
   document.getElementById('vModal').classList.add('open');
 }
-function closeVModal() { document.getElementById('vModal').classList.remove('open'); }
+function closeVModal() { closeModal('vModal'); }
 
 async function saveVehicle() {
   const name = document.getElementById('vName').value.trim();
@@ -2045,36 +2282,8 @@ function clearRoute() {
 }
 
 // ── SETTINGS MODAL ────────────────────────────────────────
-async function openSettingsModal() {
-  try {
-    const requests = [api('settings')];
-    if (typeof APP_USER !== 'undefined' && APP_USER.role === 'admin') {
-      requests.push(api('shipping-config').catch(() => null));
-      requests.push(api('shipping-rates').catch(() => []));
-    }
-
-    const results = await Promise.all(requests);
-    const s = results[0];
-    const shippingConfig = typeof APP_USER !== 'undefined' && APP_USER.role === 'admin' ? (results[1] || null) : null;
-    const rateRows = typeof APP_USER !== 'undefined' && APP_USER.role === 'admin' ? (results[2] || []) : [];
-    document.getElementById('sLunchDur').value = s.lunch_duration_min || 60;
-    document.getElementById('sLunchEarly').value = s.lunch_earliest || '12:00';
-    document.getElementById('sLunchLate').value = s.lunch_latest || '15:30';
-    document.getElementById('sBaseUnload').value = s.base_unload_min || 5;
-    document.getElementById('sSpeed').value = s.default_speed_kmh || 50;
-
-    glsConfigState = shippingConfig;
-    shippingRates = Array.isArray(rateRows) ? rateRows : [];
-    applyShippingConfigToForm(shippingConfig);
-    renderShippingRatesList();
-  } catch (e) { /* usa valores por defecto del form */ }
-
-  // Mostrar boton de guardar plantilla si hay rutas
-  document.getElementById('btnSaveTemplate').style.display = fleetRoutes?.routes?.length ? 'block' : 'none';
-  loadTemplates();
-  document.getElementById('settingsModal').classList.add('open');
-}
-function closeSettingsModal() { document.getElementById('settingsModal').classList.remove('open'); }
+// (openSettingsModal definida mas abajo en la seccion de catalogo de paqueteria)
+function closeSettingsModal() { closeModal('settingsModal'); }
 
 async function saveSettings() {
   try {
@@ -2171,6 +2380,7 @@ async function updateFuelPctOnly() {
 // ── MODAL VARIABLES DE CALCULO (admin) ──
 let varsVehiclesData = [];
 let varsVehiclesEdited = {};
+let varsRoutesData = [];
 
 async function openVarsModal() {
   if (typeof APP_USER === 'undefined' || APP_USER.role !== 'admin') {
@@ -2183,6 +2393,7 @@ async function openVarsModal() {
       api('shipping-config'),
       api('vehicles'),
     ]);
+    await loadRutas();
 
     // App
     document.getElementById('vSpeed').value = appSettings.default_speed_kmh || 50;
@@ -2209,6 +2420,11 @@ async function openVarsModal() {
     varsVehiclesData = Array.isArray(vehiclesList) ? vehiclesList : [];
     varsVehiclesEdited = {};
     renderVarsVehicles();
+    varsRoutesData = Array.isArray(rutas) ? rutas.map(r => ({
+      ...r,
+      color: normalizeHexColor(r.color) || getRutaColor(r.id),
+    })) : [];
+    renderVarsRoutes();
 
     switchVarsTab('app');
     document.getElementById('varsModal').classList.add('open');
@@ -2217,9 +2433,7 @@ async function openVarsModal() {
   }
 }
 
-function closeVarsModal() {
-  document.getElementById('varsModal').classList.remove('open');
-}
+function closeVarsModal() { closeModal('varsModal'); }
 
 function switchVarsTab(tab) {
   document.querySelectorAll('.vars-tab').forEach(b => {
@@ -2254,6 +2468,49 @@ function renderVarsVehicles() {
 
 function onVehicleCostChange(vehicleId, value) {
   varsVehiclesEdited[vehicleId] = parseFloat(value || 0);
+}
+
+function renderVarsRoutes() {
+  const el = document.getElementById('varsRoutesList');
+  if (!el) return;
+  if (!varsRoutesData.length) {
+    el.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-dim)">No hay rutas cargadas.</div>';
+    return;
+  }
+
+  el.innerHTML = varsRoutesData.map((route, index) => {
+    const color = normalizeHexColor(route.color) || getRutaColor(route.id) || RUTA_COLORS[index % RUTA_COLORS.length];
+    const count = parseInt(route.client_count, 10);
+    return `<div class="vars-route-row" data-route-row="${route.id}">
+      <div class="vars-route-main">
+        <span class="vars-route-swatch" style="background:${color}"></span>
+        <div class="vars-route-text">
+          <div class="vars-route-name">${esc(route.name)}</div>
+          <div class="vars-route-meta">${Number.isFinite(count) ? count : 0} clientes</div>
+        </div>
+      </div>
+      <div class="vars-route-edit">
+        <input type="color" class="vars-route-color" value="${color}" aria-label="Color de ${esc(route.name)}" oninput="onRouteColorChange(${route.id}, this.value)">
+        <span class="vars-route-hex">${esc(color)}</span>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function onRouteColorChange(routeId, value) {
+  const color = normalizeHexColor(value);
+  if (!color) return;
+
+  const route = varsRoutesData.find(r => parseInt(r.id, 10) === parseInt(routeId, 10));
+  if (route) route.color = color;
+
+  const row = document.querySelector(`[data-route-row="${routeId}"]`);
+  if (row) {
+    const swatch = row.querySelector('.vars-route-swatch');
+    const hex = row.querySelector('.vars-route-hex');
+    if (swatch) swatch.style.background = color;
+    if (hex) hex.textContent = color;
+  }
 }
 
 async function saveVars() {
@@ -2301,10 +2558,23 @@ async function saveVars() {
       }));
     }
 
+    // 4. Colores de rutas
+    if (varsRoutesData.length) {
+      await Promise.all(varsRoutesData.map(route => api('rutas/' + route.id, 'PUT', {
+        name: route.name,
+        color: normalizeHexColor(route.color) || getRutaColor(route.id),
+      })));
+    }
+
     showToast('Variables guardadas');
     closeVarsModal();
-    // Recargar vehiculos en cache
-    if (typeof loadVehicles === 'function') loadVehicles();
+    // Recargar caches para que los colores y datos queden sincronizados
+    await Promise.all([
+      typeof loadVehicles === 'function' ? loadVehicles() : Promise.resolve(),
+      typeof loadRutas === 'function' ? loadRutas() : Promise.resolve(),
+      typeof loadClients === 'function' ? loadClients() : Promise.resolve(),
+    ]);
+    refreshAll();
   } catch (e) {
     showToast('Error: ' + e.message);
   }
@@ -2578,9 +2848,7 @@ function openShippingRateModal(rateId = null) {
   document.getElementById('shippingRateModal').classList.add('open');
 }
 
-function closeShippingRateModal() {
-  document.getElementById('shippingRateModal').classList.remove('open');
-}
+function closeShippingRateModal() { closeModal('shippingRateModal'); }
 
 async function saveShippingRate() {
   const rateId = document.getElementById('shippingRateId').value;
@@ -3352,7 +3620,7 @@ async function openCreateHojaModal() {
     document.getElementById('hrCreateModal').classList.add('open');
   } catch (e) { showToast('Error abriendo modal: ' + e.message); }
 }
-function closeHrCreateModal() { document.getElementById('hrCreateModal').classList.remove('open'); }
+function closeHrCreateModal() { closeModal('hrCreateModal'); }
 
 async function createHoja() {
   const rutaId = document.getElementById('hrNewRuta').value;
@@ -3378,6 +3646,7 @@ async function openHojaDetail(id) {
     currentHoja = await api('hojas-ruta/' + id);
   } catch (e) { return showToast('Error: ' + e.message); }
 
+  lastGlsCalcResult = null;
   hrAutoOrderFocusMode = false;
   hrClientSearchQuery = '';
   if (hrClientSearchTimer) {
@@ -3399,6 +3668,7 @@ async function openHojaDetail(id) {
   document.getElementById('hrDetailView').style.display = 'flex';
   const hrClientSearch = document.getElementById('hrClientSearch');
   if (hrClientSearch) hrClientSearch.value = '';
+  currentHoja = applyLastGlsPlanToHoja(currentHoja);
   renderHojaDetail();
   drawHojaOnMap();
   if (!(typeof APP_USER !== 'undefined' && APP_USER.role === 'comercial')) {
@@ -3455,15 +3725,76 @@ function renderHojaLineas() {
 
 function getHojaGlsSummary(hoja) {
   const lineas = getHojaActiveLineas(hoja);
-  const ownRoute = lineas.filter(l => l.gls_recommendation === 'own_route').length;
-  const externalize = lineas.filter(l => l.gls_recommendation === 'externalize').length;
-  const breakEven = lineas.filter(l => l.gls_recommendation === 'break_even').length;
-  const unavailable = lineas.filter(l => l.gls_recommendation === 'unavailable' || (!l.gls_recommendation && !hasLineaCostData(l))).length;
-  const savings = lineas.reduce((sum, line) => {
-    if (line.gls_recommendation !== 'externalize') return sum;
+  const ownRoute = lineas.filter(l => getEffectiveLineaRecommendation(l) === 'own_route').length;
+  const externalize = lineas.filter(l => getEffectiveLineaRecommendation(l) === 'externalize').length;
+  const breakEven = lineas.filter(l => getEffectiveLineaRecommendation(l) === 'break_even').length;
+  const unavailable = lineas.filter(l => getEffectiveLineaRecommendation(l) === 'unavailable' || (!getEffectiveLineaRecommendation(l) && !hasLineaCostData(l))).length;
+  let savings = lineas.reduce((sum, line) => {
+    if (getEffectiveLineaRecommendation(line) !== 'externalize') return sum;
     if (line.cost_own_route === null || line.cost_gls_adjusted === null) return sum;
     return sum + Math.max(0, numVal(line.cost_own_route) - numVal(line.cost_gls_adjusted));
   }, 0);
+
+  // Datos del ultimo calculo del backend (solo si pertenecen a esta hoja)
+  let totalRouteKm = 0;
+  let totalRouteCost = 0;
+  let totalGlsAllClients = 0;
+  let globalRecommendation = null;
+  let globalSavings = 0;
+  let optimizationMode = null;
+  let optimizedRouteCost = 0;
+  let optimizedGlsCost = 0;
+  let optimizedTotalCost = 0;
+  let optimizationUsed = null;
+  let optimalCombo = [];
+  let optimalTotalCost = 0;
+  let optimalFleetCost = 0;
+  let optimalGlsCost = 0;
+  let osrmWarning = null;
+  if (lastGlsCalcResult && hoja && parseInt(lastGlsCalcResult.hojaId, 10) === parseInt(hoja.id, 10)) {
+    totalRouteKm = numVal(lastGlsCalcResult.total_route_km);
+    totalRouteCost = numVal(lastGlsCalcResult.total_route_cost);
+    totalGlsAllClients = numVal(lastGlsCalcResult.total_gls_all_clients);
+    globalRecommendation = lastGlsCalcResult.global_recommendation || null;
+    globalSavings = numVal(lastGlsCalcResult.global_savings);
+    optimizationMode = lastGlsCalcResult.optimization_mode || null;
+    optimizedRouteCost = numVal(lastGlsCalcResult.optimized_route_cost);
+    optimizedGlsCost = numVal(lastGlsCalcResult.optimized_gls_cost);
+    optimizedTotalCost = numVal(lastGlsCalcResult.optimized_total_cost);
+    optimizationUsed = lastGlsCalcResult.optimization_used || null;
+    optimalCombo = Array.isArray(lastGlsCalcResult.optimal_combo) ? lastGlsCalcResult.optimal_combo : [];
+    optimalTotalCost = numVal(lastGlsCalcResult.optimal_total_cost);
+    optimalFleetCost = numVal(lastGlsCalcResult.optimal_fleet_cost);
+    optimalGlsCost = numVal(lastGlsCalcResult.optimal_gls_cost);
+    osrmWarning = lastGlsCalcResult.osrm_warning || null;
+    if (optimizedTotalCost > 0 || optimizationMode === 'externalize_all' || optimizationMode === 'do_route' || optimizationMode === 'mixed') {
+      savings = numVal(lastGlsCalcResult.optimized_savings);
+    }
+  }
+
+  let systemSavings = savings;
+  let systemSavingsLabel = 'Ahorro potencial';
+  let systemTotalCost = totalRouteCost;
+  if (globalRecommendation === 'externalize_all') {
+    systemSavings = globalSavings;
+    systemSavingsLabel = 'Ahorro real';
+    systemTotalCost = totalGlsAllClients;
+  } else if (globalRecommendation === 'do_route') {
+    systemSavings = globalSavings;
+    systemSavingsLabel = 'Ahorro real';
+    systemTotalCost = totalRouteCost;
+  } else if (
+    (optimizationUsed === 'combinatorial' || optimizationUsed === 'greedy' || optimizationMode === 'mixed')
+    && optimalTotalCost > 0
+  ) {
+    systemSavings = numVal(lastGlsCalcResult.optimized_savings);
+    systemSavingsLabel = 'Ahorro real';
+    systemTotalCost = optimalTotalCost;
+  } else if (optimizationUsed === 'combinatorial' || optimizationUsed === 'greedy' || optimizedTotalCost > 0) {
+    systemSavings = numVal(lastGlsCalcResult.optimized_savings);
+    systemSavingsLabel = 'Ahorro real';
+    systemTotalCost = optimizedTotalCost > 0 ? optimizedTotalCost : totalRouteCost;
+  }
 
   return {
     total: lineas.length,
@@ -3472,6 +3803,24 @@ function getHojaGlsSummary(hoja) {
     breakEven,
     unavailable,
     savings,
+    totalRouteKm,
+    totalRouteCost,
+    totalGlsAllClients,
+    globalRecommendation,
+    globalSavings,
+    optimizationMode,
+    optimizedRouteCost,
+    optimizedGlsCost,
+    optimizedTotalCost,
+    optimizationUsed,
+    optimalCombo,
+    optimalTotalCost,
+    optimalFleetCost,
+    optimalGlsCost,
+    systemSavings,
+    systemSavingsLabel,
+    systemTotalCost,
+    osrmWarning,
   };
 }
 
@@ -3486,6 +3835,7 @@ function renderHojaGlsSummary(hoja, isComercialView) {
   }
 
   const summary = getHojaGlsSummary(hoja);
+  const globalMeta = getGlobalGlsRecommendationMeta(summary);
   let note = 'La comparativa se refresca sola al cambiar clientes, orden o vehiculo.';
   if (!summary.total) {
     note = 'Anade carros o cajas para que la hoja compare ruta propia frente a paqueteria.';
@@ -3496,13 +3846,55 @@ function renderHojaGlsSummary(hoja, isComercialView) {
   } else if (summary.unavailable > 0) {
     note = 'Hay clientes sin codigo postal o con datos incompletos; se marcan como no calculables.';
   }
+  if (globalMeta.note) {
+    note = globalMeta.note;
+  }
 
   el.style.display = 'block';
-  el.innerHTML = `<div class="hr-gls-summary-grid">
+  const rutaTotalCard = summary.totalRouteKm > 0
+    ? `<div class="hr-gls-card" title="Distancia y coste real de toda la ruta (depot -> clientes -> depot) usando el coste/km del vehiculo asignado.">
+        <div class="hr-gls-card-label">Ruta total</div>
+        <div class="hr-gls-card-value">${esc(formatQty(summary.totalRouteKm))} km</div>
+        <div class="hr-gls-card-sub">${esc(formatMoney(summary.totalRouteCost))}</div>
+      </div>`
+    : '';
+  const savingsLabel = summary.systemSavingsLabel || 'Ahorro potencial';
+  const savingsValue = numVal(summary.systemSavings ?? summary.savings);
+
+  let optimizationBanner = '';
+  if (summary.optimizationUsed === 'combinatorial' || summary.optimizationUsed === 'greedy') {
+    const algoLabel = summary.optimizationUsed === 'combinatorial'
+      ? 'Optimo combinatorio (busqueda exacta 2^N)'
+      : 'Optimo voraz (heuristica greedy)';
+    const numExt = (summary.optimalCombo || []).length;
+    const sub = `Coste total optimo: ${formatMoney(summary.optimalTotalCost)} `
+      + `(flota ${formatMoney(summary.optimalFleetCost)} + paqueteria ${formatMoney(summary.optimalGlsCost)}). `
+      + `Externalizar ${numExt} cliente${numExt === 1 ? '' : 's'}.`;
+    optimizationBanner = `<div class="hr-gls-banner optimization">
+        <div class="hr-gls-banner-title">\u2605 ${esc(algoLabel)}</div>
+        <div class="hr-gls-banner-sub">${esc(sub)}</div>
+      </div>`;
+  }
+
+  let osrmBanner = '';
+  if (summary.osrmWarning === 'fallback_haversine') {
+    osrmBanner = `<div class="hr-gls-banner osrm-warn">
+        <div class="hr-gls-banner-title">OSRM no disponible - distancias aproximadas</div>
+        <div class="hr-gls-banner-sub">El servicio de rutas no responde. Las distancias se han estimado en linea recta (haversine). Los costes pueden no ser exactos.</div>
+      </div>`;
+  } else if (summary.osrmWarning === 'partial_haversine') {
+    osrmBanner = `<div class="hr-gls-banner osrm-warn">
+        <div class="hr-gls-banner-title">OSRM parcialmente disponible</div>
+        <div class="hr-gls-banner-sub">Algunas distancias se estimaron en linea recta porque OSRM no respondio para todos los tramos.</div>
+      </div>`;
+  }
+
+  el.innerHTML = `${osrmBanner}${globalMeta.bannerHtml}${optimizationBanner}<div class="hr-gls-summary-grid">
       <div class="hr-gls-card">
         <div class="hr-gls-card-label">Clientes cargados</div>
         <div class="hr-gls-card-value">${esc(String(summary.total))}</div>
       </div>
+      ${rutaTotalCard}
       <div class="hr-gls-card">
         <div class="hr-gls-card-label">Compensa ruta propia</div>
         <div class="hr-gls-card-value ok">${esc(String(summary.ownRoute))}</div>
@@ -3512,8 +3904,8 @@ function renderHojaGlsSummary(hoja, isComercialView) {
         <div class="hr-gls-card-value warn">${esc(String(summary.externalize))}</div>
       </div>
       <div class="hr-gls-card">
-        <div class="hr-gls-card-label">Ahorro potencial</div>
-        <div class="hr-gls-card-value">${esc(formatMoney(summary.savings))}</div>
+        <div class="hr-gls-card-label">${esc(savingsLabel)}</div>
+        <div class="hr-gls-card-value">${esc(formatMoney(savingsValue))}</div>
       </div>
     </div>
     <div class="hr-gls-summary-note">${esc(note)}${summary.breakEven ? ` Empate tecnico: ${summary.breakEven}.` : ''}</div>`;
@@ -3629,16 +4021,26 @@ function renderHojaDetailLegacy() {
         </div>`
       : `<span class="hr-linea-cc"${hojaLineaHasCarga(l) ? '' : ' style="color:var(--text-dim)"'}>${esc(hojaLineaHasCarga(l) ? formatLineaUnits(l) : 'Sin carga')}</span>`;
     const carrierLabel = esc(l.gls_service || 'Paqueteria');
-    const meta = glsRecommendationMeta(l.gls_recommendation);
+    const meta = glsRecommendationMeta(getEffectiveLineaRecommendation(l));
     const note = friendlyGlsNote(l.gls_notes);
+    const effectiveNote = getEffectiveLineaRecommendationNote(l);
+    const simCheckbox = !isComercialView && hojaLineaHasCarga(l) && l.cost_gls_adjusted !== null
+      ? renderSimulationCheckbox(l)
+      : '';
     const costHtml = !isComercialView && hasLineaCostData(l)
       ? `<div class="hr-linea-costs">
-          <span class="hr-linea-cost-item">Km ${l.detour_km !== null ? esc(formatQty(l.detour_km)) : '—'}</span>
-          <span class="hr-linea-cost-item">Propio ${l.cost_own_route !== null ? esc(formatMoney(l.cost_own_route)) : '—'}</span>
+          ${simCheckbox}
+          <span class="hr-linea-cost-item" title="Km extra que anade este cliente a la ruta">+${l.detour_km !== null ? esc(formatQty(l.detour_km)) : '—'} km</span>
+          <span class="hr-linea-cost-item" title="Lo que ahorras si externalizas este cliente. Calculado como km marginales (los que se añaden a la ruta por incluirlo) x coste/km del vehiculo.">Coste extra: ${l.cost_own_route !== null ? esc(formatMoney(l.cost_own_route)) : '—'}</span>
           <span class="hr-linea-cost-item">${carrierLabel} ${l.cost_gls_adjusted !== null ? esc(formatMoney(l.cost_gls_adjusted)) : '—'}</span>
           <span class="hr-linea-cost-item reco-${meta.cls}">${esc(meta.label)}</span>
           ${note ? `<span class="hr-linea-cost-item reco-unavailable">${esc(note)}</span>` : ''}
         </div>`
+      : '';
+    const renderedCostHtml = costHtml
+      ? costHtml
+        .replace('Coste extra:', 'Coste marginal:')
+        .replace('</div>', `${effectiveNote ? `<span class="hr-linea-cost-item reco-unavailable">${esc(effectiveNote)}</span>` : ''}</div>`)
       : '';
     html += `<div class="hr-linea ${estadoCls}" data-id="${l.id}"${rowOnClick}>
       ${handleHtml}
@@ -3654,7 +4056,7 @@ function renderHojaDetailLegacy() {
           <span class="hr-linea-zona">${esc(l.zona || '')}</span>
           <span class="hr-linea-com">${esc(l.comercial_name || '')}</span>
         </div>
-        ${costHtml}
+        ${renderedCostHtml}
       </div>
     </div>`;
   });
@@ -3685,6 +4087,8 @@ function renderHojaDetailLegacy() {
       } catch (e) { showToast('Error al reordenar: ' + e.message); }
     }
   });
+
+  renderSimulationPanel();
 }
 
 function renderHojaDetail() {
@@ -3758,16 +4162,26 @@ function renderHojaDetail() {
           <input type="number" value="${numVal(l.cajas) > 0 ? formatQty(l.cajas) : ''}" min="0" step="1" placeholder="Cajas" onclick="event.stopPropagation()" onchange="updateHojaLineaCantidad(${l.id}, 'cajas', this.value)" style="width:88px;text-align:right;padding:6px 8px;font-size:13px;border-radius:8px">
         </div>`
       : `<span class="hr-linea-cc"${hojaLineaHasCarga(l) ? '' : ' style="color:var(--text-dim)"'}>${esc(hojaLineaHasCarga(l) ? formatLineaUnits(l) : 'Sin carga')}</span>`;
-    const meta = glsRecommendationMeta(l.gls_recommendation);
+    const meta = glsRecommendationMeta(getEffectiveLineaRecommendation(l));
     const note = friendlyGlsNote(l.gls_notes);
+    const effectiveNote = getEffectiveLineaRecommendationNote(l);
+    const simCheckbox = !isComercialView && hojaLineaHasCarga(l) && l.cost_gls_adjusted !== null
+      ? renderSimulationCheckbox(l)
+      : '';
     const costHtml = !isComercialView && hasLineaCostData(l)
       ? `<div class="hr-linea-costs">
-          <span class="hr-linea-cost-item">Km ${l.detour_km !== null ? esc(formatQty(l.detour_km)) : '-'}</span>
-          <span class="hr-linea-cost-item">Propio ${l.cost_own_route !== null ? esc(formatMoney(l.cost_own_route)) : '-'}</span>
+          ${simCheckbox}
+          <span class="hr-linea-cost-item" title="Km extra que anade este cliente a la ruta">+${l.detour_km !== null ? esc(formatQty(l.detour_km)) : '-'} km</span>
+          <span class="hr-linea-cost-item" title="Lo que ahorras si externalizas este cliente. Calculado como km marginales (los que se añaden a la ruta por incluirlo) x coste/km del vehiculo.">Coste extra: ${l.cost_own_route !== null ? esc(formatMoney(l.cost_own_route)) : '-'}</span>
           <span class="hr-linea-cost-item">${esc(l.gls_service || 'Paqueteria')} ${l.cost_gls_adjusted !== null ? esc(formatMoney(l.cost_gls_adjusted)) : '-'}</span>
           <span class="hr-linea-cost-item reco-${meta.cls}">${esc(meta.label)}</span>
           ${note ? `<span class="hr-linea-cost-item reco-unavailable">${esc(note)}</span>` : ''}
         </div>`
+      : '';
+    const renderedCostHtml = costHtml
+      ? costHtml
+        .replace('Coste extra:', 'Coste marginal:')
+        .replace('</div>', `${effectiveNote ? `<span class="hr-linea-cost-item reco-unavailable">${esc(effectiveNote)}</span>` : ''}</div>`)
       : '';
     html += `<div class="hr-linea ${estadoCls}" data-id="${l.id}"${rowOnClick}>
       ${handleHtml}
@@ -3783,7 +4197,7 @@ function renderHojaDetail() {
           <span class="hr-linea-zona">${esc(l.zona || '')}</span>
           <span class="hr-linea-com">${esc(l.comercial_name || '')}</span>
         </div>
-        ${costHtml}
+        ${renderedCostHtml}
       </div>
     </div>`;
   });
@@ -3814,6 +4228,8 @@ function renderHojaDetail() {
       } catch (e) { showToast('Error al reordenar: ' + e.message); }
     }
   });
+
+  renderSimulationPanel();
 }
 
 async function updateHojaLineaCantidad(lineaId, field, value) {
@@ -3856,15 +4272,39 @@ async function calculateHojaGlsCosts(force = true, opts = {}) {
     }
     renderHojaGlsSummary(currentHoja, false);
 
-    await api('shipping-costs/calculate', 'POST', {
+    const calcResult = await api('shipping-costs/calculate', 'POST', {
       hoja_ruta_id: hojaId,
       force: force ? 1 : 0,
     });
+    lastGlsCalcResult = {
+      hojaId: hojaId,
+      total_route_km: numVal(calcResult?.total_route_km),
+      total_route_cost: numVal(calcResult?.total_route_cost),
+      total_gls_all_clients: numVal(calcResult?.total_gls_all_clients),
+      global_recommendation: calcResult?.global_recommendation || null,
+      global_savings: numVal(calcResult?.global_savings),
+      optimization_mode: calcResult?.optimization_mode || null,
+      optimized_route_cost: numVal(calcResult?.optimized_route_cost),
+      optimized_gls_cost: numVal(calcResult?.optimized_gls_cost),
+      optimized_total_cost: numVal(calcResult?.optimized_total_cost),
+      optimized_savings: numVal(calcResult?.optimized_savings),
+      optimization_used: calcResult?.optimization_used || null,
+      optimal_combo: Array.isArray(calcResult?.optimal_combo) ? calcResult.optimal_combo.map(x => parseInt(x, 10)) : [],
+      optimal_total_cost: numVal(calcResult?.optimal_total_cost),
+      optimal_fleet_cost: numVal(calcResult?.optimal_fleet_cost),
+      optimal_gls_cost: numVal(calcResult?.optimal_gls_cost),
+      line_recommendations: calcResult?.line_recommendations || {},
+      line_recommendation_notes: calcResult?.line_recommendation_notes || {},
+      osrm_warning: calcResult?.osrm_warning || null,
+    };
+    // Resetear simulacion al recibir nuevos costes del backend
+    simulationOverrides = {};
+    lastSimResult = null;
 
     const refreshedHoja = await api('hojas-ruta/' + hojaId);
     hrGlsAutoCalcRunning = false;
     if (currentHoja && parseInt(currentHoja.id, 10) === parseInt(hojaId, 10)) {
-      currentHoja = refreshedHoja;
+      currentHoja = applyLastGlsPlanToHoja(refreshedHoja);
       renderHojaDetail();
     } else if (currentHoja) {
       scheduleHojaGlsAutoCalc(false, 250);
@@ -3884,6 +4324,167 @@ async function calculateHojaGlsCosts(force = true, opts = {}) {
       btn.textContent = previousText || 'Calcular paqueteria';
     }
   }
+}
+
+// ── SIMULADOR INTERACTIVO DE COSTES ─────────────────────────
+function isLineaSimExternalized(linea) {
+  if (!linea) return false;
+  const id = parseInt(linea.id, 10);
+  const override = simulationOverrides[id];
+  if (override === 'externalize') return true;
+  if (override === 'fleet') return false;
+  // Sin override: respetar la recomendacion del sistema
+  return isExternalizeRecommendation(getEffectiveLineaRecommendation(linea));
+}
+
+function renderSimulationCheckbox(linea) {
+  const checked = isLineaSimExternalized(linea) ? 'checked' : '';
+  const tooltip = 'Marcar para externalizar este cliente en la simulacion';
+  return `<label class="hr-linea-sim-toggle" title="${tooltip}" onclick="event.stopPropagation()">
+      <input type="checkbox" ${checked} onchange="onSimulationToggle(${linea.id}, this.checked); event.stopPropagation();"> Externalizar
+    </label>`;
+}
+
+function onSimulationToggle(lineaId, isChecked) {
+  const id = parseInt(lineaId, 10);
+  if (!Number.isFinite(id)) return;
+  simulationOverrides[id] = isChecked ? 'externalize' : 'fleet';
+  if (simulationDebounceTimer) clearTimeout(simulationDebounceTimer);
+  simulationDebounceTimer = setTimeout(() => {
+    simulationDebounceTimer = null;
+    recalcSimulationLive();
+  }, 200);
+}
+
+function buildSimulationFleetClientIds() {
+  if (!currentHoja) return { fleetClientIds: [], externalizedLineas: [] };
+  const lineas = getHojaActiveLineas(currentHoja).filter(l => l.cost_gls_adjusted !== null);
+  const fleetClientIds = [];
+  const externalizedLineas = [];
+  lineas.forEach(l => {
+    if (isLineaSimExternalized(l)) {
+      externalizedLineas.push(l);
+    } else {
+      fleetClientIds.push(parseInt(l.client_id, 10));
+    }
+  });
+  return { fleetClientIds, externalizedLineas, lineas };
+}
+
+async function recalcSimulationLive() {
+  if (!currentHoja) return;
+  if (simulationInFlight) return;
+  const hojaId = parseInt(currentHoja.id, 10);
+  const { fleetClientIds, externalizedLineas, lineas } = buildSimulationFleetClientIds();
+  if (!lineas || !lineas.length) {
+    lastSimResult = null;
+    renderSimulationPanel();
+    return;
+  }
+  simulationInFlight = true;
+  try {
+    const result = await api('shipping-costs/simulate', 'POST', {
+      hoja_ruta_id: hojaId,
+      client_ids_in_fleet: fleetClientIds,
+    });
+    const glsTotal = externalizedLineas.reduce((sum, l) => sum + numVal(l.cost_gls_adjusted), 0);
+    lastSimResult = {
+      hojaId,
+      fleet_km: numVal(result?.fleet_km),
+      fleet_cost: numVal(result?.fleet_cost),
+      gls_total: glsTotal,
+      total: numVal(result?.fleet_cost) + glsTotal,
+      num_externalized: externalizedLineas.length,
+      num_in_fleet: fleetClientIds.length,
+    };
+    renderSimulationPanel();
+  } catch (e) {
+    showToast('Error simulacion: ' + e.message);
+  } finally {
+    simulationInFlight = false;
+  }
+}
+
+function getSystemTotalCost(summary) {
+  // Coste total de referencia del sistema para comparar con la simulacion
+  if (numVal(summary?.systemTotalCost) > 0) return numVal(summary.systemTotalCost);
+  if (numVal(summary?.optimalTotalCost) > 0) return numVal(summary.optimalTotalCost);
+  if (numVal(summary?.optimizedTotalCost) > 0) return numVal(summary.optimizedTotalCost);
+  if (numVal(summary?.totalRouteCost) > 0) return numVal(summary.totalRouteCost);
+  return numVal(summary?.totalGlsAllClients);
+}
+
+function renderSimulationPanel() {
+  const el = document.getElementById('hrSimulationPanel');
+  if (!el) return;
+  if (!currentHoja) {
+    el.style.display = 'none';
+    el.innerHTML = '';
+    return;
+  }
+  const isComercialView = typeof APP_USER !== 'undefined' && APP_USER.role === 'comercial';
+  if (isComercialView) {
+    el.style.display = 'none';
+    el.innerHTML = '';
+    return;
+  }
+  const lineas = getHojaActiveLineas(currentHoja).filter(l => l.cost_gls_adjusted !== null);
+  if (!lineas.length) {
+    el.style.display = 'none';
+    el.innerHTML = '';
+    return;
+  }
+
+  const summary = getHojaGlsSummary(currentHoja);
+  const systemTotal = getSystemTotalCost(summary);
+  const systemLabel = summary.globalRecommendation === 'externalize_all'
+    ? 'Sistema: externaliza toda la hoja'
+    : summary.globalRecommendation === 'do_route'
+      ? 'Sistema: hacer la ruta propia'
+      : summary.globalRecommendation === 'mixed'
+        ? 'Sistema: caso mixto'
+        : 'Sistema: no calculable';
+
+  let body = '';
+  if (!lastSimResult || parseInt(lastSimResult.hojaId, 10) !== parseInt(currentHoja.id, 10)) {
+    body = `<div class="hr-sim-info">SIMULACION lista. Marca/desmarca clientes para ver el coste en vivo.</div>`;
+  } else {
+    const sim = lastSimResult;
+    const diff = sim.total - systemTotal;
+    const diffSign = diff >= 0 ? '+' : '';
+    const diffCls = diff <= -0.005 ? 'sim-better' : (diff >= 0.005 ? 'sim-worse' : 'sim-equal');
+    const diffTxt = systemTotal > 0
+      ? `(vs sistema: ${diffSign}${formatMoney(diff).replace(' EUR', '')} EUR)`
+      : '';
+    body = `<div class="hr-sim-row">
+        <span class="hr-sim-tag">${esc(systemLabel)}</span>
+        <span class="hr-sim-tag"><b>${esc(formatQty(sim.fleet_km))}</b> km flota</span>
+        <span class="hr-sim-tag"><b>${esc(formatMoney(sim.fleet_cost))}</b> flota</span>
+        <span class="hr-sim-tag"><b>${esc(formatMoney(sim.gls_total))}</b> GLS</span>
+        <span class="hr-sim-tag hr-sim-total"><b>TOTAL ${esc(formatMoney(sim.total))}</b></span>
+        ${diffTxt ? `<span class="hr-sim-diff ${diffCls}">${esc(diffTxt)}</span>` : ''}
+        <span class="hr-sim-counts">${sim.num_in_fleet} en flota / ${sim.num_externalized} externalizados</span>
+      </div>`;
+  }
+
+  el.style.display = 'block';
+  el.innerHTML = `<div class="hr-sim-title">Simulacion interactiva</div>
+    ${body}
+    <div class="hr-sim-actions">
+      <button type="button" class="btn btn-secondary btn-sm" onclick="resetSimulationToSystem()">Resetear a recomendacion del sistema</button>
+      <button type="button" class="btn btn-secondary btn-sm" onclick="applySimulationAsRecommendation()">Aplicar simulacion como recomendacion fija</button>
+    </div>`;
+}
+
+function resetSimulationToSystem() {
+  simulationOverrides = {};
+  lastSimResult = null;
+  renderHojaDetail();
+  recalcSimulationLive();
+}
+
+function applySimulationAsRecommendation() {
+  showToast('Funcionalidad pendiente: aun no se persiste la simulacion');
 }
 
 async function changeHojaEstado(estado) {
@@ -4160,17 +4761,6 @@ function openAddLineaModal() {
     return;
   }
   if (!currentHoja) return;
-  const comWrap = document.getElementById('hrLineaComercialWrap');
-  const comSel = document.getElementById('hrLineaComercial');
-  if (shouldHideComercialSelector()) {
-    if (comWrap) comWrap.style.display = 'none';
-    comSel.innerHTML = '<option value="">—</option>';
-  } else {
-    if (comWrap) comWrap.style.display = '';
-    loadComerciales().then(() => {
-      comSel.innerHTML = '<option value="">—</option>' + comerciales.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
-    });
-  }
   document.getElementById('hrLineaCarros').value = '';
   document.getElementById('hrLineaCajas').value = '';
   document.getElementById('hrLineaObs').value = '';
@@ -4179,7 +4769,7 @@ function openAddLineaModal() {
   filterLineaClients('');
   document.getElementById('hrAddLineaModal').classList.add('open');
 }
-function closeAddLineaModal() { document.getElementById('hrAddLineaModal').classList.remove('open'); }
+function closeAddLineaModal() { closeModal('hrAddLineaModal'); }
 
 function filterLineaClients(q) {
   const existingIds = new Set((currentHoja?.lineas || []).map(l => parseInt(l.client_id)));
@@ -4190,7 +4780,7 @@ function filterLineaClients(q) {
   let visibleClients = clients.filter(c => c.active);
   if (typeof APP_USER !== 'undefined' && APP_USER.role === 'comercial') {
     visibleClients = userComercialIds.length
-      ? visibleClients.filter(c => c.comercial_id && userComercialIds.includes(c.comercial_id))
+      ? visibleClients.filter(c => clientMatchesCommercialIds(c, userComercialIds))
       : [];
   }
 
@@ -4214,15 +4804,13 @@ function filterLineaClients(q) {
     const checked = alreadyIn || lineaSelectedClients.has(c.id) ? 'checked' : '';
     const disabled = alreadyIn ? 'disabled' : '';
     const dimStyle = alreadyIn ? 'opacity:0.5;' : '';
-    const isRuta = c.rutas && c.rutas.some(r => r.id == rutaId);
-    const badge = isRuta ? ' <span class="pill ruta" style="font-size:9px;vertical-align:middle">Ruta</span>' : '';
     const inHojaBadge = alreadyIn ? ' <span style="font-size:9px;background:#2563eb;color:#fff;padding:1px 5px;border-radius:3px;vertical-align:middle">En hoja</span>' : '';
     const contadoChecked = c.al_contado ? 'checked' : '';
     const addr = c.addr ? '<div style="font-size:10px;color:var(--text-dim);margin-top:2px;word-break:break-word">' + esc(c.addr) + '</div>' : '';
     return '<div class="hr-add-client-item" style="' + dimStyle + '" ' + (alreadyIn ? '' : 'onclick="toggleLineaClient(' + c.id + ', this)"') + '>' +
       '<input type="checkbox" ' + checked + ' ' + disabled + ' ' + (alreadyIn ? '' : 'onclick="event.stopPropagation();toggleLineaClient(' + c.id + ', this.parentElement)"') + ' style="flex-shrink:0;width:16px;height:16px;margin-top:2px">' +
       '<div style="flex:1;min-width:0;overflow:hidden">' +
-        '<div style="font-weight:600;font-size:12px;word-break:break-word">' + esc(c.name) + badge + inHojaBadge + '</div>' +
+        '<div style="font-weight:600;font-size:12px;word-break:break-word">' + esc(c.name) + inHojaBadge + '</div>' +
         addr +
       '</div>' +
       (alreadyIn ? '' : '<label onclick="event.stopPropagation()" style="display:flex;align-items:center;gap:4px;flex-shrink:0;cursor:pointer;font-size:9px;color:var(--danger);font-weight:700;white-space:nowrap;margin-top:2px">' +
@@ -4244,7 +4832,6 @@ function toggleLineaClient(id, row) {
 
 async function addLineasToHoja() {
   if (!currentHoja || !lineaSelectedClients.size) return showToast('Selecciona al menos un cliente');
-  const comercialId = document.getElementById('hrLineaComercial').value || null;
   const userComercialIds = getUserComercialIds();
   const defaultUserComercialId = userComercialIds.length === 1 ? userComercialIds[0] : null;
   const carros = document.getElementById('hrLineaCarros').value || 0;
@@ -4254,9 +4841,10 @@ async function addLineasToHoja() {
   try {
     for (const clientId of lineaSelectedClients) {
       const client = clients.find(c => c.id === clientId);
+      const clientComercialId = pickClientCommercialId(client, userComercialIds);
       await api('hojas-ruta/' + currentHoja.id + '/lineas', 'POST', {
         client_id: clientId,
-        comercial_id: comercialId ? parseInt(comercialId) : (client?.comercial_id || defaultUserComercialId || null),
+        comercial_id: clientComercialId || defaultUserComercialId || null,
         carros: numVal(carros),
         cajas: numVal(cajas),
         zona: client?.addr || '',
@@ -4298,7 +4886,7 @@ function openEditLineaModal(lineaId) {
   document.getElementById('hrEditEstado').value = linea.estado || 'pendiente';
   document.getElementById('hrEditLineaModal').classList.add('open');
 }
-function closeEditLineaModal() { document.getElementById('hrEditLineaModal').classList.remove('open'); }
+function closeEditLineaModal() { closeModal('hrEditLineaModal'); }
 
 async function saveEditLinea() {
   const lineaId = document.getElementById('hrEditLineaId').value;
@@ -4454,13 +5042,25 @@ function printHoja() {
   const h = currentHoja;
   const lineas = getHojaActiveLineas(h);
   const hasCostColumns = lineas.some(l => l.cost_own_route !== null || l.cost_gls_adjusted !== null || l.gls_recommendation);
-  const externalizable = lineas.filter(l => l.gls_recommendation === 'externalize' && l.cost_own_route !== null && l.cost_gls_adjusted !== null);
+  const externalizable = lineas.filter(l => getEffectiveLineaRecommendation(l) === 'externalize' && l.cost_gls_adjusted !== null);
+  const summary = getHojaGlsSummary(h);
+  const showPlanSummary = hasCostColumns && (
+    externalizable.length > 0
+    || summary.globalRecommendation === 'externalize_all'
+    || summary.globalRecommendation === 'do_route'
+    || summary.systemSavingsLabel === 'Ahorro real'
+  );
+  const planHeadline = summary.globalRecommendation === 'externalize_all'
+    ? 'DECISION GLOBAL: EXTERNALIZA TODOS LOS CLIENTES'
+    : summary.globalRecommendation === 'do_route'
+      ? 'DECISION GLOBAL: HAZ LA RUTA EN FLOTA PROPIA'
+      : 'CLIENTES RECOMENDADOS PARA PAQUETERIA';
 
   let rows = lineas.map((l, i) => {
     const num = l.orden_descarga || (i + 1);
     const cl = clients.find(c => c.id === parseInt(l.client_id));
     const contado = cl?.al_contado ? ' <span style="color:red;font-weight:700">[CTD]</span>' : '';
-    const meta = glsRecommendationMeta(l.gls_recommendation);
+    const meta = glsRecommendationMeta(getEffectiveLineaRecommendation(l));
     return `<tr>
       <td style="text-align:center">${num}</td>
       <td><b>${esc(l.client_name)}</b>${contado}</td>
@@ -4478,7 +5078,8 @@ function printHoja() {
 
   const totalCarros = formatQty(lineas.reduce((s, l) => s + numVal(l.carros), 0));
   const totalCajas = formatQty(lineas.reduce((s, l) => s + numVal(l.cajas), 0));
-  const totalPotentialSavings = externalizable.reduce((sum, line) => sum + Math.max(0, numVal(line.cost_own_route) - numVal(line.cost_gls_adjusted)), 0);
+  const totalPotentialSavings = numVal(summary.systemSavings ?? summary.savings);
+  const savingsLabel = summary.systemSavingsLabel || 'Ahorro potencial';
 
   const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Hoja de Ruta - ${esc(h.ruta_name)}</title>
   <style>
@@ -4500,10 +5101,17 @@ function printHoja() {
     <tbody>${rows}</tbody>
   </table>
   <div class="totals">TOTALES: ${totalCarros} carros &middot; ${totalCajas} cajas &middot; ${lineas.length} clientes</div>
-  ${hasCostColumns && externalizable.length ? `<div style="margin-top:16px;font-size:11px">
-    <div style="font-weight:700;margin-bottom:6px">CLIENTES CANDIDATOS A EXTERNALIZAR</div>
-    ${externalizable.map(line => `<div>- ${esc(line.client_name)} - ahorro potencial ${esc(formatMoney(Math.max(0, numVal(line.cost_own_route) - numVal(line.cost_gls_adjusted))))} / envio</div>`).join('')}
-    <div style="margin-top:6px;font-weight:700">Total ahorro potencial diario: ${esc(formatMoney(totalPotentialSavings))}</div>
+  ${showPlanSummary ? `<div style="margin-top:16px;font-size:11px">
+    <div style="font-weight:700;margin-bottom:6px">${esc(planHeadline)}</div>
+    ${externalizable.length
+      ? externalizable.map(line => `<div>- ${esc(line.client_name)} - GLS ${esc(formatMoney(numVal(line.cost_gls_adjusted)))}</div>`).join('')
+      : `<div>${summary.globalRecommendation === 'externalize_all'
+        ? 'La hoja completa sale mejor por paqueteria.'
+        : summary.globalRecommendation === 'do_route'
+          ? 'La ruta completa sale mejor en flota propia.'
+          : 'La recomendacion global queda en caso mixto; las lineas siguen siendo orientativas.'}</div>`
+    }
+    <div style="margin-top:6px;font-weight:700">${esc(savingsLabel)} estimado del plan: ${esc(formatMoney(totalPotentialSavings))}</div>
   </div>` : ''}
   <div class="firma"><div>Firma conductor</div><div>Firma almacen</div></div>
   <script>window.print();<\/script>
@@ -4752,7 +5360,7 @@ function openUserModal(id) {
   document.getElementById('uModal').classList.add('open');
 }
 
-function closeUserModal() { document.getElementById('uModal').classList.remove('open'); }
+function closeUserModal() { closeModal('uModal'); }
 
 function onUserRoleChange() {
   const role = document.getElementById('uRole').value;

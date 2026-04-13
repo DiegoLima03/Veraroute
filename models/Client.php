@@ -4,15 +4,32 @@ require_once __DIR__ . '/../core/Model.php';
 
 class Client extends Model
 {
-    public function getAll()
+    private function commercialIdsFromClient(array $client): array
     {
-        $clients = $this->query(
-            'SELECT c.*, r.name as ruta_name, com.name as comercial_name FROM clients c LEFT JOIN rutas r ON c.ruta_id = r.id LEFT JOIN comerciales com ON com.id = c.comercial_id ORDER BY c.active DESC, c.name'
-        )->fetchAll();
+        $ids = [];
+        foreach (['comercial_id', 'comercial_planta_id', 'comercial_flor_id', 'comercial_accesorio_id'] as $field) {
+            if (!empty($client[$field])) {
+                $ids[] = (int) $client[$field];
+            }
+        }
 
-        // Cargar rutas N:M de todos los clientes de golpe
+        return array_values(array_unique($ids));
+    }
+
+    private function attachCommercialIds(array $client): array
+    {
+        $client['comercial_ids'] = $this->commercialIdsFromClient($client);
+        return $client;
+    }
+
+    private function attachRutas(array &$clients): void
+    {
+        if (empty($clients)) {
+            return;
+        }
+
         $allRutas = $this->query(
-            'SELECT cr.client_id, cr.ruta_id, r.name as ruta_name
+            'SELECT cr.client_id, cr.ruta_id, r.name as ruta_name, r.color as ruta_color
              FROM client_rutas cr
              JOIN rutas r ON r.id = cr.ruta_id
              ORDER BY r.name'
@@ -23,12 +40,26 @@ class Client extends Model
             $rutasByClient[(int) $row['client_id']][] = [
                 'id'   => (int) $row['ruta_id'],
                 'name' => $row['ruta_name'],
+                'color' => $row['ruta_color'] ?? null,
             ];
         }
 
-        foreach ($clients as &$c) {
-            $c['rutas'] = $rutasByClient[(int) $c['id']] ?? [];
+        foreach ($clients as &$client) {
+            $client['rutas'] = $rutasByClient[(int) $client['id']] ?? [];
         }
+        unset($client);
+    }
+
+    public function getAll()
+    {
+        $clients = $this->query(
+            'SELECT c.*, r.name as ruta_name, com.name as comercial_name FROM clients c LEFT JOIN rutas r ON c.ruta_id = r.id LEFT JOIN comerciales com ON com.id = c.comercial_id ORDER BY c.active DESC, c.name'
+        )->fetchAll();
+        foreach ($clients as &$client) {
+            $client = $this->attachCommercialIds($client);
+        }
+        unset($client);
+        $this->attachRutas($clients);
 
         return $clients;
     }
@@ -40,16 +71,31 @@ class Client extends Model
         }
 
         $placeholders = implode(',', array_fill(0, count($comercialIds), '?'));
+        $ids = array_values(array_map('intval', $comercialIds));
+        $params = array_merge($ids, $ids, $ids, $ids);
 
-        return $this->query(
+        $clients = $this->query(
             "SELECT c.*, r.name as ruta_name, com.name as comercial_name
              FROM clients c
              LEFT JOIN rutas r ON c.ruta_id = r.id
              LEFT JOIN comerciales com ON com.id = c.comercial_id
-             WHERE c.comercial_id IN ($placeholders)
+             WHERE (
+                 c.comercial_id IN ($placeholders)
+                 OR c.comercial_planta_id IN ($placeholders)
+                 OR c.comercial_flor_id IN ($placeholders)
+                 OR c.comercial_accesorio_id IN ($placeholders)
+             )
              ORDER BY c.active DESC, c.name",
-            array_values(array_map('intval', $comercialIds))
+            $params
         )->fetchAll();
+
+        foreach ($clients as &$client) {
+            $client = $this->attachCommercialIds($client);
+        }
+        unset($client);
+        $this->attachRutas($clients);
+
+        return $clients;
     }
 
     public function toggleActive(int $id)
@@ -59,14 +105,30 @@ class Client extends Model
 
     public function getById(int $id)
     {
-        return $this->query('SELECT * FROM clients WHERE id = ?', [$id])->fetch() ?: null;
+        $client = $this->query(
+            'SELECT c.*, r.name as ruta_name, com.name as comercial_name
+             FROM clients c
+             LEFT JOIN rutas r ON c.ruta_id = r.id
+             LEFT JOIN comerciales com ON com.id = c.comercial_id
+             WHERE c.id = ?',
+            [$id]
+        )->fetch();
+
+        if (!$client) {
+            return null;
+        }
+
+        $client = $this->attachCommercialIds($client);
+        $client['rutas'] = $this->getRutas($id);
+
+        return $client;
     }
 
     public function create(array $data)
     {
         $this->query(
-            'INSERT INTO clients (name, address, postcode, phone, notes, x, y, open_time, close_time, open_time_2, close_time_2, comercial_id, ruta_id, al_contado)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            'INSERT INTO clients (name, address, postcode, phone, notes, x, y, open_time, close_time, open_time_2, close_time_2, comercial_id, comercial_planta_id, comercial_flor_id, comercial_accesorio_id, ruta_id, al_contado)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
             [
                 $data['name'],
                 $data['address'] ?? '',
@@ -80,6 +142,9 @@ class Client extends Model
                 $data['open_time_2'] ?: null,
                 $data['close_time_2'] ?: null,
                 $data['comercial_id'] ?: null,
+                $data['comercial_planta_id'] ?: null,
+                $data['comercial_flor_id'] ?: null,
+                $data['comercial_accesorio_id'] ?: null,
                 $data['ruta_id'] ?: null,
                 !empty($data['al_contado']) ? 1 : 0,
             ]
@@ -90,7 +155,7 @@ class Client extends Model
     public function update(int $id, array $data)
     {
         $this->query(
-            'UPDATE clients SET name = ?, address = ?, postcode = ?, phone = ?, notes = ?, x = ?, y = ?, open_time = ?, close_time = ?, open_time_2 = ?, close_time_2 = ?, comercial_id = ?, ruta_id = ?, al_contado = ?
+            'UPDATE clients SET name = ?, address = ?, postcode = ?, phone = ?, notes = ?, x = ?, y = ?, open_time = ?, close_time = ?, open_time_2 = ?, close_time_2 = ?, comercial_id = ?, comercial_planta_id = ?, comercial_flor_id = ?, comercial_accesorio_id = ?, ruta_id = ?, al_contado = ?
              WHERE id = ?',
             [
                 $data['name'],
@@ -105,6 +170,9 @@ class Client extends Model
                 $data['open_time_2'] ?: null,
                 $data['close_time_2'] ?: null,
                 $data['comercial_id'] ?: null,
+                $data['comercial_planta_id'] ?: null,
+                $data['comercial_flor_id'] ?: null,
+                $data['comercial_accesorio_id'] ?: null,
                 $data['ruta_id'] ?: null,
                 !empty($data['al_contado']) ? 1 : 0,
                 $id,
@@ -131,7 +199,7 @@ class Client extends Model
     public function getRutas(int $clientId)
     {
         return $this->query(
-            'SELECT cr.ruta_id as id, r.name FROM client_rutas cr JOIN rutas r ON r.id = cr.ruta_id WHERE cr.client_id = ? ORDER BY r.name',
+            'SELECT cr.ruta_id as id, r.name, r.color FROM client_rutas cr JOIN rutas r ON r.id = cr.ruta_id WHERE cr.client_id = ? ORDER BY r.name',
             [$clientId]
         )->fetchAll();
     }
@@ -159,6 +227,9 @@ class Client extends Model
             'open_time_2' => $src['open_time_2'],
             'close_time_2'=> $src['close_time_2'],
             'comercial_id'=> $src['comercial_id'],
+            'comercial_planta_id' => $src['comercial_planta_id'] ?? null,
+            'comercial_flor_id' => $src['comercial_flor_id'] ?? null,
+            'comercial_accesorio_id' => $src['comercial_accesorio_id'] ?? null,
             'ruta_id'     => $src['ruta_id'],
             'al_contado'  => $src['al_contado'],
         ]);

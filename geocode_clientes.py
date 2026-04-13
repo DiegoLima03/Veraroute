@@ -8,6 +8,7 @@ Configuración:
 Uso: python geocode_clientes.py
 """
 
+import os
 import time
 import csv
 import requests
@@ -18,8 +19,8 @@ import openpyxl
 # ══════════════════════════════════════════════════════════════
 API = 'google'  # 'google' o 'here'
 
-GOOGLE_API_KEY = 'AIzaSyDk2Vb73qDa_Hueqe-CelNR70u9s2oZChM'
-HERE_API_KEY   = 'TU_API_KEY_DE_HERE'
+GOOGLE_API_KEY = os.environ.get('GOOGLE_API_KEY', '')
+HERE_API_KEY   = os.environ.get('HERE_API_KEY', '')
 
 # ══════════════════════════════════════════════════════════════
 

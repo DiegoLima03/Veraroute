@@ -1,6 +1,7 @@
 <?php
 
 require_once __DIR__ . '/../core/Controller.php';
+require_once __DIR__ . '/../core/Auth.php';
 require_once __DIR__ . '/../models/RouteTemplate.php';
 
 class TemplateController extends Controller
@@ -14,11 +15,13 @@ class TemplateController extends Controller
 
     public function index()
     {
+        Auth::requireRole('admin', 'logistica');
         $this->json($this->templateModel->getAll());
     }
 
     public function store()
     {
+        Auth::requireRole('admin');
         $data = $this->getInput();
         if (empty($data['name']) || empty($data['client_ids'])) {
             $this->json(['error' => 'Nombre y clientes requeridos'], 400);
@@ -36,6 +39,7 @@ class TemplateController extends Controller
 
     public function destroy($id)
     {
+        Auth::requireRole('admin');
         $this->templateModel->delete((int) $id);
         $this->json(['ok' => true]);
     }

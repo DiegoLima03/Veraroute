@@ -247,4 +247,12 @@ class ClientCostHistory extends Model
 
         return $summary;
     }
+
+    /** Elimina registros de mas de $months meses. Devuelve filas eliminadas. */
+    public function purgeOlderThan(int $months = 12): int
+    {
+        $cutoff = date('Y-m-d', strtotime("-{$months} months"));
+        $stmt = $this->query('DELETE FROM client_cost_history WHERE fecha < ?', [$cutoff]);
+        return $stmt->rowCount();
+    }
 }

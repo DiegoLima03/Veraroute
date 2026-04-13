@@ -9,34 +9,37 @@ class Order extends Model
      */
     public function getByDate(string $date)
     {
+        // Una sola query con JOIN para evitar N+1
         $rows = $this->query(
             'SELECT o.id, o.client_id, o.notes, o.comercial_id, o.cc_aprox, o.observaciones, o.estado,
-                    com.name as comercial_name
+                    com.name as comercial_name,
+                    oi.item_name, oi.quantity
              FROM orders o
              LEFT JOIN comerciales com ON com.id = o.comercial_id
-             WHERE o.order_date = ?',
+             LEFT JOIN order_items oi ON oi.order_id = o.id
+             WHERE o.order_date = ?
+             ORDER BY o.client_id, oi.id',
             [$date]
         )->fetchAll();
 
         $result = [];
         foreach ($rows as $row) {
-            $items = $this->query(
-                'SELECT item_name, quantity FROM order_items WHERE order_id = ?',
-                [$row['id']]
-            )->fetchAll();
-
-            $result[$row['client_id']] = [
-                'id'              => (int) $row['id'],
-                'items'           => array_map(function ($it) {
-                    return ['name' => $it['item_name'], 'qty' => (int) $it['quantity']];
-                }, $items),
-                'notes'           => $row['notes'] ?? '',
-                'comercial_id'    => $row['comercial_id'] ? (int) $row['comercial_id'] : null,
-                'comercial_name'  => $row['comercial_name'] ?? null,
-                'cc_aprox'        => $row['cc_aprox'] !== null ? (float) $row['cc_aprox'] : null,
-                'observaciones'   => $row['observaciones'] ?? '',
-                'estado'          => $row['estado'] ?? 'pendiente',
-            ];
+            $cid = $row['client_id'];
+            if (!isset($result[$cid])) {
+                $result[$cid] = [
+                    'id'              => (int) $row['id'],
+                    'items'           => [],
+                    'notes'           => $row['notes'] ?? '',
+                    'comercial_id'    => $row['comercial_id'] ? (int) $row['comercial_id'] : null,
+                    'comercial_name'  => $row['comercial_name'] ?? null,
+                    'cc_aprox'        => $row['cc_aprox'] !== null ? (float) $row['cc_aprox'] : null,
+                    'observaciones'   => $row['observaciones'] ?? '',
+                    'estado'          => $row['estado'] ?? 'pendiente',
+                ];
+            }
+            if (!empty($row['item_name'])) {
+                $result[$cid]['items'][] = ['name' => $row['item_name'], 'qty' => (int) $row['quantity']];
+            }
         }
 
         return $result;

@@ -22,4 +22,14 @@ class Controller
     {
         return json_decode(file_get_contents('php://input'), true) ?? [];
     }
+
+    /** Valida y sanitiza una fecha de $_GET. Devuelve YYYY-MM-DD o el default. */
+    protected function getDateParam(string $key, ?string $default = null): string
+    {
+        $val = $_GET[$key] ?? $default ?? date('Y-m-d');
+        if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $val) && strtotime($val) !== false) {
+            return $val;
+        }
+        return $default ?? date('Y-m-d');
+    }
 }

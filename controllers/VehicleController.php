@@ -1,6 +1,7 @@
 <?php
 
 require_once __DIR__ . '/../core/Controller.php';
+require_once __DIR__ . '/../core/Auth.php';
 require_once __DIR__ . '/../models/Vehicle.php';
 require_once __DIR__ . '/../models/AuditLog.php';
 
@@ -15,11 +16,13 @@ class VehicleController extends Controller
 
     public function index()
     {
+        Auth::requireRole('admin', 'logistica');
         $this->json($this->vehicle->getAllIncludingInactive());
     }
 
     public function store()
     {
+        Auth::requireRole('admin');
         $data = $this->getInput();
         if (empty($data['name']) || empty($data['delegation_id'])) {
             $this->json(['error' => 'Nombre y delegacion son obligatorios'], 400);
@@ -30,6 +33,7 @@ class VehicleController extends Controller
 
     public function update($id)
     {
+        Auth::requireRole('admin');
         $data = $this->getInput();
         if (empty($data['name']) || empty($data['delegation_id'])) {
             $this->json(['error' => 'Nombre y delegacion son obligatorios'], 400);
@@ -49,12 +53,14 @@ class VehicleController extends Controller
 
     public function toggleActive($id)
     {
+        Auth::requireRole('admin');
         $this->vehicle->toggleActive((int) $id);
         $this->json($this->vehicle->getById((int) $id));
     }
 
     public function destroy($id)
     {
+        Auth::requireRole('admin');
         $this->vehicle->delete((int) $id);
         $this->json(['ok' => true]);
     }

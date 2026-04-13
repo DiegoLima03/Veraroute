@@ -4,6 +4,12 @@ ob_start();
 require_once __DIR__ . '/config/env.php';
 Env::load();
 
+// Headers de seguridad
+header('X-Frame-Options: DENY');
+header('X-Content-Type-Options: nosniff');
+header('X-XSS-Protection: 1; mode=block');
+header('Referrer-Policy: strict-origin-when-cross-origin');
+
 if (Env::bool('APP_DEBUG', false)) {
     error_reporting(E_ALL);
     ini_set('display_errors', '1');

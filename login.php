@@ -46,9 +46,21 @@ if (Auth::isLoggedIn() && !$login_success) {
 $error = null;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    // Rate limiting: max 10 intentos por minuto por sesion
+    Auth::init();
+    $now = time();
+    $attempts = $_SESSION['login_attempts'] ?? [];
+    $attempts = array_filter($attempts, fn($t) => $t > $now - 60);
+    if (count($attempts) >= 10) {
+        $error = 'Demasiados intentos. Espera un minuto.';
+    } else {
+        $attempts[] = $now;
+    }
+    $_SESSION['login_attempts'] = $attempts;
+
     // Validar CSRF
     $csrfOk = Auth::validateCsrf($_POST['_csrf'] ?? null);
-    if (!$csrfOk) {
+    if (!$csrfOk && !$error) {
         $error = 'Sesion expirada. Recarga la pagina e intentalo de nuevo.';
     }
 

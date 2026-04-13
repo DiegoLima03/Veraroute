@@ -13,6 +13,15 @@ reverse_geocode_cache.json
 clientes_sin_cp.csv
 sin_coordenadas.csv
 db_clients_coords.csv
+*.csv
+*.xlsx
+*.pdf
+
+# Backups BD
+backups/
+
+# Informes generados (no son codigo)
+output/
 
 # Sistema operativo
 Thumbs.db

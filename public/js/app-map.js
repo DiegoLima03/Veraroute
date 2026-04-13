@@ -13,6 +13,8 @@ let clientMarkerMap = {};
 let mapRouteLine = null;
 let mapPreviewMarker = null;
 let clusteringEnabled = localStorage.getItem('veraroute.clusterEnabled') !== 'false';
+let clusterRadius = parseInt(localStorage.getItem('veraroute.clusterRadius') || '40', 10);
+let clusterDisableZoom = parseInt(localStorage.getItem('veraroute.clusterZoom') || '15', 10);
 let markerClusterGroup = (map && typeof L.markerClusterGroup === 'function')
   ? L.markerClusterGroup({ maxClusterRadius: clusterRadius, spiderfyOnMaxZoom: true, disableClusteringAtZoom: clusterDisableZoom, iconCreateFunction: function(cluster) {
       const count = cluster.getChildCount();
@@ -30,9 +32,6 @@ let markerClusterGroup = (map && typeof L.markerClusterGroup === 'function')
 if (markerClusterGroup && map && clusteringEnabled) map.addLayer(markerClusterGroup);
 
 // Control de ajustes de mapa (esquina superior derecha)
-let clusterRadius = parseInt(localStorage.getItem('veraroute.clusterRadius') || '40', 10);
-let clusterDisableZoom = parseInt(localStorage.getItem('veraroute.clusterZoom') || '15', 10);
-
 function clusterIcon(cluster) {
   const count = cluster.getChildCount();
   let size = 32, bg = '#8e8b30', border = 'rgba(255,255,255,0.9)';

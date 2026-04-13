@@ -1,6 +1,7 @@
 <?php
 
 require_once __DIR__ . '/../core/Controller.php';
+require_once __DIR__ . '/../core/Auth.php';
 require_once __DIR__ . '/../models/Order.php';
 
 class OrderController extends Controller
@@ -14,12 +15,14 @@ class OrderController extends Controller
 
     public function index()
     {
+        Auth::requireRole('admin', 'logistica', 'comercial');
         $date = $_GET['date'] ?? date('Y-m-d');
         $this->json($this->order->getByDate($date));
     }
 
     public function store()
     {
+        Auth::requireRole('admin', 'logistica', 'comercial');
         $data = $this->getInput();
 
         if (empty($data['client_id']) || empty($data['date'])) {
@@ -47,10 +50,10 @@ class OrderController extends Controller
     /** GET /api/orders/comercial-day?date=YYYY-MM-DD */
     public function comercialDay()
     {
+        Auth::requireRole('admin', 'logistica', 'comercial');
         $date = $_GET['date'] ?? date('Y-m-d');
 
-        require_once __DIR__ . '/../core/Auth.php';
-        $comercialIds = \Auth::comercialIds();
+        $comercialIds = Auth::comercialIds();
 
         if (empty($comercialIds)) {
             $this->json([]);
@@ -64,6 +67,7 @@ class OrderController extends Controller
     /** PUT /api/orders/{id}/estado */
     public function updateEstado($id)
     {
+        Auth::requireRole('admin', 'logistica', 'comercial');
         $data = $this->getInput();
         $estado = $data['estado'] ?? null;
 
@@ -78,9 +82,8 @@ class OrderController extends Controller
             return;
         }
 
-        // Comerciales only can cancel today's orders
-        require_once __DIR__ . '/../core/Auth.php';
-        if (\Auth::isComercial()) {
+        // Comerciales solo pueden anular/reactivar pedidos de hoy
+        if (Auth::isComercial()) {
             if ($estado !== 'anulado' && $estado !== 'pendiente') {
                 $this->json(['error' => 'Solo puedes anular o reactivar pedidos'], 403);
                 return;
@@ -97,6 +100,7 @@ class OrderController extends Controller
 
     public function update($id)
     {
+        Auth::requireRole('admin', 'logistica', 'comercial');
         $data = $this->getInput();
 
         // Eliminar items anteriores y re-crear
@@ -140,6 +144,7 @@ class OrderController extends Controller
 
     public function destroy()
     {
+        Auth::requireRole('admin', 'logistica');
         $clientId = $_GET['client_id'] ?? null;
         $date     = $_GET['date'] ?? null;
 

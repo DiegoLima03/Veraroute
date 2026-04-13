@@ -1,3 +1,31 @@
+// ── HELPERS GLOBALES ──────────────────────────────────────
+function esc(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+function showToast(msg) {
+  const t = document.getElementById('toast'); if (!t) return; t.textContent = msg; t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2800);
+}
+
+// ── MODAL DE CONFIRMACION (reemplaza confirm() nativo) ──
+let _confirmResolve = null;
+function appConfirm(message, opts = {}) {
+  return new Promise(resolve => {
+    _confirmResolve = resolve;
+    const modal = document.getElementById('confirmModal');
+    document.getElementById('confirmTitle').textContent = opts.title || 'Confirmar';
+    document.getElementById('confirmMsg').innerHTML = message;
+    const okBtn = document.getElementById('confirmOkBtn');
+    okBtn.textContent = opts.okText || 'Confirmar';
+    okBtn.className = 'btn ' + (opts.danger !== false ? 'btn-danger' : 'btn-primary');
+    document.getElementById('confirmCancelBtn').textContent = opts.cancelText || 'Cancelar';
+    modal.classList.add('open');
+    okBtn.focus();
+  });
+}
+function closeConfirmModal(result) {
+  closeModal('confirmModal');
+  if (_confirmResolve) { _confirmResolve(result); _confirmResolve = null; }
+}
+
 // ── API HELPER ────────────────────────────────────────────
 async function api(endpoint, method = 'GET', body = null) {
   const headers = { 'Content-Type': 'application/json' };
@@ -6,7 +34,7 @@ async function api(endpoint, method = 'GET', body = null) {
   }
   const opts = { method, headers };
   if (body) opts.body = JSON.stringify(body);
-  const res = await fetch('api/v1/' + endpoint, opts);
+  const res = await fetch('api/' + endpoint, opts);
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.error || 'Error ' + res.status);

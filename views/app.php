@@ -343,7 +343,7 @@
 <?php endif; ?>
 
 <!-- MODAL CLIENTE -->
-<div class="overlay" id="cModal">
+<div class="overlay" id="cModal" role="dialog" aria-modal="true" aria-hidden="true">
   <div class="modal">
     <div class="mhead">
       <div class="mtitle" id="cModalTitle">Nuevo cliente</div>
@@ -403,7 +403,7 @@
 </div>
 
 <!-- MODAL DELEGACION -->
-<div class="overlay" id="dModal">
+<div class="overlay" id="dModal" role="dialog" aria-modal="true" aria-hidden="true">
   <div class="modal">
     <div class="mhead">
       <div class="mtitle" id="dModalTitle">Nueva delegacion</div>
@@ -442,7 +442,7 @@
 </div>
 
 <!-- MODAL VEHICULO -->
-<div class="overlay" id="vModal">
+<div class="overlay" id="vModal" role="dialog" aria-modal="true" aria-hidden="true">
   <div class="modal">
     <div class="mhead">
       <div class="mtitle" id="vModalTitle">Nuevo vehiculo</div>
@@ -477,7 +477,7 @@
 </div>
 
 <!-- MODAL SETTINGS -->
-<div class="overlay" id="settingsModal">
+<div class="overlay" id="settingsModal" role="dialog" aria-modal="true" aria-hidden="true">
   <div class="modal">
     <div class="mhead">
       <div class="mtitle">Configuracion</div>
@@ -576,7 +576,7 @@
 </div>
 
 <!-- MODAL TARIFA PAQUETERIA -->
-<div class="overlay" id="shippingRateModal">
+<div class="overlay" id="shippingRateModal" role="dialog" aria-modal="true" aria-hidden="true">
   <div class="modal" style="width:560px">
     <div class="mhead">
       <div class="mtitle" id="shippingRateModalTitle">Nueva tarifa</div>
@@ -622,7 +622,7 @@
 </div>
 
 <!-- MODAL CREAR HOJA -->
-<div class="overlay" id="hrCreateModal">
+<div class="overlay" id="hrCreateModal" role="dialog" aria-modal="true" aria-hidden="true">
   <div class="modal" style="width:380px">
     <div class="mhead">
       <div class="mtitle">Nueva hoja de ruta</div>
@@ -641,7 +641,7 @@
 </div>
 
 <!-- MODAL AÑADIR CLIENTE A HOJA -->
-<div class="overlay" id="hrAddLineaModal">
+<div class="overlay" id="hrAddLineaModal" role="dialog" aria-modal="true" aria-hidden="true">
   <div class="modal" style="width:440px">
     <div class="mhead">
       <div class="mtitle">Añadir cliente a la hoja</div>
@@ -664,7 +664,7 @@
 </div>
 
 <!-- MODAL EDITAR LINEA -->
-<div class="overlay" id="hrEditLineaModal">
+<div class="overlay" id="hrEditLineaModal" role="dialog" aria-modal="true" aria-hidden="true">
   <div class="modal" style="width:380px">
     <div class="mhead">
       <div class="mtitle" id="hrEditLineaTitle">Editar linea</div>
@@ -697,7 +697,7 @@
 </div>
 
 <!-- MODAL USUARIO -->
-<div class="overlay" id="uModal">
+<div class="overlay" id="uModal" role="dialog" aria-modal="true" aria-hidden="true">
   <div class="modal" style="width:520px">
     <div class="mhead">
       <div class="mtitle" id="uModalTitle">Nuevo usuario</div>
@@ -736,7 +736,7 @@
 </div>
 
 <!-- MODAL VARIABLES DE CALCULO (admin only) -->
-<div class="overlay" id="varsModal">
+<div class="overlay" id="varsModal" role="dialog" aria-modal="true" aria-hidden="true">
   <div class="modal" style="width:840px;max-width:96vw">
     <div class="mhead">
       <div class="mtitle">Variables de calculo</div>
@@ -889,7 +889,7 @@
 </div>
 
 <!-- MODAL INFORME DE RENTABILIDAD GLS -->
-<div class="overlay" id="rentReportModal">
+<div class="overlay" id="rentReportModal" role="dialog" aria-modal="true" aria-hidden="true">
   <div class="modal" style="width:880px;max-width:96vw">
     <div class="mhead">
       <div class="mtitle">Informe de rentabilidad: flota propia vs GLS</div>
@@ -910,7 +910,7 @@
 </div>
 
 <!-- MODAL CONFIRMACION GLOBAL -->
-<div class="overlay" id="confirmModal">
+<div class="overlay" id="confirmModal" role="dialog" aria-modal="true" aria-hidden="true">
   <div class="modal" style="width:360px">
     <div class="mhead">
       <div class="mtitle" id="confirmTitle">Confirmar</div>

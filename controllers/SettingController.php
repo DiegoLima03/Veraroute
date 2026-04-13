@@ -1,6 +1,7 @@
 <?php
 
 require_once __DIR__ . '/../core/Controller.php';
+require_once __DIR__ . '/../core/Auth.php';
 require_once __DIR__ . '/../models/Delegation.php';
 require_once __DIR__ . '/../models/AppSetting.php';
 
@@ -17,6 +18,7 @@ class SettingController extends Controller
 
     public function delegation()
     {
+        Auth::requireRole('admin', 'logistica');
         $delegations = $this->delegation->getAll();
         if (!count($delegations)) {
             $this->json(['error' => 'No hay delegacion configurada'], 404);
@@ -27,6 +29,7 @@ class SettingController extends Controller
 
     public function updateDelegation()
     {
+        Auth::requireRole('admin');
         $data = $this->getInput();
         $delegations = $this->delegation->getAll();
 
@@ -41,11 +44,13 @@ class SettingController extends Controller
 
     public function getSettings()
     {
+        Auth::requireRole('admin', 'logistica');
         $this->json($this->settings->getAll());
     }
 
     public function updateSettings()
     {
+        Auth::requireRole('admin');
         $data = $this->getInput();
         $allowed = ['lunch_duration_min', 'lunch_earliest', 'lunch_latest', 'base_unload_min', 'default_speed_kmh'];
         $toSave = [];

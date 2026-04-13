@@ -450,8 +450,13 @@ async function deleteOrder(cid) {
 }
 
 // ── RENDER ─────────────────────────────────────────────────
+let _refreshTimer = null;
 function refreshAll() {
-  renderClientList(); updateStats(); drawMap();
+  if (_refreshTimer) return; // ya programado
+  _refreshTimer = setTimeout(() => {
+    _refreshTimer = null;
+    renderClientList(); updateStats(); drawMap();
+  }, 50);
 }
 
 function renderClientList() {

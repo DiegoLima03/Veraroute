@@ -1948,7 +1948,7 @@ async function toggleContado(clientId, checked) {
   } catch (e) { showToast('Error: ' + e.message); }
 }
 
-function esc(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+// esc(), showToast(), appConfirm(), closeConfirmModal() movidas a app-core.js
 
 // ── CLOCK ──────────────────────────────────────────────────
 function tickClock() {
@@ -1956,37 +1956,6 @@ function tickClock() {
   const el = document.getElementById('clock');
   if (el) el.textContent = String(n.getHours()).padStart(2, '0') + ':' + String(n.getMinutes()).padStart(2, '0');
   if (typeof APP_USER === 'undefined' || APP_USER.role !== 'comercial') refreshAll();
-}
-
-function showToast(msg) {
-  const t = document.getElementById('toast'); t.textContent = msg; t.classList.add('show');
-  setTimeout(() => t.classList.remove('show'), 2800);
-}
-
-// ── MODAL DE CONFIRMACION (reemplaza confirm() nativo) ──
-let _confirmResolve = null;
-
-function appConfirm(message, opts = {}) {
-  return new Promise(resolve => {
-    _confirmResolve = resolve;
-    const modal = document.getElementById('confirmModal');
-    document.getElementById('confirmTitle').textContent = opts.title || 'Confirmar';
-    document.getElementById('confirmMsg').innerHTML = message;
-    const okBtn = document.getElementById('confirmOkBtn');
-    okBtn.textContent = opts.okText || 'Confirmar';
-    okBtn.className = 'btn ' + (opts.danger !== false ? 'btn-danger' : 'btn-primary');
-    document.getElementById('confirmCancelBtn').textContent = opts.cancelText || 'Cancelar';
-    modal.classList.add('open');
-    okBtn.focus();
-  });
-}
-
-function closeConfirmModal(result) {
-  document.getElementById('confirmModal').classList.remove('open');
-  if (_confirmResolve) {
-    _confirmResolve(result);
-    _confirmResolve = null;
-  }
 }
 
 // ── GESTIÓN DE USUARIOS ──────────────────────────────────

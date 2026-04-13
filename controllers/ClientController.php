@@ -19,6 +19,7 @@ class ClientController extends Controller
 
     public function index()
     {
+        Auth::requireRole('admin', 'logistica', 'comercial');
         $clients = Auth::isComercial()
             ? $this->client->getAllByComercialIds(Auth::comercialIds())
             : $this->client->getAll();
@@ -33,6 +34,7 @@ class ClientController extends Controller
 
     public function store()
     {
+        Auth::requireRole('admin', 'logistica');
         $data = $this->getInput();
 
         if (empty($data['name'])) {
@@ -54,6 +56,7 @@ class ClientController extends Controller
 
     public function update($id)
     {
+        Auth::requireRole('admin', 'logistica');
         $data = $this->getInput();
 
         if (empty($data['name'])) {
@@ -74,6 +77,7 @@ class ClientController extends Controller
 
     public function toggleActive($id)
     {
+        Auth::requireRole('admin', 'logistica');
         $client = $this->client->getById((int) $id);
         if (!$client) {
             $this->json(['error' => 'Cliente no encontrado'], 404);
@@ -93,6 +97,7 @@ class ClientController extends Controller
 
     public function updateContado($id)
     {
+        Auth::requireRole('admin', 'logistica');
         $data = $this->getInput();
         $this->client->setContado((int) $id, !empty($data['al_contado']));
         $this->json(['ok' => true]);
@@ -100,6 +105,7 @@ class ClientController extends Controller
 
     public function duplicate($id)
     {
+        Auth::requireRole('admin', 'logistica');
         $newId = $this->client->duplicate((int) $id);
         if (!$newId) {
             $this->json(['error' => 'Cliente no encontrado'], 404);
@@ -112,6 +118,7 @@ class ClientController extends Controller
 
     public function destroy($id)
     {
+        Auth::requireRole('admin');
         $this->client->delete((int) $id);
         $this->json(['ok' => true]);
     }

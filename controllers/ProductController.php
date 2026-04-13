@@ -1,6 +1,7 @@
 <?php
 
 require_once __DIR__ . '/../core/Controller.php';
+require_once __DIR__ . '/../core/Auth.php';
 require_once __DIR__ . '/../models/Product.php';
 
 class ProductController extends Controller
@@ -14,11 +15,13 @@ class ProductController extends Controller
 
     public function index()
     {
+        Auth::requireRole('admin', 'logistica');
         $this->json($this->product->getAll());
     }
 
     public function store()
     {
+        Auth::requireRole('admin');
         $data = $this->getInput();
         if (empty($data['name'])) {
             $this->json(['error' => 'Nombre es obligatorio'], 400);
@@ -29,6 +32,7 @@ class ProductController extends Controller
 
     public function update($id)
     {
+        Auth::requireRole('admin');
         $data = $this->getInput();
         if (empty($data['name'])) {
             $this->json(['error' => 'Nombre es obligatorio'], 400);
@@ -39,6 +43,7 @@ class ProductController extends Controller
 
     public function destroy($id)
     {
+        Auth::requireRole('admin');
         $this->product->delete((int) $id);
         $this->json(['ok' => true]);
     }

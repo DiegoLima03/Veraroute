@@ -485,7 +485,7 @@ textarea { resize: none; height: 54px; }
 .com-quick-add-btn:hover, .com-quick-add-btn:active { background: var(--accent-soft); }
 
 /* ═══ CLASES UTILITARIAS (extraidas de inline styles) ═══ */
-.d-none { display: none; }
+.d-none { display: none !important; }
 .flex-col-full { display: flex; flex-direction: column; flex: 1; overflow: hidden; }
 .flex-row-gap6 { display: flex; gap: 6px; }
 .flex-row-gap4 { display: flex; gap: 4px; }

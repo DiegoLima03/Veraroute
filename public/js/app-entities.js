@@ -1,11 +1,11 @@
 // ── TABS ───────────────────────────────────────────────────
 function switchTab(t) {
-  document.getElementById('vc').style.display = t === 'c' ? 'flex' : 'none';
-  document.getElementById('vhr').style.display = t === 'hr' ? 'flex' : 'none';
-  document.getElementById('vf').style.display = t === 'f' ? 'flex' : 'none';
-  document.getElementById('vh').style.display = t === 'h' ? 'flex' : 'none';
+  document.getElementById('vc').classList.toggle('d-none', t !== 'c');
+  document.getElementById('vhr').classList.toggle('d-none', t !== 'hr');
+  document.getElementById('vf').classList.toggle('d-none', t !== 'f');
+  document.getElementById('vh').classList.toggle('d-none', t !== 'h');
   const vu = document.getElementById('vu');
-  if (vu) vu.style.display = t === 'u' ? 'flex' : 'none';
+  if (vu) vu.classList.toggle('d-none', t !== 'u');
   document.getElementById('tab-c').classList.toggle('active', t === 'c');
   document.getElementById('tab-hr').classList.toggle('active', t === 'hr');
   document.getElementById('tab-f').classList.toggle('active', t === 'f');

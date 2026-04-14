@@ -87,7 +87,28 @@
       "Bash(/c/wamp64/bin/php/php8.2.29/php.exe -l controllers/GlsCostController.php)",
       "Bash(/c/wamp64/bin/php/php8.2.29/php.exe -r ':*)",
       "Bash(node -e ':*)",
-      "Bash(/c/wamp64/bin/php/php8.2.29/php.exe -l models/ClientCostHistory.php)"
+      "Bash(/c/wamp64/bin/php/php8.2.29/php.exe -l models/ClientCostHistory.php)",
+      "Bash(python -c \"import docx; print\\('docx OK'\\)\")",
+      "Bash(php -l services/RouteCostCalculator.php)",
+      "Bash(\"c:/wamp64/bin/php/php8.2.29/php.exe\" -l \"c:/wamp64/www/Gestor de Rutas/services/RouteCostCalculator.php\")",
+      "Bash(\"c:/wamp64/bin/php/php8.2.29/php.exe\" -l \"c:/wamp64/www/Gestor de Rutas/controllers/GlsCostController.php\")",
+      "Bash(\"c:/wamp64/bin/php/php8.2.29/php.exe\" -l \"c:/wamp64/www/Gestor de Rutas/index.php\")",
+      "Bash(node -e \"new Function\\(require\\('fs'\\).readFileSync\\('c:/wamp64/www/Gestor de Rutas/public/js/app.js', 'utf8'\\)\\)\")",
+      "Bash(\"c:/wamp64/bin/php/php8.2.29/php.exe\" -l \"c:/wamp64/www/Gestor de Rutas/views/app.php\")",
+      "Bash(\"c:/wamp64/bin/mysql/mysql8.0.31/bin/mysql.exe\" -h 127.0.0.1 -P 3308 -u root gestorrutas -e \"SELECT id, name, address, postcode, active FROM clients WHERE address LIKE '%ANTAS DE ULLA%' OR address LIKE '%Antas de Ulla%' ORDER BY active DESC, name;\")",
+      "Bash(\"c:/wamp64/bin/mysql/mysql8.4.7/bin/mysql.exe\" -h 127.0.0.1 -P 3308 -u root gestorrutas -e \"SELECT id, name, address, postcode, phone, active FROM clients WHERE UPPER\\(address\\) LIKE '%ANTAS DE ULLA%' ORDER BY active DESC, name;\")",
+      "Bash(\"c:/wamp64/bin/mysql/mysql8.4.7/bin/mysql.exe\" -h 127.0.0.1 -P 3308 -u root gestorrutas -e \"SELECT id, name, address, postcode, phone, active FROM clients WHERE postcode = '27570' OR postcode LIKE '27570%' ORDER BY active DESC, name;\")",
+      "Bash(\"c:/wamp64/bin/mysql/mysql8.4.7/bin/mysql.exe\" -h 127.0.0.1 -P 3308 -u root gestorrutas -e \"SELECT id, name FROM comerciales WHERE name REGEXP '\\(^|[^0-9]\\)R-?\\(1[2-9]|20\\)\\([^0-9]|$\\)' ORDER BY name;\")",
+      "Bash(\"c:/wamp64/bin/mysql/mysql8.4.7/bin/mysql.exe\" -h 127.0.0.1 -P 3308 -u root gestorrutas -e \"SELECT c.id, c.name, c.address, c.active, com.name AS comercial FROM clients c JOIN comerciales com ON com.id=c.comercial_id WHERE c.comercial_id IN \\(1,2,29\\) AND c.active=0 ORDER BY com.name, c.name;\")",
+      "Bash(\"c:/wamp64/bin/mysql/mysql8.4.7/bin/mysql.exe\" -h 127.0.0.1 -P 3308 -u root gestorrutas -e \"DESCRIBE client_rutas;\")",
+      "Bash(\"c:/wamp64/bin/mysql/mysql8.4.7/bin/mysql.exe\" -h 127.0.0.1 -P 3308 -u root gestorrutas -e \"SELECT com.id AS com_id, com.name AS comercial, COUNT\\(c.id\\) AS total_clientes, SUM\\(CASE WHEN c.ruta_id IS NULL THEN 1 ELSE 0 END\\) AS sin_ruta_legacy, SUM\\(CASE WHEN c.ruta_id IS NOT NULL THEN 1 ELSE 0 END\\) AS con_ruta_legacy FROM comerciales com LEFT JOIN clients c ON c.comercial_id = com.id WHERE com.id IN \\(1,53,2,54,55,56,57,58,59,29\\) AND c.active=1 GROUP BY com.id, com.name ORDER BY com.name;\")",
+      "Bash(\"c:/wamp64/bin/mysql/mysql8.4.7/bin/mysql.exe\" -h 127.0.0.1 -P 3308 -u root gestorrutas -e \"SELECT c.id, c.name, com.name AS comercial, c.ruta_id, r.name AS ruta_actual FROM clients c JOIN comerciales com ON com.id=c.comercial_id LEFT JOIN rutas r ON r.id=c.ruta_id WHERE c.comercial_id IN \\(1,2,29\\) AND c.active=1 ORDER BY com.name, c.name;\")",
+      "Bash(ls -la controllers/*.php)",
+      "Bash(ls -la models/*.php)",
+      "Bash(wc -l controllers/*.php)",
+      "Bash(\"/c/wamp64/bin/mysql/mysql8.4.7/bin/mysql.exe\" -h 127.0.0.1 -P 3308 -u root -e \"SELECT VERSION\\(\\);\")",
+      "Bash(\"/c/wamp64/bin/mysql/mysql8.4.7/bin/mysql.exe\" -h 127.0.0.1 -P 3308 -u root gestorrutas -e \"SELECT DISTINCT INDEX_NAME, TABLE_NAME FROM information_schema.STATISTICS WHERE TABLE_SCHEMA='gestorrutas' AND TABLE_NAME IN \\('distance_cache','client_schedules','clients'\\) ORDER BY TABLE_NAME, INDEX_NAME;\")",
+      "Bash(\"/c/wamp64/bin/mysql/mysql8.4.7/bin/mysql.exe\" -h 127.0.0.1 -P 3308 -u root gestorrutas -e \"SELECT COUNT\\(*\\) FROM hoja_ruta_lineas hrl LEFT JOIN hojas_ruta hr ON hrl.hoja_ruta_id=hr.id WHERE hr.id IS NULL;\")"
     ]
   }
 }

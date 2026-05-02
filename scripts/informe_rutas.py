@@ -63,20 +63,21 @@ def cargar_datos():
     cur = conn.cursor(dictionary=True)
 
     cur.execute("""
-        SELECT c.id, c.name, c.address, c.x, c.y, c.ruta_id, c.delegation_id,
-               r.name AS ruta_name
-        FROM clients c
-        LEFT JOIN rutas r ON c.ruta_id = r.id
-        WHERE c.active = 1 AND c.x IS NOT NULL AND c.y IS NOT NULL
+        SELECT c.id, c.nombre AS name, c.direccion AS address, c.x, c.y,
+               c.id_ruta, c.id_delegacion AS delegacion_id,
+               r.nombre AS ruta_name
+        FROM clientes c
+        LEFT JOIN rutas r ON c.id_ruta = r.id
+        WHERE c.activo = 1 AND c.x IS NOT NULL AND c.y IS NOT NULL
               AND c.x != 0 AND c.y != 0
-        ORDER BY c.name
+        ORDER BY c.nombre
     """)
     clientes = cur.fetchall()
 
-    cur.execute("SELECT * FROM rutas ORDER BY name")
+    cur.execute("SELECT id, nombre AS name, color, activo FROM rutas ORDER BY nombre")
     rutas = cur.fetchall()
 
-    cur.execute("SELECT * FROM delegations WHERE active = 1 ORDER BY name")
+    cur.execute("SELECT id, nombre AS name, direccion AS address, x, y FROM delegaciones WHERE activo = 1 ORDER BY nombre")
     delegaciones = cur.fetchall()
 
     cur.close()
@@ -103,8 +104,8 @@ class OSRMClient:
     def _cache_get(self, lat1, lng1, lat2, lng2):
         cur = self.conn.cursor(dictionary=True)
         cur.execute(
-            "SELECT distance_km, duration_s FROM distance_cache "
-            "WHERE origin_lat=%s AND origin_lng=%s AND dest_lat=%s AND dest_lng=%s",
+            "SELECT distance_km, duration_s FROM distancias_cache "
+            "WHERE latitud_origen=%s AND longitud_origen=%s AND latitud_destino=%s AND longitud_destino=%s",
             (self._round(lat1), self._round(lng1), self._round(lat2), self._round(lng2)),
         )
         row = cur.fetchone()
@@ -115,8 +116,8 @@ class OSRMClient:
         cur = self.conn.cursor()
         try:
             cur.execute(
-                "INSERT IGNORE INTO distance_cache "
-                "(origin_lat, origin_lng, dest_lat, dest_lng, distance_km, duration_s) "
+                "INSERT IGNORE INTO distancias_cache "
+                "(latitud_origen, longitud_origen, latitud_destino, longitud_destino, distance_km, duration_s) "
                 "VALUES (%s,%s,%s,%s,%s,%s)",
                 (self._round(lat1), self._round(lng1),
                  self._round(lat2), self._round(lng2), km, secs),
@@ -248,7 +249,7 @@ class OSRMClient:
 
 # ─── OPTIMIZADOR DE RUTAS ────────────────────────────────────────
 
-class RouteOptimizer:
+class OptimizadorRuta:
     def __init__(self, osrm: OSRMClient):
         self.osrm = osrm
 
@@ -321,10 +322,10 @@ def asignar_delegacion(ruta_clientes, delegaciones, osrm):
     if len(delegaciones) == 1:
         return delegaciones[0]
 
-    # frecuencia de delegation_id en los clientes
+    # frecuencia de delegacion_id en los clientes
     freq = {}
     for c in ruta_clientes:
-        did = c.get("delegation_id")
+        did = c.get("delegacion_id")
         if did:
             freq[did] = freq.get(did, 0) + 1
     if freq:
@@ -1335,7 +1336,7 @@ def main():
         sys.exit(1)
 
     osrm = OSRMClient()
-    optimizer = RouteOptimizer(osrm)
+    optimizer = OptimizadorRuta(osrm)
 
     # agrupar clientes por ruta
     clientes_por_ruta = {}

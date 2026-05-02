@@ -1,8 +1,8 @@
 <?php
 
-require_once __DIR__ . '/../core/Model.php';
+require_once __DIR__ . '/../core/Modelo.php';
 
-class Ruta extends Model
+class Ruta extends Modelo
 {
     private function normalizeColor($color): ?string
     {
@@ -21,23 +21,30 @@ class Ruta extends Model
     public function getAll()
     {
         return $this->query(
-            'SELECT r.*, (SELECT COUNT(DISTINCT c.id)
-                           FROM clients c
-                           LEFT JOIN client_rutas cr ON cr.client_id = c.id AND cr.ruta_id = r.id
-                           WHERE c.ruta_id = r.id OR cr.ruta_id IS NOT NULL) as client_count
-             FROM rutas r ORDER BY r.name'
+            'SELECT r.id, r.nombre AS name, r.color, r.activo AS active,
+                    r.creado_el AS created_at, r.actualizado_el AS updated_at,
+                    (SELECT COUNT(DISTINCT c.id)
+                           FROM clientes c
+                           LEFT JOIN cliente_rutas cr ON cr.id_cliente = c.id AND cr.id_ruta = r.id
+                           WHERE c.id_ruta = r.id OR cr.id_ruta IS NOT NULL) as client_count
+             FROM rutas r ORDER BY r.nombre'
         )->fetchAll();
     }
 
     public function getById(int $id)
     {
-        return $this->query('SELECT * FROM rutas WHERE id = ?', [$id])->fetch() ?: null;
+        return $this->query(
+            'SELECT id, nombre AS name, color, activo AS active,
+                    creado_el AS created_at, actualizado_el AS updated_at
+             FROM rutas WHERE id = ?',
+            [$id]
+        )->fetch() ?: null;
     }
 
     public function create(array $data)
     {
         $this->query(
-            'INSERT INTO rutas (name, color) VALUES (?, ?)',
+            'INSERT INTO rutas (nombre, color) VALUES (?, ?)',
             [
                 $data['name'],
                 $this->normalizeColor($data['color'] ?? null),
@@ -48,7 +55,7 @@ class Ruta extends Model
 
     public function update(int $id, array $data)
     {
-        $fields = ['name = ?'];
+        $fields = ['nombre = ?'];
         $params = [$data['name']];
 
         if (array_key_exists('color', $data)) {
@@ -62,7 +69,7 @@ class Ruta extends Model
 
     public function delete(int $id)
     {
-        $this->query('UPDATE clients SET ruta_id = NULL WHERE ruta_id = ?', [$id]);
+        $this->query('UPDATE clientes SET id_ruta = NULL WHERE id_ruta = ?', [$id]);
         $this->query('DELETE FROM rutas WHERE id = ?', [$id]);
     }
 }

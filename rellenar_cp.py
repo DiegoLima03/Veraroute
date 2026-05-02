@@ -237,12 +237,12 @@ def main():
     print("\n[1] Cargando clientes de la BD...")
     conn = db_connect()
     cur = conn.cursor()
-    cur.execute("SELECT id, name, address, postcode, x, y FROM clients ORDER BY id")
+    cur.execute("SELECT id, name, address, postcode, x, y FROM clientes ORDER BY id")
     rows = cur.fetchall()
 
     clients = []
     for r in rows:
-        clients.append({
+        clientes.append({
             "id": r[0],
             "name": r[1] or "",
             "address": r[2] or "",
@@ -285,7 +285,7 @@ def main():
     for c in clients:
         if c.get("new_postcode"):
             cur.execute(
-                "UPDATE clients SET postcode = %s WHERE id = %s",
+                "UPDATE clientes SET postcode = %s WHERE id = %s",
                 (c["new_postcode"], c["id"])
             )
             update_count += 1
@@ -317,7 +317,7 @@ def main():
             COUNT(*) as total,
             SUM(CASE WHEN postcode IS NOT NULL AND TRIM(postcode) != '' THEN 1 ELSE 0 END) as con_cp,
             SUM(CASE WHEN postcode IS NULL OR TRIM(postcode) = '' THEN 1 ELSE 0 END) as sin_cp
-        FROM clients
+        FROM clientes
     """)
     r = cur.fetchone()
     print(f"  Total clientes:  {r[0]}")

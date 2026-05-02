@@ -12,13 +12,13 @@ function normalizeCommercialKey(?string $value): string
 function columnExists(PDO $db, string $column): bool
 {
     $column = str_replace("'", "''", $column);
-    $stmt = $db->query("SHOW COLUMNS FROM clients LIKE '$column'");
+    $stmt = $db->query("SHOW COLUMNS FROM clientes LIKE '$column'");
     return (bool) $stmt->fetch();
 }
 
 $db = Database::connect();
 
-$requiredColumns = ['comercial_planta_id', 'comercial_flor_id', 'comercial_accesorio_id'];
+$requiredColumns = ['id_comercial_planta', 'id_comercial_flor', 'id_comercial_accesorio'];
 foreach ($requiredColumns as $column) {
     if (!columnExists($db, $column)) {
         fwrite(STDERR, "Falta la migracion de columnas comerciales. Ejecuta sql/migration_client_comerciales.sql primero.\n");
@@ -27,7 +27,7 @@ foreach ($requiredColumns as $column) {
 }
 
 $commercialMap = [];
-$commercialRows = $db->query('SELECT id, code, name FROM comerciales')->fetchAll();
+$commercialRows = $db->query('SELECT id, codigo AS code, nombre AS name FROM comerciales')->fetchAll();
 foreach ($commercialRows as $row) {
     $keys = [
         normalizeCommercialKey(($row['code'] ?? '') . ' - ' . ($row['name'] ?? '')),
@@ -96,14 +96,14 @@ while (($line = fgets($fh)) !== false) {
 fclose($fh);
 
 $update = $db->prepare(
-    'UPDATE clients
-     SET comercial_planta_id = ?, comercial_flor_id = ?, comercial_accesorio_id = ?
-     WHERE name = ?'
+    'UPDATE clientes
+     SET id_comercial_planta = ?, id_comercial_flor = ?, id_comercial_accesorio = ?
+     WHERE nombre = ?'
 );
 $fillPrimary = $db->prepare(
-    'UPDATE clients
-     SET comercial_id = COALESCE(comercial_id, comercial_planta_id, comercial_flor_id, comercial_accesorio_id)
-     WHERE name = ?'
+    'UPDATE clientes
+     SET id_comercial = COALESCE(id_comercial, id_comercial_planta, id_comercial_flor, id_comercial_accesorio)
+     WHERE nombre = ?'
 );
 
 $db->beginTransaction();
@@ -131,13 +131,13 @@ $r11ActiveMatches = 0;
 if ($r11Id) {
     $stmt = $db->prepare(
         'SELECT COUNT(*) AS total
-         FROM clients
-         WHERE active = 1
+         FROM clientes
+         WHERE activo = 1
            AND (
-               comercial_id = ?
-               OR comercial_planta_id = ?
-               OR comercial_flor_id = ?
-               OR comercial_accesorio_id = ?
+               id_comercial = ?
+               OR id_comercial_planta = ?
+               OR id_comercial_flor = ?
+               OR id_comercial_accesorio = ?
            )'
     );
     $stmt->execute([$r11Id, $r11Id, $r11Id, $r11Id]);

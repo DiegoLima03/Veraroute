@@ -9,17 +9,17 @@
 <link rel="stylesheet" href="public/vendor/bootstrap-icons/bootstrap-icons.min.css">
 </head>
 <body>
-<?php $u = Auth::currentUser(); ?>
+<?php $u = Autenticacion::currentUser(); ?>
 <script>
   var APP_USER = <?= json_encode([
     'id'           => $u['id'] ?? null,
     'username'     => $u['username'] ?? '',
     'full_name'    => $u['full_name'] ?? '',
     'role'         => $u['role'] ?? '',
-    'comercial_id' => $u['comercial_id'] ?? null,
-    'comercial_ids'=> Auth::comercialIds(),
+    'id_comercial' => $u['id_comercial'] ?? null,
+    'comercial_ids'=> Autenticacion::comercialIds(),
   ]) ?>;
-  var CSRF_TOKEN = <?= json_encode(Auth::csrfToken()) ?>;
+  var CSRF_TOKEN = <?= json_encode(Autenticacion::csrfToken()) ?>;
 </script>
 
 <header class="header">
@@ -27,6 +27,7 @@
   <div class="badge">v3.0</div>
   <?php if ($u['role'] === 'admin'): ?>
   <button class="btn-vars" onclick="openVarsModal()" title="Variables de calculo">&#9881; Variables</button>
+  <button class="btn-vars" onclick="openUsersPanel()" title="Gestion de usuarios">&#128101; Usuarios</button>
   <?php endif; ?>
   <?php if ($u['role'] !== 'comercial'): ?>
   <div class="stats-bar">
@@ -173,7 +174,7 @@
       <button class="tab" id="tab-f" onclick="switchTab('f')">Flota</button>
       <button class="tab" id="tab-h" onclick="switchTab('h')">Historial</button>
       <?php if ($u['role'] === 'admin'): ?>
-      <button class="tab" id="tab-u" onclick="switchTab('u')">Usuarios</button>
+      <button class="tab" id="tab-up" onclick="switchTab('up')">Archivos</button>
       <?php endif; ?>
     </div>
 
@@ -298,13 +299,21 @@
     </div>
 
     <?php if ($u['role'] === 'admin'): ?>
-    <!-- USUARIOS -->
-    <div id="vu" class="flex-col-full d-none">
+    <!-- ARCHIVOS -->
+    <div id="vup" class="flex-col-full d-none">
       <div class="panel-header">
-        <div class="panel-title">Gestion de usuarios</div>
-        <button class="btn btn-primary" onclick="openUserModal()">+ Nuevo usuario</button>
+        <div class="panel-title">Subir archivos</div>
       </div>
-      <div class="scroll-list" id="userList"></div>
+      <div class="upload-area" id="uploadArea">
+        <div class="upload-dropzone" id="uploadDropzone">
+          <div class="upload-dropzone-icon">&#128193;</div>
+          <div class="upload-dropzone-text">Arrastra archivos aqui o pulsa para seleccionar</div>
+          <div class="upload-dropzone-hint">PDF, Excel (.xlsx, .xls)</div>
+          <input type="file" id="uploadFileInput" multiple accept=".pdf,.xlsx,.xls" onchange="handleFileSelect(this.files)" style="display:none">
+        </div>
+        <div id="uploadQueue" class="upload-queue"></div>
+        <div id="uploadedFiles" class="scroll-list"></div>
+      </div>
     </div>
     <?php endif; ?>
 
@@ -371,9 +380,73 @@
         <div class="checkbox-row">
           <input type="checkbox" id="cContado" class="chk-inline"><label for="cContado" class="label-inline">Al contado</label>
         </div>
+        <div class="fg">
+          <div><label>Tipo de zona</label>
+            <select id="cTipoZona">
+              <option value="rural">Rural</option>
+              <option value="villa" selected>Villa/Pueblo</option>
+              <option value="ciudad">Ciudad</option>
+              <option value="poligono">Poligono industrial</option>
+            </select>
+          </div>
+          <div><label>Tipo de negocio</label>
+            <select id="cTipoNegocio">
+              <option value="almacen">Almacen/Nave</option>
+              <option value="tienda_especializada" selected>Tienda especializada</option>
+              <option value="tienda_centro">Tienda centro/plaza</option>
+              <option value="cooperativa">Cooperativa</option>
+            </select>
+          </div>
+        </div>
         <div class="ff">
           <label>Comercial asignado</label>
           <select id="cComercial"><option value="">Sin comercial</option></select>
+        </div>
+      </div>
+      <div class="msection">
+        <div class="msec-title">Direcciones de entrega</div>
+        <div id="cAddressList" class="scroll-container-sm"></div>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="openAddressForm()" style="margin-top:8px">+ Nueva direccion</button>
+        <div id="cAddressForm" class="d-none" style="margin-top:8px; padding:12px; background:#f8f8f8; border-radius:8px;">
+          <input type="hidden" id="caId">
+          <div class="fg">
+            <div><label>Descripcion</label><input id="caDesc" placeholder="Ej: Tienda Pontevedra"></div>
+            <div><label>Direccion</label><input id="caAddr" placeholder="Calle, numero..."></div>
+          </div>
+          <div class="fg">
+            <div><label>CP</label><input id="caCp" placeholder="36003"></div>
+            <div><label>Localidad</label><input id="caLoc" placeholder="Pontevedra"></div>
+          </div>
+          <div class="fg">
+            <div><label>Provincia</label><input id="caProv" placeholder="Pontevedra"></div>
+            <div><label>Telefono</label><input id="caPhone"></div>
+          </div>
+          <div class="fg">
+            <div><label>Latitud</label><input id="caX" type="number" step="0.000001"></div>
+            <div><label>Longitud</label><input id="caY" type="number" step="0.000001"></div>
+          </div>
+          <div class="fg">
+            <div><label>Tipo zona</label>
+              <select id="caTipoZona">
+                <option value="rural">Rural</option>
+                <option value="villa" selected>Villa/Pueblo</option>
+                <option value="ciudad">Ciudad</option>
+                <option value="poligono">Poligono industrial</option>
+              </select>
+            </div>
+            <div><label>Tipo negocio</label>
+              <select id="caTipoNegocio">
+                <option value="almacen">Almacen/Nave</option>
+                <option value="tienda_especializada" selected>Tienda especializada</option>
+                <option value="tienda_centro">Tienda centro/plaza</option>
+                <option value="cooperativa">Cooperativa</option>
+              </select>
+            </div>
+          </div>
+          <div style="display:flex; gap:8px; margin-top:8px">
+            <button type="button" class="btn btn-primary btn-sm" onclick="saveAddress()">Guardar</button>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="cancelAddressForm()">Cancelar</button>
+          </div>
         </div>
       </div>
       <div class="msection">
@@ -398,6 +471,31 @@
       <button class="btn btn-secondary mr-auto" id="cDuplicateBtn" onclick="duplicateFromModal()" style="display:none">Duplicar</button>
       <button class="btn btn-secondary" onclick="closeCModal()">Cancelar</button>
       <button class="btn btn-primary" onclick="saveClient()">Guardar cliente</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL PEDIDO -->
+<div class="overlay" id="pModal" role="dialog" aria-modal="true" aria-hidden="true">
+  <div class="modal modal-sm">
+    <div class="mhead">
+      <div class="mtitle" id="pModalTitle">Nuevo pedido</div>
+      <button class="mclose" onclick="closePModal()">x</button>
+    </div>
+    <div class="mbody">
+      <input type="hidden" id="pClientIdFixed">
+      <div class="ff"><label>Cliente *</label><select id="pClientSel" onchange="onOrderClientChange(this.value)"><option value="">— Elige un cliente —</option></select></div>
+      <div class="ff" id="pDireccionWrap" style="display:none">
+        <label>Direccion de entrega</label>
+        <select id="pDireccion"><option value="">Direccion principal</option></select>
+      </div>
+      <div id="itemsContainer"></div>
+      <button type="button" class="btn btn-secondary btn-sm" onclick="addItemRow()" style="margin-top:6px">+ Articulo</button>
+      <div class="ff"><label>Notas</label><textarea id="pNotes" placeholder="Instrucciones especiales..."></textarea></div>
+    </div>
+    <div class="mfoot">
+      <button class="btn btn-secondary" onclick="closePModal()">Cancelar</button>
+      <button class="btn btn-primary" onclick="saveOrder()">Guardar pedido</button>
     </div>
   </div>
 </div>
@@ -650,6 +748,10 @@
     <div class="mbody">
       <div class="ff"><label>Buscar cliente</label><input id="hrLineaSearch" placeholder="Nombre del cliente..." oninput="filterLineaClients(this.value)"></div>
       <div id="hrLineaClientList" class="scroll-container-md"></div>
+      <div id="hrLineaDireccionWrap" class="ff d-none">
+        <label>Direccion de entrega</label>
+        <select id="hrLineaDireccion"><option value="">Direccion principal</option></select>
+      </div>
       <div class="fg">
         <div><label>Carros</label><input type="number" id="hrLineaCarros" step="1" min="0" placeholder="0"></div>
         <div><label>Cajas</label><input type="number" id="hrLineaCajas" step="1" min="0" placeholder="0"></div>
@@ -672,6 +774,10 @@
     </div>
     <div class="mbody">
       <input type="hidden" id="hrEditLineaId">
+      <div class="ff" id="hrEditDireccionWrap" style="display:none">
+        <label>Direccion de entrega</label>
+        <select id="hrEditDireccion"><option value="">Direccion principal</option></select>
+      </div>
       <div class="fg">
         <div id="hrEditComercialWrap"><label>Comercial</label><select id="hrEditComercial"><option value="">—</option></select></div>
         <div><label>Carros</label><input type="number" id="hrEditCarros" step="1" min="0"></div>
@@ -697,6 +803,37 @@
 </div>
 
 <!-- MODAL USUARIO -->
+<!-- MODAL PROCESAR EXCEL -->
+<div class="overlay" id="excelParseModal" role="dialog" aria-modal="true" aria-hidden="true">
+  <div class="modal modal-lg">
+    <div class="mhead">
+      <div class="mtitle" id="excelParseTitle">Procesar Excel</div>
+      <button class="mclose" onclick="closeModal('excelParseModal')">x</button>
+    </div>
+    <div class="mbody" id="excelParseBody" style="max-height:70vh;overflow-y:auto">
+    </div>
+    <div class="mfoot">
+      <button class="btn btn-secondary" onclick="closeModal('excelParseModal')">Cerrar</button>
+    </div>
+  </div>
+</div>
+
+<!-- PANEL POPUP USUARIOS (admin only) -->
+<div class="overlay" id="usersPanel" role="dialog" aria-modal="true" aria-hidden="true">
+  <div class="modal modal-lg">
+    <div class="mhead">
+      <div class="mtitle">Gestion de usuarios</div>
+      <button class="mclose" onclick="closeUsersPanel()">x</button>
+    </div>
+    <div class="mbody" style="padding:0">
+      <div style="padding:12px 16px;display:flex;justify-content:flex-end">
+        <button class="btn btn-primary" onclick="openUserModal()">+ Nuevo usuario</button>
+      </div>
+      <div class="scroll-list" id="userList" style="max-height:60vh;overflow-y:auto;padding:0 16px 16px"></div>
+    </div>
+  </div>
+</div>
+
 <div class="overlay" id="uModal" role="dialog" aria-modal="true" aria-hidden="true">
   <div class="modal modal-lg">
     <div class="mhead">
@@ -746,6 +883,7 @@
       <div class="vars-tabs">
         <button type="button" class="vars-tab active" data-vars-tab="app" onclick="switchVarsTab('app')">App</button>
         <button type="button" class="vars-tab" data-vars-tab="gls" onclick="switchVarsTab('gls')">Paqueteria GLS</button>
+        <button type="button" class="vars-tab" data-vars-tab="stoptimes" onclick="switchVarsTab('stoptimes')">Tiempos de parada</button>
         <button type="button" class="vars-tab" data-vars-tab="vehicles" onclick="switchVarsTab('vehicles')">Vehiculos</button>
         <button type="button" class="vars-tab" data-vars-tab="routes" onclick="switchVarsTab('routes')">Colores rutas</button>
       </div>
@@ -782,6 +920,111 @@
           <div class="vars-row">
             <div><label>Hora maxima</label></div>
             <input type="time" id="vLunchLate">
+          </div>
+        </div>
+      </div>
+
+      <!-- ── TIEMPOS DE PARADA ── -->
+      <div class="vars-section" data-vars-section="stoptimes">
+        <div class="vars-group">
+          <div class="vars-group-title">Tiempo base por tipo de zona (min)</div>
+          <div class="text-desc">Tiempo de aparcamiento + acceso al local segun la ubicacion del cliente.</div>
+          <div class="vars-row">
+            <div><label>Rural / pueblo pequeno</label><div class="help">Aparcas en la puerta</div></div>
+            <input type="number" id="vStopRural" min="0" step="1">
+          </div>
+          <div class="vars-row">
+            <div><label>Villa / town</label><div class="help">Algo de trafico, buscar sitio</div></div>
+            <input type="number" id="vStopVilla" min="0" step="1">
+          </div>
+          <div class="vars-row">
+            <div><label>Ciudad</label><div class="help">Aparcar lejos, caminar, esperar</div></div>
+            <input type="number" id="vStopCiudad" min="0" step="1">
+          </div>
+          <div class="vars-row">
+            <div><label>Poligono industrial</label><div class="help">Muelle de carga directo</div></div>
+            <input type="number" id="vStopPoligono" min="0" step="1">
+          </div>
+        </div>
+        <div class="vars-group">
+          <div class="vars-group-title">Tiempo extra por volumen de entrega (min)</div>
+          <div class="vars-row">
+            <div><label>2-3 cajas</label></div>
+            <input type="number" id="vStopExtra23" min="0" step="1">
+          </div>
+          <div class="vars-row">
+            <div><label>Carros</label></div>
+            <input type="number" id="vStopExtraCarros" min="0" step="1">
+          </div>
+        </div>
+        <div class="vars-group">
+          <div class="vars-group-title">Espera en tienda por tipo de negocio (min)</div>
+          <div class="text-desc">Tiempo medio esperando a que te atiendan segun el tipo de establecimiento.</div>
+          <div class="vars-row">
+            <div><label>Almacen / nave</label><div class="help">Te reciben en muelle, sin publico</div></div>
+            <input type="number" id="vWaitAlmacen" min="0" step="1">
+          </div>
+          <div class="vars-row">
+            <div><label>Tienda especializada</label><div class="help">Agricola, ferreteria... pocos clientes</div></div>
+            <input type="number" id="vWaitTiendaEsp" min="0" step="1">
+          </div>
+          <div class="vars-row">
+            <div><label>Tienda en centro / plaza</label><div class="help">Mas publico, esperas turno</div></div>
+            <input type="number" id="vWaitTiendaCentro" min="0" step="1">
+          </div>
+          <div class="vars-row">
+            <div><label>Cooperativa</label><div class="help">Suelen tener recepcion de mercancia</div></div>
+            <input type="number" id="vWaitCoop" min="0" step="1">
+          </div>
+        </div>
+        <div class="vars-group">
+          <div class="vars-group-title">Multiplicador de espera por franja horaria</div>
+          <div class="text-desc">La espera en tienda se multiplica segun la hora de llegada.</div>
+          <div class="vars-row">
+            <div><label>Apertura</label><div class="help" id="vFranjaAperturaDesc">09:00 - 10:00</div></div>
+            <input type="number" id="vMultApertura" min="0" max="5" step="0.1">
+          </div>
+          <div class="vars-row">
+            <div><label>Normal</label><div class="help" id="vFranjaNormalDesc">10:00 - 12:00</div></div>
+            <input type="number" id="vMultNormal" min="0" max="5" step="0.1">
+          </div>
+          <div class="vars-row">
+            <div><label>Hora punta</label><div class="help" id="vFranjaPuntaDesc">12:00 - 13:30</div></div>
+            <input type="number" id="vMultPunta" min="0" max="5" step="0.1">
+          </div>
+        </div>
+        <div class="vars-group">
+          <div class="vars-group-title">Franjas horarias</div>
+          <div class="vars-row">
+            <div><label>Apertura: inicio</label></div>
+            <input type="time" id="vFranjaAperturaInicio">
+          </div>
+          <div class="vars-row">
+            <div><label>Apertura: fin</label></div>
+            <input type="time" id="vFranjaAperturaFin">
+          </div>
+          <div class="vars-row">
+            <div><label>Normal: inicio</label></div>
+            <input type="time" id="vFranjaNormalInicio">
+          </div>
+          <div class="vars-row">
+            <div><label>Normal: fin</label></div>
+            <input type="time" id="vFranjaNormalFin">
+          </div>
+          <div class="vars-row">
+            <div><label>Punta: inicio</label></div>
+            <input type="time" id="vFranjaPuntaInicio">
+          </div>
+          <div class="vars-row">
+            <div><label>Punta: fin</label></div>
+            <input type="time" id="vFranjaPuntaFin">
+          </div>
+        </div>
+        <div class="vars-group">
+          <div class="vars-group-title">Extras</div>
+          <div class="vars-row">
+            <div><label>Extra hora punta en ciudad (min)</label><div class="help">Trafico de entrada en ciudades a primera hora</div></div>
+            <input type="number" id="vStopExtraPuntaCiudad" min="0" step="1">
           </div>
         </div>
       </div>

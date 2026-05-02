@@ -79,7 +79,7 @@ function renderRoutePanel(result) {
       const STATUS_CLS = { pending: '', completed: ' stop-done', skipped: ' stop-skipped' };
       const STATUS_ICO = { pending: '&#9675;', completed: '&#9679;', skipped: '&#10005;' };
       const planId = r.plan_id || 0;
-      html += '<div class="rstop-item' + (STATUS_CLS[stopStatus] || '') + '" data-stop-idx="' + si + '" data-client-id="' + s.client_id + '">'
+      html += '<div class="rstop-item' + (STATUS_CLS[stopStatus] || '') + '" data-stop-idx="' + si + '" data-client-id="' + s.id_cliente + '">'
         + (planId ? '<span class="stop-status" onclick="event.stopPropagation();toggleStopStatus(' + planId + ',' + (si + 1) + ',\'' + stopStatus + '\')" title="Click: cambiar estado">' + (STATUS_ICO[stopStatus] || '') + '</span>' : '')
         + '<span class="drag-handle">&#9776;</span>'
         + '<span class="stop-num" style="background:' + color + '">' + (si + 1) + '</span>'
@@ -364,7 +364,7 @@ function exportRoutesPrint() {
         const lunchEnd = r.lunch_eta ? addMinutes(r.lunch_eta, LUNCH_DURATION) : '';
         html += '<tr class="lunch"><td></td><td colspan="4">Almuerzo ' + (r.lunch_eta || '') + ' - ' + lunchEnd + '</td><td></td><td></td></tr>';
       }
-      const c = clients.find(x => x.id === s.client_id);
+      const c = clients.find(x => x.id === s.id_cliente);
       html += '<tr><td>' + (si + 1) + '</td>'
         + '<td><strong>' + s.name + '</strong></td>'
         + '<td>' + (c?.addr || '') + '</td>'
@@ -398,7 +398,7 @@ function exportRoutesCSV() {
 
   fleetRoutes.routes.forEach(r => {
     r.stops.forEach((s, si) => {
-      const c = clients.find(x => x.id === s.client_id);
+      const c = clients.find(x => x.id === s.id_cliente);
       csv += [
         r.vehicle.name,
         r.vehicle.plate || '',
@@ -445,9 +445,9 @@ async function optimizeFleetRoutes() {
 
     // Aplicar settings del backend
     if (result.settings) {
-      LUNCH_DURATION = result.settings.lunch_duration_min || 60;
-      LUNCH_EARLIEST = t2m(result.settings.lunch_earliest || '12:00');
-      LUNCH_LATEST = t2m(result.settings.lunch_latest || '15:30');
+      LUNCH_DURATION = result.settings.almuerzo_duracion_min || 60;
+      LUNCH_EARLIEST = t2m(result.settings.almuerzo_hora_min || '12:00');
+      LUNCH_LATEST = t2m(result.settings.almuerzo_hora_max || '15:30');
     }
 
     if (!result.routes.length) {
@@ -637,27 +637,27 @@ function closeSettingsModal() { closeModal('settingsModal'); }
 async function saveSettings() {
   try {
     await api('settings', 'PUT', {
-      lunch_duration_min: document.getElementById('sLunchDur').value,
-      lunch_earliest: document.getElementById('sLunchEarly').value,
-      lunch_latest: document.getElementById('sLunchLate').value,
-      base_unload_min: document.getElementById('sBaseUnload').value,
-      default_speed_kmh: document.getElementById('sSpeed').value,
+      almuerzo_duracion_min: document.getElementById('sLunchDur').value,
+      almuerzo_hora_min: document.getElementById('sLunchEarly').value,
+      almuerzo_hora_max: document.getElementById('sLunchLate').value,
+      descarga_min_base: document.getElementById('sBaseUnload').value,
+      velocidad_defecto_kmh: document.getElementById('sSpeed').value,
     });
 
     if (typeof APP_USER !== 'undefined' && APP_USER.role === 'admin') {
       await api('shipping-config', 'PUT', {
-        origin_postcode: document.getElementById('shipOriginPostcode').value.trim(),
-        origin_country: document.getElementById('shipOriginCountry').value.trim().toUpperCase(),
+        cp_origen: document.getElementById('shipOriginPostcode').value.trim(),
+        pais_origen: document.getElementById('shipOriginCountry').value.trim().toUpperCase(),
         price_multiplier: document.getElementById('shipPriceMultiplier').value || '1.0000',
         gls_fuel_pct_current: document.getElementById('shipFuelPct').value || '0.00',
-        remote_postcode_prefixes: document.getElementById('shipRemotePrefixes').value || '',
+        prefijos_cp_remotos: document.getElementById('shipRemotePrefixes').value || '',
         default_weight_per_carro_kg: document.getElementById('shipWeightPerCarro').value,
         default_weight_per_caja_kg: document.getElementById('shipWeightPerCaja').value,
         default_parcels_per_carro: document.getElementById('shipParcelsPerCarro').value,
         default_parcels_per_caja: document.getElementById('shipParcelsPerCaja').value,
         default_volume_per_carro_cm3: document.getElementById('shipVolumePerCarro').value,
         default_volume_per_caja_cm3: document.getElementById('shipVolumePerCaja').value,
-        use_volumetric_weight: document.getElementById('shipUseVolumetric').checked ? 1 : 0,
+        usar_peso_volumetrico: document.getElementById('shipUseVolumetric').checked ? 1 : 0,
       });
     }
 
@@ -669,32 +669,32 @@ async function saveSettings() {
 function applyShippingConfigToForm(gls) {
   const isAdmin = typeof APP_USER !== 'undefined' && APP_USER.role === 'admin';
   const defaults = gls || {
-    origin_postcode: '',
-    origin_country: 'ES',
+    cp_origen: '',
+    pais_origen: 'ES',
     price_multiplier: '1.0000',
     gls_fuel_pct_current: '0.00',
-    remote_postcode_prefixes: '',
+    prefijos_cp_remotos: '',
     default_weight_per_carro_kg: '5.00',
     default_weight_per_caja_kg: '2.50',
     default_parcels_per_carro: '1.00',
     default_parcels_per_caja: '1.00',
     default_volume_per_carro_cm3: '0.00',
     default_volume_per_caja_cm3: '0.00',
-    use_volumetric_weight: 0,
+    usar_peso_volumetrico: 0,
   };
 
-  document.getElementById('shipOriginPostcode').value = defaults.origin_postcode || '';
-  document.getElementById('shipOriginCountry').value = defaults.origin_country || 'ES';
+  document.getElementById('shipOriginPostcode').value = defaults.cp_origen || '';
+  document.getElementById('shipOriginCountry').value = defaults.pais_origen || 'ES';
   document.getElementById('shipPriceMultiplier').value = defaults.price_multiplier || '1.0000';
   document.getElementById('shipFuelPct').value = defaults.gls_fuel_pct_current || '0.00';
-  document.getElementById('shipRemotePrefixes').value = defaults.remote_postcode_prefixes || '';
+  document.getElementById('shipRemotePrefixes').value = defaults.prefijos_cp_remotos || '';
   document.getElementById('shipWeightPerCarro').value = defaults.default_weight_per_carro_kg || '5.00';
   document.getElementById('shipWeightPerCaja').value = defaults.default_weight_per_caja_kg || '2.50';
   document.getElementById('shipParcelsPerCarro').value = defaults.default_parcels_per_carro || '1.00';
   document.getElementById('shipParcelsPerCaja').value = defaults.default_parcels_per_caja || '1.00';
   document.getElementById('shipVolumePerCarro').value = defaults.default_volume_per_carro_cm3 || '0.00';
   document.getElementById('shipVolumePerCaja').value = defaults.default_volume_per_caja_cm3 || '0.00';
-  document.getElementById('shipUseVolumetric').checked = !!parseInt(defaults.use_volumetric_weight || 0, 10);
+  document.getElementById('shipUseVolumetric').checked = !!parseInt(defaults.usar_peso_volumetrico || 0, 10);
 
   const settingsSection = document.getElementById('shippingSettingsSection');
   if (settingsSection) settingsSection.style.display = isAdmin ? '' : 'none';
@@ -745,25 +745,54 @@ async function openVarsModal() {
     await loadRutas();
 
     // App
-    document.getElementById('vSpeed').value = appSettings.default_speed_kmh || 50;
-    document.getElementById('vBaseUnload').value = appSettings.base_unload_min || 5;
-    document.getElementById('vLunchDur').value = appSettings.lunch_duration_min || 60;
-    document.getElementById('vLunchEarly').value = appSettings.lunch_earliest || '12:00';
-    document.getElementById('vLunchLate').value = appSettings.lunch_latest || '15:30';
+    document.getElementById('vSpeed').value = appSettings.velocidad_defecto_kmh || 50;
+    document.getElementById('vBaseUnload').value = appSettings.descarga_min_base || 5;
+    document.getElementById('vLunchDur').value = appSettings.almuerzo_duracion_min || 60;
+    document.getElementById('vLunchEarly').value = appSettings.almuerzo_hora_min || '12:00';
+    document.getElementById('vLunchLate').value = appSettings.almuerzo_hora_max || '15:30';
 
     // GLS
-    document.getElementById('vGlsOriginCp').value = glsConfig.origin_postcode || '';
-    document.getElementById('vGlsOriginCountry').value = glsConfig.origin_country || 'ES';
+    document.getElementById('vGlsOriginCp').value = glsConfig.cp_origen || '';
+    document.getElementById('vGlsOriginCountry').value = glsConfig.pais_origen || 'ES';
     document.getElementById('vGlsMultiplier').value = glsConfig.price_multiplier || '1.0000';
     document.getElementById('vGlsFuelPct').value = glsConfig.gls_fuel_pct_current || '0.00';
-    document.getElementById('vGlsRemotePrefixes').value = glsConfig.remote_postcode_prefixes || '';
+    document.getElementById('vGlsRemotePrefixes').value = glsConfig.prefijos_cp_remotos || '';
     document.getElementById('vGlsKgCarro').value = glsConfig.default_weight_per_carro_kg || '5.00';
     document.getElementById('vGlsKgCaja').value = glsConfig.default_weight_per_caja_kg || '2.50';
     document.getElementById('vGlsParcCarro').value = glsConfig.default_parcels_per_carro || '1.00';
     document.getElementById('vGlsParcCaja').value = glsConfig.default_parcels_per_caja || '1.00';
     document.getElementById('vGlsVolCarro').value = glsConfig.default_volume_per_carro_cm3 || '0';
     document.getElementById('vGlsVolCaja').value = glsConfig.default_volume_per_caja_cm3 || '0';
-    document.getElementById('vGlsUseVol').value = parseInt(glsConfig.use_volumetric_weight || 0, 10) ? '1' : '0';
+    document.getElementById('vGlsUseVol').value = parseInt(glsConfig.usar_peso_volumetrico || 0, 10) ? '1' : '0';
+
+    // Tiempos de parada
+    document.getElementById('vStopRural').value = appSettings.parada_min_rural || 8;
+    document.getElementById('vStopVilla').value = appSettings.parada_min_villa || 12;
+    document.getElementById('vStopCiudad').value = appSettings.parada_min_ciudad || 18;
+    document.getElementById('vStopPoligono').value = appSettings.parada_min_poligono || 6;
+    document.getElementById('vStopExtra23').value = appSettings.parada_extra_2_3_cajas || 2;
+    document.getElementById('vStopExtraCarros').value = appSettings.parada_extra_carros || 5;
+    document.getElementById('vWaitAlmacen').value = appSettings.espera_min_almacen || 0;
+    document.getElementById('vWaitTiendaEsp').value = appSettings.espera_min_tienda_especializada || 5;
+    document.getElementById('vWaitTiendaCentro').value = appSettings.espera_min_tienda_centro || 8;
+    document.getElementById('vWaitCoop').value = appSettings.espera_min_cooperativa || 3;
+    document.getElementById('vMultApertura').value = appSettings.espera_mult_apertura || 0.5;
+    document.getElementById('vMultNormal').value = appSettings.espera_mult_normal || 1.0;
+    document.getElementById('vMultPunta').value = appSettings.espera_mult_punta || 1.5;
+    document.getElementById('vFranjaAperturaInicio').value = appSettings.franja_apertura_inicio || '09:00';
+    document.getElementById('vFranjaAperturaFin').value = appSettings.franja_apertura_fin || '10:00';
+    document.getElementById('vFranjaNormalInicio').value = appSettings.franja_normal_inicio || '10:00';
+    document.getElementById('vFranjaNormalFin').value = appSettings.franja_normal_fin || '12:00';
+    document.getElementById('vFranjaPuntaInicio').value = appSettings.franja_punta_inicio || '12:00';
+    document.getElementById('vFranjaPuntaFin').value = appSettings.franja_punta_fin || '13:30';
+    document.getElementById('vStopExtraPuntaCiudad').value = appSettings.parada_extra_hora_punta_ciudad || 5;
+    // Actualizar descripciones de franjas
+    const fai = appSettings.franja_apertura_inicio || '09:00', faf = appSettings.franja_apertura_fin || '10:00';
+    const fni = appSettings.franja_normal_inicio || '10:00', fnf = appSettings.franja_normal_fin || '12:00';
+    const fpi = appSettings.franja_punta_inicio || '12:00', fpf = appSettings.franja_punta_fin || '13:30';
+    document.getElementById('vFranjaAperturaDesc').textContent = fai + ' - ' + faf;
+    document.getElementById('vFranjaNormalDesc').textContent = fni + ' - ' + fnf;
+    document.getElementById('vFranjaPuntaDesc').textContent = fpi + ' - ' + fpf;
 
     // Vehiculos
     varsVehiclesData = Array.isArray(vehiclesList) ? vehiclesList : [];
@@ -864,29 +893,49 @@ function onRouteColorChange(routeId, value) {
 
 async function saveVars() {
   try {
-    // 1. App settings
+    // 1. App settings + tiempos de parada
     await api('settings', 'PUT', {
-      default_speed_kmh: document.getElementById('vSpeed').value,
-      base_unload_min: document.getElementById('vBaseUnload').value,
-      lunch_duration_min: document.getElementById('vLunchDur').value,
-      lunch_earliest: document.getElementById('vLunchEarly').value,
-      lunch_latest: document.getElementById('vLunchLate').value,
+      velocidad_defecto_kmh: document.getElementById('vSpeed').value,
+      descarga_min_base: document.getElementById('vBaseUnload').value,
+      almuerzo_duracion_min: document.getElementById('vLunchDur').value,
+      almuerzo_hora_min: document.getElementById('vLunchEarly').value,
+      almuerzo_hora_max: document.getElementById('vLunchLate').value,
+      parada_min_rural: document.getElementById('vStopRural').value,
+      parada_min_villa: document.getElementById('vStopVilla').value,
+      parada_min_ciudad: document.getElementById('vStopCiudad').value,
+      parada_min_poligono: document.getElementById('vStopPoligono').value,
+      parada_extra_2_3_cajas: document.getElementById('vStopExtra23').value,
+      parada_extra_carros: document.getElementById('vStopExtraCarros').value,
+      espera_min_almacen: document.getElementById('vWaitAlmacen').value,
+      espera_min_tienda_especializada: document.getElementById('vWaitTiendaEsp').value,
+      espera_min_tienda_centro: document.getElementById('vWaitTiendaCentro').value,
+      espera_min_cooperativa: document.getElementById('vWaitCoop').value,
+      espera_mult_apertura: document.getElementById('vMultApertura').value,
+      espera_mult_normal: document.getElementById('vMultNormal').value,
+      espera_mult_punta: document.getElementById('vMultPunta').value,
+      franja_apertura_inicio: document.getElementById('vFranjaAperturaInicio').value,
+      franja_apertura_fin: document.getElementById('vFranjaAperturaFin').value,
+      franja_normal_inicio: document.getElementById('vFranjaNormalInicio').value,
+      franja_normal_fin: document.getElementById('vFranjaNormalFin').value,
+      franja_punta_inicio: document.getElementById('vFranjaPuntaInicio').value,
+      franja_punta_fin: document.getElementById('vFranjaPuntaFin').value,
+      parada_extra_hora_punta_ciudad: document.getElementById('vStopExtraPuntaCiudad').value,
     });
 
     // 2. GLS config
     await api('shipping-config', 'PUT', {
-      origin_postcode: document.getElementById('vGlsOriginCp').value.trim(),
-      origin_country: document.getElementById('vGlsOriginCountry').value.trim().toUpperCase(),
+      cp_origen: document.getElementById('vGlsOriginCp').value.trim(),
+      pais_origen: document.getElementById('vGlsOriginCountry').value.trim().toUpperCase(),
       price_multiplier: document.getElementById('vGlsMultiplier').value || '1.0000',
       gls_fuel_pct_current: document.getElementById('vGlsFuelPct').value || '0.00',
-      remote_postcode_prefixes: document.getElementById('vGlsRemotePrefixes').value || '',
+      prefijos_cp_remotos: document.getElementById('vGlsRemotePrefixes').value || '',
       default_weight_per_carro_kg: document.getElementById('vGlsKgCarro').value,
       default_weight_per_caja_kg: document.getElementById('vGlsKgCaja').value,
       default_parcels_per_carro: document.getElementById('vGlsParcCarro').value,
       default_parcels_per_caja: document.getElementById('vGlsParcCaja').value,
       default_volume_per_carro_cm3: document.getElementById('vGlsVolCarro').value,
       default_volume_per_caja_cm3: document.getElementById('vGlsVolCaja').value,
-      use_volumetric_weight: document.getElementById('vGlsUseVol').value === '1' ? 1 : 0,
+      usar_peso_volumetrico: document.getElementById('vGlsUseVol').value === '1' ? 1 : 0,
     });
 
     // 3. Vehiculos editados (solo los que cambiaron)
@@ -898,7 +947,7 @@ async function saveVars() {
         await api('vehicles/' + id, 'PUT', {
           name: veh.name,
           plate: veh.plate || '',
-          delegation_id: veh.delegation_id || null,
+          id_delegacion: veh.id_delegacion || null,
           max_weight_kg: veh.max_weight_kg,
           max_volume_m3: veh.max_volume_m3,
           max_items: veh.max_items,

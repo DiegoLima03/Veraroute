@@ -1,6 +1,6 @@
 <?php
 /**
- * C6: Tests minimos sobre RouteCostCalculator
+ * C6: Tests minimos sobre CalculadorCosteRuta
  * Ejecutar: php tests/test_route_cost_calculator.php
  *
  * No usa PHPUnit — test runner minimalista sin dependencias externas.
@@ -11,16 +11,16 @@
 chdir(__DIR__ . '/..');
 
 require_once 'config/database.php';
-require_once 'core/Model.php';
-require_once 'core/Auth.php';
+require_once 'core/Modelo.php';
+require_once 'core/Autenticacion.php';
 require_once 'models/HojaRuta.php';
-require_once 'models/Vehicle.php';
-require_once 'models/Delegation.php';
-require_once 'models/DistanceCache.php';
-require_once 'models/GlsShippingConfig.php';
-require_once 'models/ClientCostHistory.php';
-require_once 'models/ShippingRateTable.php';
-require_once 'services/RouteCostCalculator.php';
+require_once 'models/Vehiculo.php';
+require_once 'models/Delegacion.php';
+require_once 'models/DistanciasCache.php';
+require_once 'models/ConfigEnviosGls.php';
+require_once 'models/HistorialCosteCliente.php';
+require_once 'models/TarifaTransportista.php';
+require_once 'services/CalculadorCosteRuta.php';
 
 // ── Mini test runner ──────────────────────────────────────
 $passed = 0;
@@ -55,12 +55,12 @@ function assert_in(string $needle, array $haystack, string $msg): void {
     assert_true(in_array($needle, $haystack, true), "{$msg} ('{$needle}' en [" . implode(', ', $haystack) . "])");
 }
 
-echo "=== Tests RouteCostCalculator ===\n\n";
+echo "=== Tests CalculadorCosteRuta ===\n\n";
 
 // ── Test 1: Constructor no lanza excepcion ────────────────
-echo "Test 1: Instanciar RouteCostCalculator\n";
+echo "Test 1: Instanciar CalculadorCosteRuta\n";
 try {
-    $calc = new RouteCostCalculator();
+    $calc = new CalculadorCosteRuta();
     assert_true(true, 'Constructor OK');
 } catch (Throwable $e) {
     assert_true(false, 'Constructor fallo: ' . $e->getMessage());
@@ -70,10 +70,10 @@ try {
 echo "\nTest 2: Buscar hoja de ruta con lineas\n";
 $db = Database::connect();
 $row = $db->query("
-    SELECT hr.id, hr.vehicle_id, COUNT(hrl.id) as num_lineas
+    SELECT hr.id, hr.id_vehiculo, COUNT(hrl.id) as num_lineas
     FROM hojas_ruta hr
-    JOIN hoja_ruta_lineas hrl ON hrl.hoja_ruta_id = hr.id
-    WHERE hr.vehicle_id IS NOT NULL
+    JOIN hoja_ruta_lineas hrl ON hrl.id_hoja_ruta = hr.id
+    WHERE hr.id_vehiculo IS NOT NULL
     GROUP BY hr.id
     HAVING num_lineas >= 2
     ORDER BY hr.fecha DESC
@@ -110,11 +110,11 @@ if (!$row) {
 
     // ── Test 5: global_recommendation tiene valor valido ──────
     echo "\nTest 5: global_recommendation es valida\n";
-    $validRecs = ['externalize_all', 'do_route', 'mixed', 'unavailable'];
+    $validRecs = ['externalize_all', 'do_route', 'mixed', 'no_disponible'];
     assert_in($result['global_recommendation'], $validRecs, 'global_recommendation valida');
 
     // ── Test 6: Coherencia entre global_recommendation y savings ──
-    echo "\nTest 6: Coherencia recommendation vs savings\n";
+    echo "\nTest 6: Coherencia recomendacion vs savings\n";
     $routeCost = (float) $result['total_route_cost'];
     $glsAll = (float) $result['total_gls_all_clients'];
     $rec = $result['global_recommendation'];
@@ -150,14 +150,14 @@ assert_true(!empty($badResult['error']), 'Hoja inexistente devuelve error');
 echo "\nTest 10: calculateDetourKm\n";
 if (isset($hojaId)) {
     $lineaRow = $db->query("
-        SELECT client_id FROM hoja_ruta_lineas
-        WHERE hoja_ruta_id = {$hojaId}
-        AND client_id IS NOT NULL
+        SELECT id_cliente FROM hoja_ruta_lineas
+        WHERE id_hoja_ruta = {$hojaId}
+        AND id_cliente IS NOT NULL
         LIMIT 1
     ")->fetch();
     if ($lineaRow) {
-        $detour = $calc->calculateDetourKm((int) $lineaRow['client_id'], $hojaId);
-        assert_true($detour === null || $detour >= 0, 'detour_km es null o >= 0');
+        $detour = $calc->calculateDetourKm((int) $lineaRow['id_cliente'], $hojaId);
+        assert_true($detour === null || $detour >= 0, 'desvio_km es null o >= 0');
     }
 }
 

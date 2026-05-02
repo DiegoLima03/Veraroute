@@ -1,10 +1,10 @@
 <?php
 
-require_once __DIR__ . '/../core/Controller.php';
-require_once __DIR__ . '/../core/Auth.php';
+require_once __DIR__ . '/../core/Controlador.php';
+require_once __DIR__ . '/../core/Autenticacion.php';
 require_once __DIR__ . '/../models/Ruta.php';
 
-class RutaController extends Controller
+class RutaController extends Controlador
 {
     private $ruta;
 
@@ -15,13 +15,13 @@ class RutaController extends Controller
 
     public function index()
     {
-        Auth::requireRole('admin', 'logistica', 'comercial');
+        Autenticacion::requireRole('admin', 'logistica', 'comercial');
         $this->json($this->ruta->getAll());
     }
 
     public function store()
     {
-        Auth::requireRole('admin');
+        Autenticacion::requireRole('admin');
         $data = $this->getInput();
         if (empty($data['name'])) {
             $this->json(['error' => 'Nombre es obligatorio'], 400);
@@ -32,7 +32,7 @@ class RutaController extends Controller
 
     public function update($id)
     {
-        Auth::requireRole('admin');
+        Autenticacion::requireRole('admin');
         $data = $this->getInput();
         if (empty($data['name'])) {
             $this->json(['error' => 'Nombre es obligatorio'], 400);
@@ -43,7 +43,7 @@ class RutaController extends Controller
 
     public function destroy($id)
     {
-        Auth::requireRole('admin');
+        Autenticacion::requireRole('admin');
         $this->ruta->delete((int) $id);
         $this->json(['ok' => true]);
     }

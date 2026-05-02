@@ -246,7 +246,7 @@ function filteredClients() {
     if (filterMode === 'inactive' && c.active) return false;
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
-      return c.name.toLowerCase().includes(q) || c.addr.toLowerCase().includes(q);
+      return c.name.toLowerCase().includes(q) || (c.fiscal_name || '').toLowerCase().includes(q) || c.addr.toLowerCase().includes(q);
     }
     return true;
   });
@@ -302,7 +302,7 @@ function drawMap() {
   const clientVehicle = {};
   if (fleetRoutes?.routes) {
     fleetRoutes.routes.forEach((r, ri) => {
-      r.stops.forEach(s => { clientVehicle[parseInt(s.client_id)] = ri; });
+      r.stops.forEach(s => { clientVehicle[parseInt(s.id_cliente)] = ri; });
     });
   }
 
@@ -315,7 +315,7 @@ function drawMap() {
     let label = i + 1;
     if (vIdx !== undefined) {
       const route = fleetRoutes.routes[vIdx];
-      const stopIdx = route.stops.findIndex(s => parseInt(s.client_id) === c.id);
+      const stopIdx = route.stops.findIndex(s => parseInt(s.id_cliente) === c.id);
       label = stopIdx >= 0 ? stopIdx + 1 : label;
     } else if (currentRoute?.includes(c.id)) {
       label = currentRoute.indexOf(c.id) + 1;
@@ -394,6 +394,7 @@ async function loadClients() {
     clients = data.map(c => ({
       id: c.id,
       name: c.name,
+      fiscal_name: c.fiscal_name || '',
       addr: c.address || '',
       postcode: c.postcode || '',
       phone: c.phone || '',
@@ -406,19 +407,22 @@ async function loadClients() {
       close2: c.close_time_2 ? c.close_time_2.substring(0, 5) : '',
       schedules: c.schedules || {},
       active: c.active !== undefined ? !!parseInt(c.active) : true,
-      ruta_id: c.ruta_id ? parseInt(c.ruta_id) : null,
+      id_ruta: c.id_ruta ? parseInt(c.id_ruta) : null,
       ruta_name: c.ruta_name || '',
       rutas: (c.rutas || []).map(r => ({ id: parseInt(r.id), name: r.name, color: r.color || null })),
-      delegation_id: c.delegation_id ? parseInt(c.delegation_id) : null,
-      comercial_id: c.comercial_id ? parseInt(c.comercial_id) : null,
-      comercial_planta_id: c.comercial_planta_id ? parseInt(c.comercial_planta_id) : null,
-      comercial_flor_id: c.comercial_flor_id ? parseInt(c.comercial_flor_id) : null,
-      comercial_accesorio_id: c.comercial_accesorio_id ? parseInt(c.comercial_accesorio_id) : null,
+      id_delegacion: c.id_delegacion ? parseInt(c.id_delegacion) : null,
+      id_comercial: c.id_comercial ? parseInt(c.id_comercial) : null,
+      id_comercial_planta: c.id_comercial_planta ? parseInt(c.id_comercial_planta) : null,
+      id_comercial_flor: c.id_comercial_flor ? parseInt(c.id_comercial_flor) : null,
+      id_comercial_accesorio: c.id_comercial_accesorio ? parseInt(c.id_comercial_accesorio) : null,
       comercial_ids: Array.isArray(c.comercial_ids)
         ? c.comercial_ids.map(id => parseInt(id, 10)).filter(Boolean)
         : getClientCommercialIds(c),
       comercial_name: c.comercial_name || '',
       al_contado: !!parseInt(c.al_contado || 0),
+      tipo_zona: c.tipo_zona || 'villa',
+      tipo_negocio: c.tipo_negocio || 'tienda_especializada',
+      direcciones: c.direcciones || [],
     }));
   } catch (e) {
     showToast('Error cargando clientes: ' + e.message);

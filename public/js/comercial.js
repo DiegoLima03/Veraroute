@@ -35,7 +35,7 @@ async function loadComercialPedidos() {
 function findHojaLineaForClient(clientId) {
   for (const hoja of hojasData.hojas || []) {
     const linea = (hoja.lineas || []).find(function(l) {
-      return parseInt(l.client_id, 10) === parseInt(clientId, 10);
+      return parseInt(l.id_cliente, 10) === parseInt(clientId, 10);
     });
     if (linea) return linea;
   }
@@ -50,7 +50,7 @@ function renderComercialPedidos() {
   const activos = comercialPedidos.filter(function(p) { return p.estado !== 'anulado'; });
   let sumCarros = 0, sumCajas = 0;
   activos.forEach(function(p) {
-    const hl = findHojaLineaForClient(p.client_id);
+    const hl = findHojaLineaForClient(p.id_cliente);
     if (hl) {
       sumCarros += numVal(hl.carros);
       sumCajas += numVal(hl.cajas);
@@ -83,7 +83,7 @@ function renderComercialPedidos() {
   comercialPedidos.forEach(function(p) {
     const estadoCls = 'com-pedido-estado-' + (p.estado || 'pendiente');
     const cardCls = p.estado === 'anulado' ? 'anulado' : '';
-    const hl = findHojaLineaForClient(p.client_id);
+    const hl = findHojaLineaForClient(p.id_cliente);
     const carros = hl ? numVal(hl.carros) : 0;
     const cajas = hl ? numVal(hl.cajas) : 0;
 
@@ -146,7 +146,7 @@ async function comReactivarPedido(orderId) {
   }
 }
 
-// ── Pedido rapido (Quick Order) ──
+// ── Pedido rapido (Quick Pedido) ──
 
 function comQoFilterClients(query) {
   comQoSearchQuery = query || '';
@@ -154,7 +154,7 @@ function comQoFilterClients(query) {
   if (!el) return;
 
   const ids = getUserComercialIds();
-  let rows = activeClients().filter(function(c) { return c.ruta_id; });
+  let rows = activeClients().filter(function(c) { return c.id_ruta; });
   if (ids.length) {
     rows = rows.filter(function(c) { return clientMatchesCommercialIds(c, ids); });
   }
@@ -240,31 +240,31 @@ async function comQoSave() {
   try {
     // 1. Crear pedido en orders
     await api('orders', 'POST', {
-      client_id: client.id,
+      id_cliente: client.id,
       date: date,
       items: [],
       notes: '',
-      comercial_id: comercialId,
+      id_comercial: comercialId,
       observaciones: obs,
       estado: 'pendiente',
     });
 
     // 2. Crear/actualizar linea en hoja de ruta
-    if (client.ruta_id) {
+    if (client.id_ruta) {
       let hoja = null;
       for (let i = 0; i < (hojasData.hojas || []).length; i++) {
-        if (parseInt(hojasData.hojas[i].ruta_id, 10) === client.ruta_id) {
+        if (parseInt(hojasData.hojas[i].id_ruta, 10) === client.id_ruta) {
           hoja = hojasData.hojas[i];
           break;
         }
       }
       if (!hoja) {
-        const created = await api('hojas-ruta', 'POST', { ruta_id: client.ruta_id, fecha: date });
+        const created = await api('hojas-ruta', 'POST', { id_ruta: client.id_ruta, fecha: date });
         hoja = await api('hojas-ruta/' + created.id);
       }
 
       const existingLinea = (hoja.lineas || []).find(function(l) {
-        return parseInt(l.client_id, 10) === client.id;
+        return parseInt(l.id_cliente, 10) === client.id;
       });
       if (existingLinea) {
         await api('hojas-ruta/' + hoja.id + '/lineas/' + existingLinea.id, 'PUT', {
@@ -272,8 +272,8 @@ async function comQoSave() {
         });
       } else {
         await api('hojas-ruta/' + hoja.id + '/lineas', 'POST', {
-          client_id: client.id,
-          comercial_id: comercialId,
+          id_cliente: client.id,
+          id_comercial: comercialId,
           carros: carros, cajas: cajas,
           zona: client.addr || '',
           observaciones: obs,

@@ -19,7 +19,7 @@ if (Env::bool('APP_DEBUG', false)) {
 }
 
 require_once __DIR__ . '/config/database.php';
-require_once __DIR__ . '/core/Auth.php';
+require_once __DIR__ . '/core/Autenticacion.php';
 
 $pdo = Database::connect();
 
@@ -32,10 +32,10 @@ $login_success = !empty($_SESSION['login_success']);
 unset($_SESSION['login_success']);
 
 // Si ya está logueado, redirigir a la app
-if (Auth::isLoggedIn() && !$login_success) {
+if (Autenticacion::isLoggedIn() && !$login_success) {
     // Acción de logout
     if (isset($_GET['logout'])) {
-        Auth::logout();
+        Autenticacion::logout();
         header('Location: login.php');
         exit;
     }
@@ -47,7 +47,7 @@ $error = null;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // Rate limiting: max 10 intentos por minuto por sesion
-    Auth::init();
+    Autenticacion::init();
     $now = time();
     $attempts = $_SESSION['login_attempts'] ?? [];
     $attempts = array_filter($attempts, fn($t) => $t > $now - 60);
@@ -59,7 +59,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $_SESSION['login_attempts'] = $attempts;
 
     // Validar CSRF
-    $csrfOk = Auth::validateCsrf($_POST['_csrf'] ?? null);
+    $csrfOk = Autenticacion::validateCsrf($_POST['_csrf'] ?? null);
     if (!$csrfOk && !$error) {
         $error = 'Sesion expirada. Recarga la pagina e intentalo de nuevo.';
     }
@@ -70,9 +70,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if (!$error) {
     $stmt = $pdo->prepare("
-        SELECT id, username, pass_hash, full_name, role, comercial_id, failed_logins, locked
-        FROM app_users
-        WHERE username = ? AND active = 1
+        SELECT id, username, hash_password AS pass_hash, nombre_completo AS full_name, rol AS role,
+               id_comercial, intentos_fallidos AS failed_logins, bloqueado AS locked
+        FROM usuarios
+        WHERE username = ? AND activo = 1
         LIMIT 1
     ");
     $stmt->execute([$username]);
@@ -86,10 +87,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } elseif (password_verify($password, $user['pass_hash'])) {
         // Login OK
         $pdo->prepare("
-            UPDATE app_users SET failed_logins = 0, last_login_at = NOW(), last_login_ip = ? WHERE id = ?
+            UPDATE usuarios SET intentos_fallidos = 0, ultimo_login_en = NOW(), ultimo_login_ip = ? WHERE id = ?
         ")->execute([$ip, (int) $user['id']]);
 
-        Auth::login($user);
+        Autenticacion::login($user);
         $_SESSION['login_success'] = true;
         header('Location: login.php');
         exit;
@@ -98,7 +99,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $userId = (int) $user['id'];
         $pdo->beginTransaction();
         try {
-            $st = $pdo->prepare("SELECT COALESCE(failed_logins,0) AS failed_logins, COALESCE(locked,0) AS locked FROM app_users WHERE id = ? FOR UPDATE");
+            $st = $pdo->prepare("SELECT COALESCE(intentos_fallidos,0) AS failed_logins, COALESCE(bloqueado,0) AS locked FROM usuarios WHERE id = ? FOR UPDATE");
             $st->execute([$userId]);
             $cur = $st->fetch();
 
@@ -106,9 +107,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $willLock = $newFailed >= MAX_FAILED_LOGINS ? 1 : 0;
 
             $pdo->prepare("
-                UPDATE app_users
-                SET failed_logins = ?, last_failed_login = NOW(), locked = ?,
-                    locked_at = IF(? = 1 AND locked = 0, NOW(), locked_at)
+                UPDATE usuarios
+                SET intentos_fallidos = ?, ultimo_intento_fallido = NOW(), bloqueado = ?,
+                    bloqueado_en = IF(? = 1 AND bloqueado = 0, NOW(), bloqueado_en)
                 WHERE id = ?
             ")->execute([$newFailed, $willLock, $willLock, $userId]);
 
@@ -450,7 +451,7 @@ body.logging-in .logging-overlay{ opacity:1; }
           <?php endif; ?>
 
           <form method="post" autocomplete="off" novalidate>
-            <input type="hidden" name="_csrf" value="<?= htmlspecialchars(Auth::csrfToken()) ?>">
+            <input type="hidden" name="_csrf" value="<?= htmlspecialchars(Autenticacion::csrfToken()) ?>">
                       <div class="mb-3">
   <label for="user" class="form-label">Usuario</label>
   <div class="input-group">

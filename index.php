@@ -52,101 +52,102 @@ if ($uri === 'login.php') {
 }
 
 require_once __DIR__ . '/config/database.php';
-require_once __DIR__ . '/core/Router.php';
-require_once __DIR__ . '/core/Controller.php';
-require_once __DIR__ . '/core/Model.php';
-require_once __DIR__ . '/core/Auth.php';
+require_once __DIR__ . '/core/Enrutador.php';
+require_once __DIR__ . '/core/Controlador.php';
+require_once __DIR__ . '/core/Modelo.php';
+require_once __DIR__ . '/core/Autenticacion.php';
 
 // Proteger todas las rutas: requiere sesión activa
-Auth::requireLogin();
+Autenticacion::requireLogin();
 
-$router = new Router();
+$router = new Enrutador();
 
 // Vista principal
-$router->get('', 'PageController@index');
-$router->get('api/me', 'PageController@me');
-$router->get('logout', 'PageController@logout');
+$router->get('', 'PaginaController@index');
+$router->get('api/me', 'PaginaController@me');
+$router->get('logout', 'PaginaController@logout');
 
 // API — Clientes
-$router->get('api/clients', 'ClientController@index');
-$router->post('api/clients', 'ClientController@store');
-$router->post('api/clients/(\d+)/duplicate', 'ClientController@duplicate');
-$router->put('api/clients/(\d+)/toggle', 'ClientController@toggleActive');
-$router->put('api/clients/(\d+)/contado', 'ClientController@updateContado');
-$router->put('api/clients/(\d+)', 'ClientController@update');
-$router->delete('api/clients/(\d+)', 'ClientController@destroy');
-$router->get('api/clients/(\d+)/schedules', 'ClientController@getSchedules');
-$router->put('api/clients/(\d+)/schedules', 'ClientController@saveSchedules');
+$router->get('api/clients', 'ClienteController@index');
+$router->post('api/clients', 'ClienteController@store');
+$router->post('api/clients/(\d+)/duplicate', 'ClienteController@duplicate');
+$router->put('api/clients/(\d+)/toggle', 'ClienteController@toggleActive');
+$router->put('api/clients/(\d+)/contado', 'ClienteController@updateContado');
+$router->put('api/clients/(\d+)', 'ClienteController@update');
+$router->delete('api/clients/(\d+)', 'ClienteController@destroy');
+$router->get('api/clients/(\d+)/schedules', 'ClienteController@getSchedules');
+$router->put('api/clients/(\d+)/schedules', 'ClienteController@saveSchedules');
+
+// API — Direcciones de entrega
+$router->get('api/clients/(\d+)/addresses', 'ClienteController@getAddresses');
+$router->post('api/clients/(\d+)/addresses', 'ClienteController@storeAddress');
+$router->put('api/clients/(\d+)/addresses/(\d+)', 'ClienteController@updateAddress');
+$router->delete('api/clients/(\d+)/addresses/(\d+)', 'ClienteController@destroyAddress');
+$router->put('api/clients/(\d+)/addresses/(\d+)/principal', 'ClienteController@setAddressPrincipal');
 
 // API — Pedidos
-$router->get('api/orders', 'OrderController@index');
-$router->get('api/orders/comercial-day', 'OrderController@comercialDay');
-$router->get('api/orders/resumen-por-ruta', 'OrderController@resumenPorRuta');
-$router->post('api/orders', 'OrderController@store');
-$router->put('api/orders/(\d+)', 'OrderController@update');
-$router->put('api/orders/(\d+)/estado', 'OrderController@updateEstado');
-$router->delete('api/orders', 'OrderController@destroy');
+$router->get('api/orders', 'PedidoController@index');
+$router->get('api/orders/comercial-day', 'PedidoController@comercialDay');
+$router->get('api/orders/resumen-por-ruta', 'PedidoController@resumenPorRuta');
+$router->post('api/orders', 'PedidoController@store');
+$router->put('api/orders/(\d+)', 'PedidoController@update');
+$router->put('api/orders/(\d+)/estado', 'PedidoController@updateEstado');
+$router->delete('api/orders', 'PedidoController@destroy');
 
 // Demo
-$router->post('api/demo', 'ClientController@loadDemo');
+$router->post('api/demo', 'ClienteController@loadDemo');
 
 // API — Settings (delegacion) — retrocompatibilidad
-$router->get('api/delegation', 'SettingController@delegation');
-$router->put('api/delegation', 'SettingController@updateDelegation');
+$router->get('api/delegation', 'ConfiguracionController@delegation');
+$router->put('api/delegation', 'ConfiguracionController@updateDelegation');
 
 // API — Delegaciones
-$router->get('api/delegations', 'DelegationController@index');
-$router->post('api/delegations', 'DelegationController@store');
-$router->put('api/delegations/(\d+)/toggle', 'DelegationController@toggleActive');
-$router->put('api/delegations/(\d+)', 'DelegationController@update');
-$router->delete('api/delegations/(\d+)', 'DelegationController@destroy');
+$router->get('api/delegations', 'DelegacionController@index');
+$router->post('api/delegations', 'DelegacionController@store');
+$router->put('api/delegations/(\d+)/toggle', 'DelegacionController@toggleActive');
+$router->put('api/delegations/(\d+)', 'DelegacionController@update');
+$router->delete('api/delegations/(\d+)', 'DelegacionController@destroy');
 
 // API — Vehiculos
-$router->get('api/vehicles', 'VehicleController@index');
-$router->post('api/vehicles', 'VehicleController@store');
-$router->put('api/vehicles/(\d+)/toggle', 'VehicleController@toggleActive');
-$router->put('api/vehicles/(\d+)', 'VehicleController@update');
-$router->delete('api/vehicles/(\d+)', 'VehicleController@destroy');
-
-// API — Productos (catalogo)
-$router->get('api/products', 'ProductController@index');
-$router->post('api/products', 'ProductController@store');
-$router->put('api/products/(\d+)', 'ProductController@update');
-$router->delete('api/products/(\d+)', 'ProductController@destroy');
+$router->get('api/vehicles', 'VehiculoController@index');
+$router->post('api/vehicles', 'VehiculoController@store');
+$router->put('api/vehicles/(\d+)/toggle', 'VehiculoController@toggleActive');
+$router->put('api/vehicles/(\d+)', 'VehiculoController@update');
+$router->delete('api/vehicles/(\d+)', 'VehiculoController@destroy');
 
 // API — Rutas (optimizacion multi-vehiculo)
-$router->post('api/routes/optimize', 'RouteController@optimize');
-$router->get('api/routes/history', 'RouteController@history');
-$router->put('api/routes/(\d+)/stop/(\d+)/status', 'RouteController@updateStopStatus');
-$router->put('api/routes/(\d+)/status', 'RouteController@updatePlanStatus');
-$router->put('api/routes/(\d+)', 'RouteController@update');
-$router->get('api/routes', 'RouteController@index');
-$router->get('api/routes/(\d+)', 'RouteController@show');
+$router->post('api/routes/optimize', 'OptimizadorRutaController@optimize');
+$router->get('api/routes/history', 'OptimizadorRutaController@history');
+$router->put('api/routes/(\d+)/stop/(\d+)/status', 'OptimizadorRutaController@updateStopStatus');
+$router->put('api/routes/(\d+)/status', 'OptimizadorRutaController@updatePlanStatus');
+$router->put('api/routes/(\d+)', 'OptimizadorRutaController@update');
+$router->get('api/routes', 'OptimizadorRutaController@index');
+$router->get('api/routes/(\d+)', 'OptimizadorRutaController@show');
 
 // API — Settings globales
-$router->get('api/settings', 'SettingController@getSettings');
-$router->put('api/settings', 'SettingController@updateSettings');
+$router->get('api/settings', 'ConfiguracionController@getSettings');
+$router->put('api/settings', 'ConfiguracionController@updateSettings');
 
 // API — Paqueteria por tablas + comparativa de costes
-$router->get('api/shipping-config', 'GlsCostController@getConfig');
-$router->get('api/shipping-config/alerts', 'GlsCostController@getAlerts');
-$router->put('api/shipping-config/fuel', 'GlsCostController@updateFuelPct');
-$router->put('api/shipping-config', 'GlsCostController@updateConfig');
-$router->post('api/shipping-costs/calculate', 'GlsCostController@calculateForHoja');
-$router->post('api/shipping-costs/simulate', 'GlsCostController@simulateForHoja');
-$router->get('api/shipping-costs/hoja/(\d+)', 'GlsCostController@getCostsForHoja');
-$router->get('api/shipping-costs/client/(\d+)', 'GlsCostController@getClientHistory');
-$router->get('api/shipping-costs/daily-report', 'GlsCostController@getDailyReport');
-$router->get('api/shipping-costs/range-report', 'GlsCostController@getRangeReport');
-$router->post('api/shipping-costs/recalculate', 'GlsCostController@recalculateAll');
-$router->get('api/shipping-rates', 'ShippingRateController@index');
-$router->post('api/shipping-rates', 'ShippingRateController@store');
-$router->put('api/shipping-rates/(\d+)', 'ShippingRateController@update');
-$router->delete('api/shipping-rates/(\d+)', 'ShippingRateController@destroy');
+$router->get('api/shipping-config', 'CosteGlsController@getConfig');
+$router->get('api/shipping-config/alerts', 'CosteGlsController@getAlerts');
+$router->put('api/shipping-config/fuel', 'CosteGlsController@updateFuelPct');
+$router->put('api/shipping-config', 'CosteGlsController@updateConfig');
+$router->post('api/shipping-costs/calculate', 'CosteGlsController@calculateForHoja');
+$router->post('api/shipping-costs/simulate', 'CosteGlsController@simulateForHoja');
+$router->get('api/shipping-costs/hoja/(\d+)', 'CosteGlsController@getCostsForHoja');
+$router->get('api/shipping-costs/client/(\d+)', 'CosteGlsController@getClientHistory');
+$router->get('api/shipping-costs/daily-report', 'CosteGlsController@getDailyReport');
+$router->get('api/shipping-costs/range-report', 'CosteGlsController@getRangeReport');
+$router->post('api/shipping-costs/recalculate', 'CosteGlsController@recalculateAll');
+$router->get('api/shipping-rates', 'TarifaTransportistaController@index');
+$router->post('api/shipping-rates', 'TarifaTransportistaController@store');
+$router->put('api/shipping-rates/(\d+)', 'TarifaTransportistaController@update');
+$router->delete('api/shipping-rates/(\d+)', 'TarifaTransportistaController@destroy');
 
 // API — Dashboard stats
-$router->get('api/stats', 'RouteController@stats');
-$router->get('api/stats/gls', 'GlsCostController@dashboardStats');
+$router->get('api/stats', 'OptimizadorRutaController@stats');
+$router->get('api/stats/gls', 'CosteGlsController@dashboardStats');
 
 // API — Rutas comerciales (asignación de clientes)
 $router->get('api/rutas', 'RutaController@index');
@@ -174,15 +175,22 @@ $router->post('api/hojas-ruta/(\d+)/duplicar', 'HojaRutaController@duplicate');
 $router->get('api/comerciales', 'HojaRutaController@comerciales');
 
 // API — Usuarios (solo admin)
-$router->get('api/users', 'UserController@index');
-$router->post('api/users', 'UserController@store');
-$router->put('api/users/(\d+)', 'UserController@update');
-$router->delete('api/users/(\d+)', 'UserController@destroy');
+$router->get('api/users', 'UsuarioController@index');
+$router->post('api/users', 'UsuarioController@store');
+$router->put('api/users/(\d+)', 'UsuarioController@update');
+$router->delete('api/users/(\d+)', 'UsuarioController@destroy');
 
 // API — Plantillas de ruta
-$router->get('api/templates', 'TemplateController@index');
-$router->post('api/templates', 'TemplateController@store');
-$router->delete('api/templates/(\d+)', 'TemplateController@destroy');
+$router->get('api/templates', 'PlantillaController@index');
+$router->post('api/templates', 'PlantillaController@store');
+$router->delete('api/templates/(\d+)', 'PlantillaController@destroy');
+
+// API — Archivos (subida/descarga)
+$router->get('api/files', 'ArchivoController@index');
+$router->post('api/files', 'ArchivoController@upload');
+$router->post('api/files/(.+)/parse-pedidos', 'ArchivoController@parsePedidos');
+$router->get('api/files/(.+)/download', 'ArchivoController@download');
+$router->delete('api/files/(.+)', 'ArchivoController@destroy');
 
 // Manejador global de excepciones — devuelve JSON limpio en API
 set_exception_handler(function (Throwable $e) {

@@ -1,5 +1,6 @@
 # Variables de entorno con credenciales
 config/.env
+config/.env.example
 
 # Logs
 logs/

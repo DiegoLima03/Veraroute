@@ -1,2 +1,0 @@
-ALTER TABLE hojas_ruta
-    ADD COLUMN IF NOT EXISTS vehicle_id INT UNSIGNED NULL AFTER ruta_id;

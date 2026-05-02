@@ -366,11 +366,11 @@ async function saveCurrentAsTemplate() {
 
   // Guardar cada ruta como plantilla separada
   for (const r of fleetRoutes.routes) {
-    const clientIds = r.stops.map(s => s.client_id);
+    const clientIds = r.stops.map(s => s.id_cliente);
     await api('templates', 'POST', {
       name: name + (fleetRoutes.routes.length > 1 ? ' - ' + r.vehicle.name : ''),
-      vehicle_id: r.vehicle?.id || null,
-      delegation_id: r.delegation?.id || null,
+      id_vehiculo: r.vehicle?.id || null,
+      id_delegacion: r.delegation?.id || null,
       client_ids: clientIds,
     });
   }
@@ -389,9 +389,9 @@ async function applyTemplate(templateId) {
     const day = orders[date] || {};
     let created = 0;
     for (const stop of t.stops) {
-      if (!day[stop.client_id]) {
+      if (!day[stop.id_cliente]) {
         try {
-          await api('orders', 'POST', { client_id: stop.client_id, date, items: [{ item_name: 'Pedido plantilla', quantity: 1 }] });
+          await api('orders', 'POST', { id_cliente: stop.id_cliente, date, items: [{ item_name: 'Pedido plantilla', quantity: 1 }] });
           created++;
         } catch (e) { /* ya existe o error */ }
       }
@@ -460,7 +460,7 @@ async function loadHistoryRoute(planId) {
     if (!plan || !plan.stops?.length) { showToast('Sin datos'); return; }
 
     // Mostrar en mapa
-    const del = delegations.find(d => parseInt(d.id) === parseInt(plan.delegation_id));
+    const del = delegations.find(d => parseInt(d.id) === parseInt(plan.id_delegacion));
     if (!del) return;
 
     const waypoints = [
@@ -622,7 +622,7 @@ function getSortedRentabilityLines() {
     let va = a[rentabilitySortKey];
     let vb = b[rentabilitySortKey];
 
-    if (rentabilitySortKey === 'client_name' || rentabilitySortKey === 'ruta_name' || rentabilitySortKey === 'recommendation' || rentabilitySortKey === 'client_postcode' || rentabilitySortKey === 'vehicle_name') {
+    if (rentabilitySortKey === 'client_name' || rentabilitySortKey === 'ruta_name' || rentabilitySortKey === 'recomendacion' || rentabilitySortKey === 'client_postcode' || rentabilitySortKey === 'vehicle_name') {
       va = (va || '').toString().toLowerCase();
       vb = (vb || '').toString().toLowerCase();
       if (va < vb) return -1 * dir;
@@ -680,24 +680,24 @@ function renderRentabilityPanel() {
           <th onclick="setRentabilitySort('vehicle_name')">Vehiculo</th>
           <th onclick="setRentabilitySort('carros')">Carros</th>
           <th onclick="setRentabilitySort('cajas')">Cajas</th>
-          <th onclick="setRentabilitySort('detour_km')">Km desvio</th>
-          <th onclick="setRentabilitySort('cost_own_route')">Coste propio</th>
-          <th onclick="setRentabilitySort('cost_gls_adjusted')">Coste paqueteria</th>
+          <th onclick="setRentabilitySort('desvio_km')">Km desvio</th>
+          <th onclick="setRentabilitySort('coste_ruta_propia')">Coste propio</th>
+          <th onclick="setRentabilitySort('coste_gls_ajustado')">Coste paqueteria</th>
           <th onclick="setRentabilitySort('savings')">Dif.</th>
-          <th onclick="setRentabilitySort('recommendation')">Recomendacion</th>
+          <th onclick="setRentabilitySort('recomendacion')">Recomendacion</th>
           <th>Estado</th>
         </tr>
       </thead>
       <tbody>
         ${lines.map(row => {
-          const meta = glsRecommendationMeta(row.recommendation);
+          const meta = glsRecommendationMeta(row.recomendacion);
           const note = friendlyGlsNote(row.notes);
-          const rowCls = row.recommendation === 'own_route'
+          const rowCls = row.recomendacion === 'ruta_propia'
             ? 'rent-row-own'
-            : row.recommendation === 'externalize'
+            : row.recomendacion === 'externalizar'
               ? 'rent-row-externalize'
               : 'rent-row-unavailable';
-          const diff = row.savings_if_externalized ?? row.savings ?? 0;
+          const diff = row.ahorro_si_externaliza ?? row.savings ?? 0;
           return `<tr class="${rowCls}">
             <td><b>${esc(row.client_name)}</b></td>
             <td>${esc(row.client_postcode || '—')}</td>
@@ -705,10 +705,10 @@ function renderRentabilityPanel() {
             <td>${esc(row.vehicle_name ? row.vehicle_name + (row.vehicle_plate ? ' · ' + row.vehicle_plate : '') : '—')}</td>
             <td>${formatQty(row.carros)}</td>
             <td>${formatQty(row.cajas)}</td>
-            <td>${row.detour_km !== null && row.detour_km !== undefined ? formatQty(row.detour_km) : '—'}</td>
-            <td>${row.cost_own_route !== null && row.cost_own_route !== undefined ? formatMoney(row.cost_own_route) : '—'}</td>
-            <td>${row.cost_gls_adjusted !== null && row.cost_gls_adjusted !== undefined ? formatMoney(row.cost_gls_adjusted) : '—'}</td>
-            <td>${(row.cost_own_route !== null && row.cost_own_route !== undefined) || (row.cost_gls_adjusted !== null && row.cost_gls_adjusted !== undefined) ? formatMoney(diff) : '—'}</td>
+            <td>${row.desvio_km !== null && row.desvio_km !== undefined ? formatQty(row.desvio_km) : '—'}</td>
+            <td>${row.coste_ruta_propia !== null && row.coste_ruta_propia !== undefined ? formatMoney(row.coste_ruta_propia) : '—'}</td>
+            <td>${row.coste_gls_ajustado !== null && row.coste_gls_ajustado !== undefined ? formatMoney(row.coste_gls_ajustado) : '—'}</td>
+            <td>${(row.coste_ruta_propia !== null && row.coste_ruta_propia !== undefined) || (row.coste_gls_ajustado !== null && row.coste_gls_ajustado !== undefined) ? formatMoney(diff) : '—'}</td>
             <td><span class="rent-badge ${meta.cls}">${meta.label}</span></td>
             <td><span class="rent-note">${esc(note || 'OK')}</span></td>
           </tr>`;

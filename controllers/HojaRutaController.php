@@ -1,13 +1,13 @@
 <?php
 
-require_once __DIR__ . '/../core/Controller.php';
-require_once __DIR__ . '/../core/Auth.php';
+require_once __DIR__ . '/../core/Controlador.php';
+require_once __DIR__ . '/../core/Autenticacion.php';
 require_once __DIR__ . '/../models/HojaRuta.php';
-require_once __DIR__ . '/../models/Client.php';
-require_once __DIR__ . '/../models/DistanceCache.php';
-require_once __DIR__ . '/../services/RouteOptimizer.php';
+require_once __DIR__ . '/../models/Cliente.php';
+require_once __DIR__ . '/../models/DistanciasCache.php';
+require_once __DIR__ . '/../services/OptimizadorRuta.php';
 
-class HojaRutaController extends Controller
+class HojaRutaController extends Controlador
 {
     private $model;
 
@@ -16,15 +16,15 @@ class HojaRutaController extends Controller
         $this->model = new HojaRuta();
     }
 
-    /* GET /api/hojas-ruta?fecha=YYYY-MM-DD[&ruta_id=X] */
+    /* GET /api/hojas-ruta?fecha=YYYY-MM-DD[&id_ruta=X] */
     public function index()
     {
         $fecha  = $_GET['fecha'] ?? date('Y-m-d');
-        $rutaId = isset($_GET['ruta_id']) ? (int) $_GET['ruta_id'] : null;
-        $userId = Auth::isComercial() ? Auth::currentUser()['id'] : null;
+        $rutaId = isset($_GET['id_ruta']) ? (int) $_GET['id_ruta'] : null;
+        $userId = Autenticacion::isComercial() ? Autenticacion::currentUser()['id'] : null;
 
-        if (Auth::isComercial()) {
-            $allowedIds = Auth::comercialIds();
+        if (Autenticacion::isComercial()) {
+            $allowedIds = Autenticacion::comercialIds();
             $allowedRutaIds = $this->model->getRutaIdsForComerciales($allowedIds);
 
             if ($rutaId && !in_array($rutaId, $allowedRutaIds, true)) {
@@ -40,7 +40,7 @@ class HojaRutaController extends Controller
                 }
 
                 foreach ($this->model->getByFecha($fecha, $rutaId, null) as $hoja) {
-                    if (!in_array((int) $hoja['ruta_id'], $allowedRutaIds, true)) {
+                    if (!in_array((int) $hoja['id_ruta'], $allowedRutaIds, true)) {
                         continue;
                     }
 
@@ -50,10 +50,10 @@ class HojaRutaController extends Controller
 
                     if ($this->hojaHasComercialActivity($hoja)) {
                         $hojas[] = $hoja;
-                        unset($rutasSinHojaMap[(int) $hoja['ruta_id']]);
+                        unset($rutasSinHojaMap[(int) $hoja['id_ruta']]);
                     } else {
-                        $rutasSinHojaMap[(int) $hoja['ruta_id']] = [
-                            'id' => (int) $hoja['ruta_id'],
+                        $rutasSinHojaMap[(int) $hoja['id_ruta']] = [
+                            'id' => (int) $hoja['id_ruta'],
                             'name' => $hoja['ruta_name'],
                             'active' => 1,
                         ];
@@ -80,10 +80,10 @@ class HojaRutaController extends Controller
         $hoja = $this->model->getById((int) $id);
         if (!$hoja) $this->json(['error' => 'Hoja no encontrada'], 404);
 
-        if (Auth::isComercial()) {
-            $allowedIds = Auth::comercialIds();
+        if (Autenticacion::isComercial()) {
+            $allowedIds = Autenticacion::comercialIds();
             $allowedRutaIds = $this->model->getRutaIdsForComerciales($allowedIds);
-            if (!in_array((int) $hoja['ruta_id'], $allowedRutaIds, true)) {
+            if (!in_array((int) $hoja['id_ruta'], $allowedRutaIds, true)) {
                 $this->json(['error' => 'No tienes acceso a esta ruta'], 403);
             }
 
@@ -99,15 +99,15 @@ class HojaRutaController extends Controller
     public function store()
     {
         $data = $this->getInput();
-        if (empty($data['ruta_id']) || empty($data['fecha'])) {
-            $this->json(['error' => 'ruta_id y fecha son obligatorios'], 400);
+        if (empty($data['id_ruta']) || empty($data['fecha'])) {
+            $this->json(['error' => 'id_ruta y fecha son obligatorios'], 400);
         }
 
         try {
-            $data['user_id'] = Auth::currentUser()['id'] ?? null;
+            $data['id_usuario'] = Autenticacion::currentUser()['id'] ?? null;
             $id = $this->model->create($data);
-            if (Auth::isComercial()) {
-                $this->model->prefillRouteClientsForComerciales($id, Auth::comercialIds());
+            if (Autenticacion::isComercial()) {
+                $this->model->prefillRouteClientsForComerciales($id, Autenticacion::comercialIds());
             }
             $this->json($this->model->getById($id), 201);
         } catch (\Exception $e) {
@@ -125,12 +125,12 @@ class HojaRutaController extends Controller
         $hoja = $this->model->getById((int) $id);
         if (!$hoja) $this->json(['error' => 'Hoja no encontrada'], 404);
 
-        if (array_key_exists('vehicle_id', $data)) {
-            $data['vehicle_id'] = !empty($data['vehicle_id']) ? (int) $data['vehicle_id'] : null;
+        if (array_key_exists('id_vehiculo', $data)) {
+            $data['id_vehiculo'] = !empty($data['id_vehiculo']) ? (int) $data['id_vehiculo'] : null;
         }
 
         $targetEstado = $data['estado'] ?? $hoja['estado'];
-        $targetVehicleId = array_key_exists('vehicle_id', $data) ? $data['vehicle_id'] : ($hoja['vehicle_id'] ?? null);
+        $targetVehicleId = array_key_exists('id_vehiculo', $data) ? $data['id_vehiculo'] : ($hoja['id_vehiculo'] ?? null);
         if ($targetEstado === 'cerrada' && empty($targetVehicleId)) {
             $this->json(['error' => 'Debes asignar un vehiculo antes de cerrar la ruta'], 400);
         }
@@ -159,7 +159,7 @@ class HojaRutaController extends Controller
 
         $hoja = $this->model->getById((int) $id);
         if (!$hoja) $this->json(['error' => 'Hoja no encontrada'], 404);
-        if ($data['estado'] === 'cerrada' && empty($hoja['vehicle_id'])) {
+        if ($data['estado'] === 'cerrada' && empty($hoja['id_vehiculo'])) {
             $this->json(['error' => 'Debes asignar un vehiculo antes de cerrar la ruta'], 400);
         }
 
@@ -172,18 +172,18 @@ class HojaRutaController extends Controller
     public function addLinea($id)
     {
         $data = $this->getInput();
-        if (empty($data['client_id'])) {
-            $this->json(['error' => 'client_id es obligatorio'], 400);
+        if (empty($data['id_cliente'])) {
+            $this->json(['error' => 'id_cliente es obligatorio'], 400);
         }
 
-        if (Auth::isComercial()) {
-            $clientModel = new Client();
-            $client = $clientModel->getById((int) $data['client_id']);
+        if (Autenticacion::isComercial()) {
+            $clientModel = new Cliente();
+            $client = $clientModel->getById((int) $data['id_cliente']);
             if (!$client) {
                 $this->json(['error' => 'Cliente no encontrado'], 404);
             }
 
-            $allowedComercialIds = Auth::comercialIds();
+            $allowedComercialIds = Autenticacion::comercialIds();
             $clientComercialId = $this->pickMatchingCommercialId($client, $allowedComercialIds);
 
             if (!$clientComercialId || !in_array($clientComercialId, $allowedComercialIds, true)) {
@@ -191,11 +191,11 @@ class HojaRutaController extends Controller
             }
 
             // Para usuarios comerciales el comercial de la linea se deduce del propio cliente.
-            $data['comercial_id'] = $clientComercialId;
+            $data['id_comercial'] = $clientComercialId;
         }
 
         $data = $this->normalizeLineaUnits($data);
-        $data['hoja_ruta_id'] = (int) $id;
+        $data['id_hoja_ruta'] = (int) $id;
         $lineaId = $this->model->addLinea((int) $id, $data);
         $this->json($this->model->getById((int) $id), 201);
     }
@@ -205,12 +205,12 @@ class HojaRutaController extends Controller
     {
         $data = $this->getInput();
         $linea = $this->model->getLineaById((int) $lineaId);
-        if (!$linea || (int) $linea['hoja_ruta_id'] !== (int) $id) {
+        if (!$linea || (int) $linea['id_hoja_ruta'] !== (int) $id) {
             $this->json(['error' => 'Linea no encontrada'], 404);
         }
 
-        if (Auth::isComercial()) {
-            $allowedIds = Auth::comercialIds();
+        if (Autenticacion::isComercial()) {
+            $allowedIds = Autenticacion::comercialIds();
             if (!$this->matchesCommercialIds($linea, $allowedIds)) {
                 $this->json(['error' => 'No puedes editar una linea de otro comercial'], 403);
             }
@@ -309,7 +309,7 @@ class HojaRutaController extends Controller
         }
 
         // Construir matriz de distancias/duraciones reales via OSRM
-        $distCache = new DistanceCache();
+        $distCache = new DistanciasCache();
         $matrix = $distCache->buildMatrix($points);
         if (empty($matrix['durations'])) {
             return $this->json(['error' => 'No se pudo calcular la matriz de duraciones. OSRM puede estar caido.'], 503);
@@ -354,7 +354,7 @@ class HojaRutaController extends Controller
     /* POST /api/hojas-ruta/generar-desde-pedidos */
     public function generateFromOrders()
     {
-        if (Auth::isComercial()) {
+        if (Autenticacion::isComercial()) {
             $this->json(['error' => 'Solo logistica/admin puede generar hojas'], 403);
             return;
         }
@@ -362,8 +362,8 @@ class HojaRutaController extends Controller
         $data = $this->getInput();
         $fecha = $data['fecha'] ?? date('Y-m-d');
 
-        require_once __DIR__ . '/../models/Order.php';
-        $orderModel = new Order();
+        require_once __DIR__ . '/../models/Pedido.php';
+        $orderModel = new Pedido();
         $grouped = $orderModel->getConfirmedByDateGroupedByRuta($fecha);
 
         if (empty($grouped['rutas'])) {
@@ -408,8 +408,8 @@ class HojaRutaController extends Controller
     {
         $comerciales = $this->model->getComerciales();
 
-        if (Auth::isComercial()) {
-            $allowedIds = Auth::comercialIds();
+        if (Autenticacion::isComercial()) {
+            $allowedIds = Autenticacion::comercialIds();
             $comerciales = array_values(array_filter(
                 $comerciales,
                 fn ($comercial) => in_array((int) $comercial['id'], $allowedIds, true)
@@ -425,10 +425,10 @@ class HojaRutaController extends Controller
     {
         $ids = [];
         foreach ([
-            'comercial_id',
-            'comercial_planta_id',
-            'comercial_flor_id',
-            'comercial_accesorio_id',
+            'id_comercial',
+            'id_comercial_planta',
+            'id_comercial_flor',
+            'id_comercial_accesorio',
             'client_comercial_id',
             'client_comercial_planta_id',
             'client_comercial_flor_id',
@@ -536,19 +536,19 @@ class HojaRutaController extends Controller
         return $data;
     }
 
-    /** Delegados a RouteOptimizer */
+    /** Delegados a OptimizadorRuta */
     private function haversine(float $lat1, float $lng1, float $lat2, float $lng2): float
     {
-        return (new RouteOptimizer())->haversine($lat1, $lng1, $lat2, $lng2);
+        return (new OptimizadorRuta())->haversine($lat1, $lng1, $lat2, $lng2);
     }
 
     private function twoOpt(array $route, ?array $delegation): array
     {
-        return (new RouteOptimizer())->twoOptHaversine($route, $delegation);
+        return (new OptimizadorRuta())->twoOptHaversine($route, $delegation);
     }
 
     private function twoOptMatrix(array $route, array $durations, ?int $depotIdx): array
     {
-        return (new RouteOptimizer())->twoOptDurationMatrix($route, $durations, $depotIdx);
+        return (new OptimizadorRuta())->twoOptDurationMatrix($route, $durations, $depotIdx);
     }
 }

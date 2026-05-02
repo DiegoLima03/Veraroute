@@ -100,6 +100,7 @@ body { background: var(--bg); color: var(--text); font-family: "Segoe UI", Tahom
 .card-actions { display: flex; gap: 3px; opacity: 0; transition: opacity 0.15s; flex-shrink: 0; }
 .client-card:hover .card-actions { opacity: 1; }
 
+.card-fiscal { font-size: 10px; color: var(--text-dim); padding-left: 30px; opacity: 0.7; font-style: italic; }
 .card-sub { font-size: 11px; color: var(--text-dim); margin-bottom: 4px; padding-left: 30px; display: flex; flex-wrap: wrap; gap: 4px 12px; }
 .card-addr { opacity: 0.8; }
 .card-comercial { font-weight: 600; }
@@ -289,6 +290,7 @@ textarea { resize: none; height: 54px; }
 .hr-linea-body { flex: 1; min-width: 0; }
 .hr-linea-row1 { display: flex; align-items: center; gap: 6px; }
 .hr-linea-name { flex: 1; font-weight: 600; word-break: break-word; }
+.hr-linea-fiscal { font-size: 10px; color: var(--text-dim); font-style: italic; flex-shrink: 0; }
 .hr-linea-row2 { display: flex; gap: 10px; margin-top: 2px; }
 .hr-linea-zona { color: var(--text-dim); font-size: 10px; }
 .hr-linea-com { color: var(--accent2); font-size: 10px; font-weight: 600; }
@@ -628,6 +630,41 @@ textarea { resize: none; height: 54px; }
   #printFrame, #printFrame * { visibility: visible; }
   #printFrame { position: absolute; left: 0; top: 0; width: 100%; }
 }
+
+/* ── Subida de archivos ── */
+.upload-area { padding: 12px; display: flex; flex-direction: column; gap: 12px; }
+.upload-dropzone { border: 2px dashed var(--border); border-radius: 12px; padding: 30px 20px; text-align: center; cursor: pointer; transition: all 0.2s; }
+.upload-dropzone:hover, .upload-dropzone.dragover { border-color: var(--accent); background: var(--accent-soft, rgba(142,139,48,0.06)); }
+.upload-dropzone-icon { font-size: 36px; margin-bottom: 8px; }
+.upload-dropzone-text { font-size: 13px; font-weight: 600; color: var(--text); }
+.upload-dropzone-hint { font-size: 10px; color: var(--text-dim); margin-top: 4px; }
+.upload-queue { display: flex; flex-direction: column; gap: 4px; }
+.upload-item { display: flex; align-items: center; justify-content: space-between; padding: 6px 10px; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; font-size: 11px; }
+.upload-item-name { font-weight: 600; word-break: break-all; }
+.upload-item-status { flex-shrink: 0; margin-left: 8px; color: var(--text-dim); }
+.upload-item-status.upload-ok { color: #3b7a2a; font-weight: 700; }
+.upload-item-status.upload-err { color: var(--danger); font-weight: 700; }
+.upload-file-card { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 6px; background: var(--surface); }
+.upload-file-icon { font-size: 20px; flex-shrink: 0; }
+.upload-file-info { flex: 1; min-width: 0; overflow: hidden; }
+.upload-file-name { font-size: 12px; font-weight: 600; word-break: break-all; }
+.upload-file-meta { font-size: 10px; color: var(--text-dim); margin-top: 2px; }
+.upload-file-actions { display: flex; gap: 4px; flex-shrink: 0; }
+
+/* ── Popup procesar Excel ── */
+.excel-parse-section { padding: 8px 16px; }
+.excel-parse-section-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; margin-top: 8px; }
+.excel-parse-header { display: flex; gap: 8px; padding: 4px 0; border-bottom: 1px solid var(--border); font-size: 10px; font-weight: 700; color: var(--text-dim); text-transform: uppercase; }
+.excel-parse-row { display: flex; gap: 8px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--border-light, #eee); }
+.excel-parse-col-name { flex: 1; min-width: 0; overflow: hidden; }
+.excel-parse-col-input { width: 80px; flex-shrink: 0; }
+.excel-parse-col-input input { width: 100%; text-align: right; padding: 5px 6px; font-size: 12px; border-radius: 6px; }
+.excel-parse-col-ruta { width: 140px; flex-shrink: 0; }
+.excel-parse-col-ruta select { width: 100%; padding: 5px 6px; font-size: 11px; border-radius: 6px; }
+.excel-parse-notfound { background: rgba(200,60,50,0.04); padding: 6px 8px; border-radius: 6px; margin-bottom: 4px; }
+.excel-parse-name { flex: 1; font-size: 12px; font-weight: 600; }
+.excel-parse-badge-err { font-size: 9px; background: var(--danger); color: #fff; padding: 2px 6px; border-radius: 4px; flex-shrink: 0; }
+.excel-parse-badge-warn { font-size: 9px; background: #e6a817; color: #fff; padding: 1px 5px; border-radius: 3px; vertical-align: middle; }
 
 .toast { position: fixed; bottom: 20px; right: 20px; background: var(--surface); border: 1px solid var(--accent); color: var(--text); padding: 10px 16px; border-radius: 10px; font-size: 12px; z-index: 200; transform: translateY(60px); opacity: 0; transition: all 0.3s ease; pointer-events: none; box-shadow: 0 4px 12px rgba(16, 24, 14, 0.15); }
 .toast.show { transform: translateY(0); opacity: 1; }

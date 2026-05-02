@@ -1,11 +1,9 @@
 """
-B5: Geocodifica los clientes sin coordenadas directamente desde la BD
-usando Google Geocoding API.
+Geocodifica las direcciones de entrega sin coordenadas usando Google Geocoding API.
 
-Lee clientes con x IS NULL OR x = 0, geocodifica con Google y actualiza
-la BD directamente. Prioriza clientes activos.
+Lee direcciones_entrega con x IS NULL, geocodifica con Google y actualiza la BD.
 
-Uso: python geocode_clientes_bd.py
+Uso: python geocode_direcciones.py
 """
 
 import os
@@ -22,9 +20,7 @@ except ImportError:
 # ══════════════════════════════════════════════════════════════
 # CONFIGURACION
 # ══════════════════════════════════════════════════════════════
-# Lee la key de config/.env o de variable de entorno
 def _load_google_key():
-    # Intentar leer de config/.env
     env_path = os.path.join(os.path.dirname(__file__), 'config', '.env')
     if os.path.exists(env_path):
         with open(env_path, 'r') as f:
@@ -40,7 +36,7 @@ GOOGLE_API_KEY = _load_google_key()
 if not GOOGLE_API_KEY:
     print("ERROR: GOOGLE_API_KEY no definida. Ponla en config/.env o como variable de entorno.")
     sys.exit(1)
-DELAY = 0.05  # 50ms entre peticiones (Google aguanta alto volumen)
+DELAY = 0.05  # 50ms entre peticiones
 
 DB_CONFIG = {
     'host': '127.0.0.1',
@@ -75,49 +71,71 @@ def geocode_google(address):
 
 
 def main():
-    print("=== B5: Geocodificar clientes sin coordenadas (Google API) ===\n")
+    print("=== Geocodificar direcciones de entrega sin coordenadas (Google API) ===\n")
 
     conn = pymysql.connect(**DB_CONFIG)
     cursor = conn.cursor(pymysql.cursors.DictCursor)
 
     # Contar total
-    cursor.execute("SELECT COUNT(*) as total FROM clientes WHERE x IS NULL OR x = 0")
+    cursor.execute("SELECT COUNT(*) as total FROM direcciones_entrega WHERE activo = 1 AND (x IS NULL OR x = 0)")
     total = cursor.fetchone()['total']
-    print(f"Clientes sin coordenadas: {total}")
+    print(f"Direcciones sin coordenadas: {total}")
 
     if total == 0:
-        print("No hay clientes que geocodificar.")
+        print("No hay direcciones que geocodificar.")
         conn.close()
         return
 
-    # Cargar clientes sin coordenadas, activos primero
+    # Cargar direcciones sin coordenadas
     cursor.execute("""
-        SELECT id, nombre, direccion, codigo_postal
-        FROM clientes
-        WHERE x IS NULL OR x = 0
-        ORDER BY activo DESC, id ASC
+        SELECT de.id, de.id_cliente, de.descripcion, de.direccion, de.direccion_2,
+               de.codigo_postal, de.localidad, de.provincia, de.pais,
+               c.nombre as cliente_nombre
+        FROM direcciones_entrega de
+        JOIN clientes c ON c.id = de.id_cliente
+        WHERE de.activo = 1 AND (de.x IS NULL OR de.x = 0)
+        ORDER BY de.id_cliente, de.id
     """)
-    clientes = cursor.fetchall()
+    dirs = cursor.fetchall()
 
     ok_count = 0
     fail_count = 0
     skip_count = 0
 
-    for i, c in enumerate(clientes):
-        cliente_id = c['id']
-        name = c['nombre'] or ''
-        address = (c['direccion'] or '').strip()
-        postcode = (c['codigo_postal'] or '').strip()
+    for i, d in enumerate(dirs):
+        dir_id = d['id']
+        cliente = d['cliente_nombre'] or ''
+        desc = d['descripcion'] or ''
+        address = (d['direccion'] or '').strip()
+        address2 = (d['direccion_2'] or '').strip()
+        cp = (d['codigo_postal'] or '').strip()
+        localidad = (d['localidad'] or '').strip()
+        provincia = (d['provincia'] or '').strip()
 
-        # Construir query: usar address completa (ya incluye localidad y pais)
-        if not address and not postcode:
-            print(f"[{i+1}/{total}] {name[:50]} — SIN DIRECCION, saltado")
+        # Construir query de geocodificacion
+        # Prioridad: direccion + localidad + cp + provincia
+        parts = []
+        if address:
+            parts.append(address)
+        if address2:
+            parts.append(address2)
+        if localidad:
+            parts.append(localidad)
+        if cp:
+            parts.append(cp)
+        if provincia:
+            parts.append(provincia)
+        parts.append('España')
+
+        query = ', '.join(parts)
+
+        if not address and not cp:
+            print(f"[{i+1}/{total}] {cliente[:30]} / {desc[:25]} — SIN DIRECCION, saltado")
             skip_count += 1
             continue
 
-        query = address if address else f"{postcode}, Spain"
-
-        print(f"[{i+1}/{total}] {name[:45]}...", end=' ')
+        label = f"{cliente[:25]} / {desc[:25]}"
+        print(f"[{i+1}/{total}] {label}...", end=' ')
 
         lat, lng = geocode_google(query)
 
@@ -132,19 +150,20 @@ def main():
         if lat is not None:
             print(f"OK ({lat:.6f}, {lng:.6f})")
             cursor.execute(
-                "UPDATE clientes SET x = %s, y = %s WHERE id = %s",
-                (round(lat, 6), round(lng, 6), cliente_id)
+                "UPDATE direcciones_entrega SET x = %s, y = %s WHERE id = %s",
+                (round(lat, 6), round(lng, 6), dir_id)
             )
             ok_count += 1
         else:
-            # Segundo intento: solo con codigo postal si address fallo
-            if postcode:
-                lat2, lng2 = geocode_google(f"{postcode}, Spain")
+            # Segundo intento: solo CP + localidad
+            fallback = f"{cp}, {localidad}, España" if cp else None
+            if fallback:
+                lat2, lng2 = geocode_google(fallback)
                 if lat2 is not None and lat2 not in ('DENIED', 'LIMIT'):
                     print(f"OK por CP ({lat2:.6f}, {lng2:.6f})")
                     cursor.execute(
-                        "UPDATE clientes SET x = %s, y = %s WHERE id = %s",
-                        (round(lat2, 6), round(lng2, 6), cliente_id)
+                        "UPDATE direcciones_entrega SET x = %s, y = %s WHERE id = %s",
+                        (round(lat2, 6), round(lng2, 6), dir_id)
                     )
                     ok_count += 1
                     time.sleep(DELAY)
@@ -164,9 +183,9 @@ def main():
 
     print()
     print(f"=== COMPLETADO ===")
-    print(f"Geocodificados: {ok_count}/{total}")
-    print(f"Fallidos:       {fail_count}/{total}")
-    print(f"Saltados:       {skip_count}/{total}")
+    print(f"Geocodificadas: {ok_count}/{total}")
+    print(f"Fallidas:       {fail_count}/{total}")
+    print(f"Saltadas:       {skip_count}/{total}")
 
 
 if __name__ == '__main__':

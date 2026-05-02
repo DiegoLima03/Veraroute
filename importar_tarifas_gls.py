@@ -60,7 +60,7 @@ def db_connect():
 
 
 def get_carrier_id(cur, name):
-    cur.execute("SELECT id FROM carriers WHERE nombre = %s LIMIT 1", (name,))
+    cur.execute("SELECT id FROM transportistas WHERE nombre = %s LIMIT 1", (name,))
     row = cur.fetchone()
     return row[0] if row else None
 
@@ -70,12 +70,12 @@ def export_to_csv(out_path):
     conn = db_connect()
     cur = conn.cursor()
     cur.execute("""
-        SELECT c.nombre, r.service_name, r.rate_type, r.zona,
+        SELECT c.nombre, r.nombre_servicio, r.tipo_tarifa, r.zona,
                r.peso_min, r.peso_max, r.precio_base,
                r.vigencia_desde, r.vigencia_hasta
-        FROM carrier_rates r
-        JOIN carriers c ON c.id = r.carrier_id
-        ORDER BY c.nombre, r.service_name, r.zona, r.peso_min, r.id
+        FROM tarifas_transportista r
+        JOIN transportistas c ON c.id = r.id_transportista
+        ORDER BY c.nombre, r.nombre_servicio, r.zona, r.peso_min, r.id
     """)
     rows = cur.fetchall()
 
@@ -136,9 +136,9 @@ def import_from_csv(in_path, dry_run=False):
 
                 if carrier_name not in carriers_cache:
                     carriers_cache[carrier_name] = get_carrier_id(cur, carrier_name)
-                carrier_id = carriers_cache[carrier_name]
+                id_transportista = carriers_cache[carrier_name]
 
-                if not carrier_id:
+                if not id_transportista:
                     errors.append(f"Linea {line_num}: carrier '{carrier_name}' no existe en BD")
                     continue
 
@@ -161,18 +161,18 @@ def import_from_csv(in_path, dry_run=False):
 
                 # Buscar registro existente por clave unica
                 cur.execute("""
-                    SELECT id FROM carrier_rates
-                    WHERE carrier_id = %s AND service_name = %s AND rate_type = %s
+                    SELECT id FROM tarifas_transportista
+                    WHERE id_transportista = %s AND nombre_servicio = %s AND tipo_tarifa = %s
                       AND zona = %s AND peso_min = %s AND peso_max = %s
                       AND vigencia_desde = %s
                     LIMIT 1
-                """, (carrier_id, service, rate_type, zona, peso_min, peso_max, desde))
+                """, (id_transportista, service, rate_type, zona, peso_min, peso_max, desde))
                 existing = cur.fetchone()
 
                 if existing:
                     if not dry_run:
                         cur.execute("""
-                            UPDATE carrier_rates
+                            UPDATE tarifas_transportista
                             SET precio_base = %s, vigencia_hasta = %s
                             WHERE id = %s
                         """, (precio, hasta, existing[0]))
@@ -180,11 +180,11 @@ def import_from_csv(in_path, dry_run=False):
                 else:
                     if not dry_run:
                         cur.execute("""
-                            INSERT INTO carrier_rates
-                            (carrier_id, service_name, rate_type, zona, peso_min, peso_max,
+                            INSERT INTO tarifas_transportista
+                            (id_transportista, nombre_servicio, tipo_tarifa, zona, peso_min, peso_max,
                              precio_base, vigencia_desde, vigencia_hasta)
                             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                        """, (carrier_id, service, rate_type, zona, peso_min, peso_max,
+                        """, (id_transportista, service, rate_type, zona, peso_min, peso_max,
                               precio, desde, hasta))
                     new_count += 1
 

@@ -113,7 +113,7 @@ function renderPedidosPanel() {
     rutas.forEach(r => {
       const n = r.pedidos.length;
       // Comprobar si ya existe hoja para esta ruta
-      const hojaExiste = hojasData.hojas.some(h => parseInt(h.ruta_id) === r.ruta_id);
+      const hojaExiste = hojasData.hojas.some(h => parseInt(h.id_ruta) === r.id_ruta);
       const badge = hojaExiste
         ? '<span style="color:#2d7d2d;font-size:9px" title="Hoja ya generada"> ✓</span>'
         : '<span style="color:var(--accent2);font-size:9px" title="Hoja sin generar"> ○</span>';
@@ -288,7 +288,7 @@ function renderHojasList() {
 
 async function quickCreateHoja(rutaId) {
   try {
-    const hoja = await api('hojas-ruta', 'POST', { ruta_id: rutaId, fecha: getHrDate() });
+    const hoja = await api('hojas-ruta', 'POST', { id_ruta: rutaId, fecha: getHrDate() });
     await loadHojasRuta();
     await openHojaDetail(hoja.id);
     showToast('Hoja abierta');
@@ -316,7 +316,7 @@ async function createHoja() {
   if (!rutaId) return showToast('Selecciona una ruta');
   try {
     const hoja = await api('hojas-ruta', 'POST', {
-      ruta_id: parseInt(rutaId),
+      id_ruta: parseInt(rutaId),
       fecha: getHrDate(),
       responsable: document.getElementById('hrNewResp').value,
       notas: document.getElementById('hrNewNotas').value,
@@ -353,8 +353,8 @@ async function openHojaDetail(id) {
 
   await loadComerciales();
 
-  document.getElementById('hrListView').style.display = 'none';
-  document.getElementById('hrDetailView').style.display = 'flex';
+  document.getElementById('hrListView').classList.add('d-none');
+  document.getElementById('hrDetailView').classList.remove('d-none');
   const hrClientSearch = document.getElementById('hrClientSearch');
   if (hrClientSearch) hrClientSearch.value = '';
   currentHoja = applyLastGlsPlanToHoja(currentHoja);
@@ -380,8 +380,8 @@ function closeHojaDetail() {
   hrOsrmGeometry = null;
   hrRouteDistance = null;
   hrRouteDuration = null;
-  document.getElementById('hrDetailView').style.display = 'none';
-  document.getElementById('hrListView').style.display = 'flex';
+  document.getElementById('hrDetailView').classList.add('d-none');
+  document.getElementById('hrListView').classList.remove('d-none');
   drawMap();
 }
 
@@ -414,14 +414,14 @@ function renderHojaLineas() {
 
 function getHojaGlsSummary(hoja) {
   const lineas = getHojaActiveLineas(hoja);
-  const ownRoute = lineas.filter(l => getEffectiveLineaRecommendation(l) === 'own_route').length;
-  const externalize = lineas.filter(l => getEffectiveLineaRecommendation(l) === 'externalize').length;
-  const breakEven = lineas.filter(l => getEffectiveLineaRecommendation(l) === 'break_even').length;
-  const unavailable = lineas.filter(l => getEffectiveLineaRecommendation(l) === 'unavailable' || (!getEffectiveLineaRecommendation(l) && !hasLineaCostData(l))).length;
+  const ownRoute = lineas.filter(l => getEffectiveLineaRecommendation(l) === 'ruta_propia').length;
+  const externalize = lineas.filter(l => getEffectiveLineaRecommendation(l) === 'externalizar').length;
+  const breakEven = lineas.filter(l => getEffectiveLineaRecommendation(l) === 'equilibrio').length;
+  const unavailable = lineas.filter(l => getEffectiveLineaRecommendation(l) === 'no_disponible' || (!getEffectiveLineaRecommendation(l) && !hasLineaCostData(l))).length;
   let savings = lineas.reduce((sum, line) => {
-    if (getEffectiveLineaRecommendation(line) !== 'externalize') return sum;
-    if (line.cost_own_route === null || line.cost_gls_adjusted === null) return sum;
-    return sum + Math.max(0, numVal(line.cost_own_route) - numVal(line.cost_gls_adjusted));
+    if (getEffectiveLineaRecommendation(line) !== 'externalizar') return sum;
+    if (line.coste_ruta_propia === null || line.coste_gls_ajustado === null) return sum;
+    return sum + Math.max(0, numVal(line.coste_ruta_propia) - numVal(line.coste_gls_ajustado));
   }, 0);
 
   // Datos del ultimo calculo del backend (solo si pertenecen a esta hoja)
@@ -528,7 +528,7 @@ function renderHojaGlsSummary(hoja, isComercialView) {
   let note = 'La comparativa se refresca sola al cambiar clientes, orden o vehiculo.';
   if (!summary.total) {
     note = 'Anade carros o cajas para que la hoja compare ruta propia frente a paqueteria.';
-  } else if (!hoja.vehicle_id) {
+  } else if (!hoja.id_vehiculo) {
     note = 'Asigna un vehiculo para poder medir el coste real de la ruta propia.';
   } else if (hrGlsAutoCalcRunning) {
     note = 'Actualizando automaticamente la comparativa de paqueteria...';
@@ -547,8 +547,16 @@ function renderHojaGlsSummary(hoja, isComercialView) {
         <div class="hr-gls-card-sub">${esc(formatMoney(summary.totalRouteCost))}</div>
       </div>`
     : '';
-  const savingsLabel = summary.systemSavingsLabel || 'Ahorro potencial';
+  // L5: distinguir visualmente entre "ahorro marginal estimado" (suma de marginales individuales,
+  // que se solapan) y "ahorro real" (consolidado con la combinatoria/greedy). Si el cálculo no
+  // ha producido un coste real, se etiqueta como "marginal" y se acompaña de tooltip explicativo.
+  const rawSavingsLabel = summary.systemSavingsLabel || 'Ahorro potencial';
+  const isMarginalSavings = (rawSavingsLabel === 'Ahorro potencial');
+  const savingsLabel = isMarginalSavings ? 'Ahorro marginal estimado' : rawSavingsLabel;
   const savingsValue = numVal(summary.systemSavings ?? summary.savings);
+  const savingsCardTip = isMarginalSavings
+    ? 'Suma de los ahorros marginales de cada cliente. ATENCION: los desvíos se solapan, así que esta cifra puede ser MAYOR que el ahorro real al externalizar varios clientes a la vez. Para obtener el ahorro real del conjunto óptimo, ejecuta el cálculo GLS desde el botón superior (lanza la búsqueda combinatoria/greedy).'
+    : 'Ahorro real consolidado: coste de la ruta completa con flota propia menos coste del subconjunto óptimo a externalizar más coste de los clientes que quedan en ruta. Calculado por la búsqueda combinatoria o greedy.';
 
   let optimizationBanner = '';
   if (summary.optimizationUsed === 'combinatorial' || summary.optimizationUsed === 'greedy') {
@@ -592,8 +600,8 @@ function renderHojaGlsSummary(hoja, isComercialView) {
         <div class="hr-gls-card-label">Compensa paqueteria</div>
         <div class="hr-gls-card-value warn">${esc(String(summary.externalize))}</div>
       </div>
-      <div class="hr-gls-card">
-        <div class="hr-gls-card-label">${esc(savingsLabel)}</div>
+      <div class="hr-gls-card" title="${esc(savingsCardTip)}">
+        <div class="hr-gls-card-label">${esc(savingsLabel)}${isMarginalSavings ? ' (con solape)' : ''}</div>
         <div class="hr-gls-card-value">${esc(formatMoney(savingsValue))}</div>
       </div>
     </div>
@@ -616,7 +624,7 @@ function scheduleHojaGlsAutoCalc(force = false, delay = 500) {
     return;
   }
 
-  if (!currentHoja.vehicle_id) {
+  if (!currentHoja.id_vehiculo) {
     if (status) status.textContent = 'Asigna vehiculo para comparar paqueteria';
     renderHojaGlsSummary(currentHoja, false);
     return;
@@ -654,7 +662,7 @@ function renderHojaDetailLegacy() {
       calcStatus.textContent = '';
     } else if (!getHojaActiveLineas(h).length) {
       calcStatus.textContent = 'Anade carga real para comparar paqueteria';
-    } else if (!h.vehicle_id) {
+    } else if (!h.id_vehiculo) {
       calcStatus.textContent = 'Asigna vehiculo para comparar paqueteria';
     } else if ((h.lineas || []).some(hasLineaCostData)) {
       calcStatus.textContent = hrGlsAutoCalcRunning ? 'Actualizando comparativa de paqueteria...' : 'Comparativa de paqueteria al dia';
@@ -672,7 +680,7 @@ function renderHojaDetailLegacy() {
       options.push(`<option value="${v.id}">${label}</option>`);
     });
     vehicleSel.innerHTML = options.join('');
-    vehicleSel.value = h.vehicle_id ? String(h.vehicle_id) : '';
+    vehicleSel.value = h.id_vehiculo ? String(h.id_vehiculo) : '';
   }
   const allLineas = getHojaVisibleLineas(h, isComercialView);
   const query = (hrClientSearchQuery || '').trim();
@@ -699,7 +707,7 @@ function renderHojaDetailLegacy() {
     const num = l.orden_descarga || (i + 1);
     const estadoCls = l.estado === 'entregado' || l.estado === 'cancelado' ? l.estado : '';
     const estadoIcon = l.estado === 'entregado' ? '&#10004;' : l.estado === 'cancelado' ? '&#10008;' : l.estado === 'no_entregado' ? '!' : '';
-    const cl = clients.find(c => c.id === parseInt(l.client_id));
+    const cl = clients.find(c => c.id === parseInt(l.id_cliente));
     const contado = cl?.al_contado ? '<span style="color:var(--danger);font-size:9px;font-weight:700;flex-shrink:0">CTD</span>' : '';
     const rowOnClick = isComercialView ? '' : ` onclick="openEditLineaModal(${l.id})"`;
     const handleHtml = isComercialView ? '' : '<span class="hr-linea-handle" data-sortable-handle>&#9776;</span>';
@@ -709,19 +717,19 @@ function renderHojaDetailLegacy() {
           <input type="number" value="${numVal(l.cajas) > 0 ? formatQty(l.cajas) : ''}" min="0" step="1" placeholder="Cajas" onclick="event.stopPropagation()" onchange="updateHojaLineaCantidad(${l.id}, 'cajas', this.value)" style="width:88px;text-align:right;padding:4px 6px;font-size:11px;border-radius:6px">
         </div>`
       : `<span class="hr-linea-cc"${hojaLineaHasCarga(l) ? '' : ' style="color:var(--text-dim)"'}>${esc(hojaLineaHasCarga(l) ? formatLineaUnits(l) : 'Sin carga')}</span>`;
-    const carrierLabel = esc(l.gls_service || 'Paqueteria');
+    const carrierLabel = esc(l.servicio_gls || 'Paqueteria');
     const meta = glsRecommendationMeta(getEffectiveLineaRecommendation(l));
-    const note = friendlyGlsNote(l.gls_notes);
+    const note = friendlyGlsNote(l.notas_gls);
     const effectiveNote = getEffectiveLineaRecommendationNote(l);
-    const simCheckbox = !isComercialView && hojaLineaHasCarga(l) && l.cost_gls_adjusted !== null
+    const simCheckbox = !isComercialView && hojaLineaHasCarga(l) && l.coste_gls_ajustado !== null
       ? renderSimulationCheckbox(l)
       : '';
     const costHtml = !isComercialView && hasLineaCostData(l)
       ? `<div class="hr-linea-costs">
           ${simCheckbox}
-          <span class="hr-linea-cost-item" title="Km extra que anade este cliente a la ruta">+${l.detour_km !== null ? esc(formatQty(l.detour_km)) : '—'} km</span>
-          <span class="hr-linea-cost-item" title="Lo que ahorras si externalizas este cliente. Calculado como km marginales (los que se añaden a la ruta por incluirlo) x coste/km del vehiculo.">Coste extra: ${l.cost_own_route !== null ? esc(formatMoney(l.cost_own_route)) : '—'}</span>
-          <span class="hr-linea-cost-item">${carrierLabel} ${l.cost_gls_adjusted !== null ? esc(formatMoney(l.cost_gls_adjusted)) : '—'}</span>
+          <span class="hr-linea-cost-item" title="Km extra que anade este cliente a la ruta">+${l.desvio_km !== null ? esc(formatQty(l.desvio_km)) : '—'} km</span>
+          <span class="hr-linea-cost-item" title="Lo que ahorras si externalizas SOLO este cliente. Calculado como km marginales (los que se añaden a la ruta por incluirlo) x coste/km del vehiculo. OJO: los desvíos de varios clientes se solapan, así que la suma de costes extra individuales NO es el coste extra de quitarlos a todos a la vez. Para el ahorro real del conjunto, mira la card 'Ahorro' del resumen.">Coste extra: ${l.coste_ruta_propia !== null ? esc(formatMoney(l.coste_ruta_propia)) : '—'}</span>
+          <span class="hr-linea-cost-item">${carrierLabel} ${l.coste_gls_ajustado !== null ? esc(formatMoney(l.coste_gls_ajustado)) : '—'}</span>
           <span class="hr-linea-cost-item reco-${meta.cls}">${esc(meta.label)}</span>
           ${note ? `<span class="hr-linea-cost-item reco-unavailable">${esc(note)}</span>` : ''}
         </div>`
@@ -737,12 +745,13 @@ function renderHojaDetailLegacy() {
       <div class="hr-linea-body">
         <div class="hr-linea-row1">
           <span class="hr-linea-name">${esc(l.client_name)}</span>
+          ${cl?.fiscal_name && cl.fiscal_name.toLowerCase() !== l.client_name.toLowerCase() ? `<span class="hr-linea-fiscal">${esc(cl.fiscal_name)}</span>` : ''}
           ${contado}
           ${cantidadHtml}
           <span class="hr-linea-estado">${estadoIcon}</span>
         </div>
         <div class="hr-linea-row2">
-          <span class="hr-linea-zona">${esc(l.zona || '')}</span>
+          <span class="hr-linea-zona">${esc(l.zona || '')}${l.direccion_descripcion ? ' (' + esc(l.direccion_descripcion) + ')' : ''}</span>
           <span class="hr-linea-com">${esc(l.comercial_name || '')}</span>
         </div>
         ${renderedCostHtml}
@@ -804,7 +813,7 @@ function renderHojaDetail() {
       calcStatus.textContent = '';
     } else if (!getHojaActiveLineas(h).length) {
       calcStatus.textContent = 'Anade carga real para comparar paqueteria';
-    } else if (!h.vehicle_id) {
+    } else if (!h.id_vehiculo) {
       calcStatus.textContent = 'Asigna vehiculo para comparar paqueteria';
     } else if ((h.lineas || []).some(hasLineaCostData)) {
       calcStatus.textContent = hrGlsAutoCalcRunning ? 'Actualizando comparativa de paqueteria...' : 'Comparativa de paqueteria al dia';
@@ -841,7 +850,7 @@ function renderHojaDetail() {
     const num = l.orden_descarga || (i + 1);
     const estadoCls = l.estado === 'entregado' || l.estado === 'cancelado' ? l.estado : '';
     const estadoIcon = l.estado === 'entregado' ? '&#10004;' : l.estado === 'cancelado' ? '&#10008;' : l.estado === 'no_entregado' ? '!' : '';
-    const cl = clients.find(c => c.id === parseInt(l.client_id, 10));
+    const cl = clients.find(c => c.id === parseInt(l.id_cliente, 10));
     const contado = cl?.al_contado ? '<span style="color:var(--danger);font-size:9px;font-weight:700;flex-shrink:0">CTD</span>' : '';
     const rowOnClick = isComercialView ? '' : ` onclick="openEditLineaModal(${l.id})"`;
     const handleHtml = isComercialView ? '' : '<span class="hr-linea-handle" data-sortable-handle>&#9776;</span>';
@@ -852,17 +861,17 @@ function renderHojaDetail() {
         </div>`
       : `<span class="hr-linea-cc"${hojaLineaHasCarga(l) ? '' : ' style="color:var(--text-dim)"'}>${esc(hojaLineaHasCarga(l) ? formatLineaUnits(l) : 'Sin carga')}</span>`;
     const meta = glsRecommendationMeta(getEffectiveLineaRecommendation(l));
-    const note = friendlyGlsNote(l.gls_notes);
+    const note = friendlyGlsNote(l.notas_gls);
     const effectiveNote = getEffectiveLineaRecommendationNote(l);
-    const simCheckbox = !isComercialView && hojaLineaHasCarga(l) && l.cost_gls_adjusted !== null
+    const simCheckbox = !isComercialView && hojaLineaHasCarga(l) && l.coste_gls_ajustado !== null
       ? renderSimulationCheckbox(l)
       : '';
     const costHtml = !isComercialView && hasLineaCostData(l)
       ? `<div class="hr-linea-costs">
           ${simCheckbox}
-          <span class="hr-linea-cost-item" title="Km extra que anade este cliente a la ruta">+${l.detour_km !== null ? esc(formatQty(l.detour_km)) : '-'} km</span>
-          <span class="hr-linea-cost-item" title="Lo que ahorras si externalizas este cliente. Calculado como km marginales (los que se añaden a la ruta por incluirlo) x coste/km del vehiculo.">Coste extra: ${l.cost_own_route !== null ? esc(formatMoney(l.cost_own_route)) : '-'}</span>
-          <span class="hr-linea-cost-item">${esc(l.gls_service || 'Paqueteria')} ${l.cost_gls_adjusted !== null ? esc(formatMoney(l.cost_gls_adjusted)) : '-'}</span>
+          <span class="hr-linea-cost-item" title="Km extra que anade este cliente a la ruta">+${l.desvio_km !== null ? esc(formatQty(l.desvio_km)) : '-'} km</span>
+          <span class="hr-linea-cost-item" title="Lo que ahorras si externalizas SOLO este cliente. Calculado como km marginales (los que se añaden a la ruta por incluirlo) x coste/km del vehiculo. OJO: los desvíos de varios clientes se solapan, así que la suma de costes extra individuales NO es el coste extra de quitarlos a todos a la vez. Para el ahorro real del conjunto, mira la card 'Ahorro' del resumen.">Coste extra: ${l.coste_ruta_propia !== null ? esc(formatMoney(l.coste_ruta_propia)) : '-'}</span>
+          <span class="hr-linea-cost-item">${esc(l.servicio_gls || 'Paqueteria')} ${l.coste_gls_ajustado !== null ? esc(formatMoney(l.coste_gls_ajustado)) : '-'}</span>
           <span class="hr-linea-cost-item reco-${meta.cls}">${esc(meta.label)}</span>
           ${note ? `<span class="hr-linea-cost-item reco-unavailable">${esc(note)}</span>` : ''}
         </div>`
@@ -878,12 +887,13 @@ function renderHojaDetail() {
       <div class="hr-linea-body">
         <div class="hr-linea-row1">
           <span class="hr-linea-name">${esc(l.client_name)}</span>
+          ${cl?.fiscal_name && cl.fiscal_name.toLowerCase() !== l.client_name.toLowerCase() ? `<span class="hr-linea-fiscal">${esc(cl.fiscal_name)}</span>` : ''}
           ${contado}
           ${cantidadHtml}
           <span class="hr-linea-estado">${estadoIcon}</span>
         </div>
         <div class="hr-linea-row2">
-          <span class="hr-linea-zona">${esc(l.zona || '')}</span>
+          <span class="hr-linea-zona">${esc(l.zona || '')}${l.direccion_descripcion ? ' (' + esc(l.direccion_descripcion) + ')' : ''}</span>
           <span class="hr-linea-com">${esc(l.comercial_name || '')}</span>
         </div>
         ${renderedCostHtml}
@@ -962,7 +972,7 @@ async function calculateHojaGlsCosts(force = true, opts = {}) {
     renderHojaGlsSummary(currentHoja, false);
 
     const calcResult = await api('shipping-costs/calculate', 'POST', {
-      hoja_ruta_id: hojaId,
+      id_hoja_ruta: hojaId,
       force: force ? 1 : 0,
     });
     lastGlsCalcResult = {
@@ -1020,7 +1030,7 @@ function isLineaSimExternalized(linea) {
   if (!linea) return false;
   const id = parseInt(linea.id, 10);
   const override = simulationOverrides[id];
-  if (override === 'externalize') return true;
+  if (override === 'externalizar') return true;
   if (override === 'fleet') return false;
   // Sin override: respetar la recomendacion del sistema
   return isExternalizeRecommendation(getEffectiveLineaRecommendation(linea));
@@ -1037,7 +1047,7 @@ function renderSimulationCheckbox(linea) {
 function onSimulationToggle(lineaId, isChecked) {
   const id = parseInt(lineaId, 10);
   if (!Number.isFinite(id)) return;
-  simulationOverrides[id] = isChecked ? 'externalize' : 'fleet';
+  simulationOverrides[id] = isChecked ? 'externalizar' : 'fleet';
   if (simulationDebounceTimer) clearTimeout(simulationDebounceTimer);
   simulationDebounceTimer = setTimeout(() => {
     simulationDebounceTimer = null;
@@ -1047,14 +1057,14 @@ function onSimulationToggle(lineaId, isChecked) {
 
 function buildSimulationFleetClientIds() {
   if (!currentHoja) return { fleetClientIds: [], externalizedLineas: [] };
-  const lineas = getHojaActiveLineas(currentHoja).filter(l => l.cost_gls_adjusted !== null);
+  const lineas = getHojaActiveLineas(currentHoja).filter(l => l.coste_gls_ajustado !== null);
   const fleetClientIds = [];
   const externalizedLineas = [];
   lineas.forEach(l => {
     if (isLineaSimExternalized(l)) {
       externalizedLineas.push(l);
     } else {
-      fleetClientIds.push(parseInt(l.client_id, 10));
+      fleetClientIds.push(parseInt(l.id_cliente, 10));
     }
   });
   return { fleetClientIds, externalizedLineas, lineas };
@@ -1073,10 +1083,10 @@ async function recalcSimulationLive() {
   simulationInFlight = true;
   try {
     const result = await api('shipping-costs/simulate', 'POST', {
-      hoja_ruta_id: hojaId,
+      id_hoja_ruta: hojaId,
       client_ids_in_fleet: fleetClientIds,
     });
-    const glsTotal = externalizedLineas.reduce((sum, l) => sum + numVal(l.cost_gls_adjusted), 0);
+    const glsTotal = externalizedLineas.reduce((sum, l) => sum + numVal(l.coste_gls_ajustado), 0);
     lastSimResult = {
       hojaId,
       fleet_km: numVal(result?.fleet_km),
@@ -1117,7 +1127,7 @@ function renderSimulationPanel() {
     el.innerHTML = '';
     return;
   }
-  const lineas = getHojaActiveLineas(currentHoja).filter(l => l.cost_gls_adjusted !== null);
+  const lineas = getHojaActiveLineas(currentHoja).filter(l => l.coste_gls_ajustado !== null);
   if (!lineas.length) {
     el.style.display = 'none';
     el.innerHTML = '';
@@ -1180,7 +1190,7 @@ async function changeHojaEstado(estado) {
   if (!currentHoja) return;
   const prevEstado = currentHoja.estado;
   const estadoSel = document.getElementById('hrEstadoSel');
-  if (estado === 'cerrada' && !currentHoja.vehicle_id) {
+  if (estado === 'cerrada' && !currentHoja.id_vehiculo) {
     showToast('Asigna un vehiculo antes de cerrar la ruta');
     if (estadoSel) estadoSel.value = prevEstado;
     document.getElementById('hrVehicleSearch')?.focus();
@@ -1221,8 +1231,8 @@ function renderHojaVehicleSearch() {
 
   list.innerHTML = vehicles.map(v => `<option value="${esc(getHojaVehicleLabel(v))}"></option>`).join('');
 
-  const selectedVehicle = currentHoja?.vehicle_id
-    ? vehicles.find(v => parseInt(v.id, 10) === parseInt(currentHoja.vehicle_id, 10))
+  const selectedVehicle = currentHoja?.id_vehiculo
+    ? vehicles.find(v => parseInt(v.id, 10) === parseInt(currentHoja.id_vehiculo, 10))
     : null;
 
   input.value = selectedVehicle ? getHojaVehicleLabel(selectedVehicle) : '';
@@ -1269,7 +1279,7 @@ async function submitHojaVehicleSearch() {
     return;
   }
 
-  if (parseInt(currentHoja.vehicle_id || 0, 10) === parseInt(matchedVehicle.id, 10)) {
+  if (parseInt(currentHoja.id_vehiculo || 0, 10) === parseInt(matchedVehicle.id, 10)) {
     input.value = getHojaVehicleLabel(matchedVehicle);
     hidden.value = String(matchedVehicle.id);
     return;
@@ -1289,7 +1299,7 @@ async function changeHojaVehicle(vehicleId) {
   }
 
   try {
-    currentHoja = await api('hojas-ruta/' + currentHoja.id, 'PUT', { vehicle_id: normalizedVehicleId });
+    currentHoja = await api('hojas-ruta/' + currentHoja.id, 'PUT', { id_vehiculo: normalizedVehicleId });
     await loadHojasRuta();
     renderHojaDetail();
     scheduleHojaGlsAutoCalc(false, 250);
@@ -1336,8 +1346,8 @@ async function fetchHojaOSRMRoute() {
   // Buscar la delegación más común entre los clientes de la hoja
   const delCount = {};
   lineas.forEach(l => {
-    const cl = clients.find(c => c.id === parseInt(l.client_id));
-    if (cl && cl.delegation_id) delCount[cl.delegation_id] = (delCount[cl.delegation_id] || 0) + 1;
+    const cl = clients.find(c => c.id === parseInt(l.id_cliente));
+    if (cl && cl.id_delegacion) delCount[cl.id_delegacion] = (delCount[cl.id_delegacion] || 0) + 1;
   });
   let bestDelId = null;
   let bestDelN = 0;
@@ -1461,8 +1471,8 @@ function openAddLineaModal() {
 function closeAddLineaModal() { closeModal('hrAddLineaModal'); }
 
 function filterLineaClients(q) {
-  const existingIds = new Set((currentHoja?.lineas || []).map(l => parseInt(l.client_id)));
-  const rutaId = currentHoja?.ruta_id;
+  const existingIds = new Set((currentHoja?.lineas || []).map(l => parseInt(l.id_cliente)));
+  const rutaId = currentHoja?.id_ruta;
   const userComercialIds = getUserComercialIds();
   q = q.toLowerCase();
 
@@ -1479,7 +1489,7 @@ function filterLineaClients(q) {
   const otherClients = visibleClients.filter(c => !clientHasRuta(c) && !existingIds.has(c.id));
 
   let filtered = [...rutaClients, ...otherClients];
-  if (q) filtered = filtered.filter(c => c.name.toLowerCase().includes(q) || (c.addr || '').toLowerCase().includes(q));
+  if (q) filtered = filtered.filter(c => c.name.toLowerCase().includes(q) || (c.fiscal_name || '').toLowerCase().includes(q) || (c.addr || '').toLowerCase().includes(q));
   filtered = filtered.slice(0, 50);
 
   const el = document.getElementById('hrLineaClientList');
@@ -1496,11 +1506,22 @@ function filterLineaClients(q) {
     const inHojaBadge = alreadyIn ? ' <span style="font-size:9px;background:#2563eb;color:#fff;padding:1px 5px;border-radius:3px;vertical-align:middle">En hoja</span>' : '';
     const contadoChecked = c.al_contado ? 'checked' : '';
     const addr = c.addr ? '<div style="font-size:10px;color:var(--text-dim);margin-top:2px;word-break:break-word">' + esc(c.addr) + '</div>' : '';
+    // Selector de direccion si el cliente tiene multiples direcciones
+    const dirs = c.direcciones || [];
+    let addrSelect = '';
+    if (dirs.length > 1 && !alreadyIn) {
+      addrSelect = '<div onclick="event.stopPropagation()" style="margin-top:3px"><select data-addr-client="' + c.id + '" style="font-size:10px;padding:2px 4px;width:100%;border-radius:4px">' +
+        dirs.map(d => {
+          const dLabel = d.descripcion ? esc(d.descripcion) : esc([d.direccion, d.localidad].filter(Boolean).join(', '));
+          return '<option value="' + d.id + '"' + (d.principal == 1 ? ' selected' : '') + '>' + dLabel + (d.principal == 1 ? ' \u2605' : '') + '</option>';
+        }).join('') + '</select></div>';
+    }
     return '<div class="hr-add-client-item" style="' + dimStyle + '" ' + (alreadyIn ? '' : 'onclick="toggleLineaClient(' + c.id + ', this)"') + '>' +
       '<input type="checkbox" ' + checked + ' ' + disabled + ' ' + (alreadyIn ? '' : 'onclick="event.stopPropagation();toggleLineaClient(' + c.id + ', this.parentElement)"') + ' style="flex-shrink:0;width:16px;height:16px;margin-top:2px">' +
       '<div style="flex:1;min-width:0;overflow:hidden">' +
         '<div style="font-weight:600;font-size:12px;word-break:break-word">' + esc(c.name) + inHojaBadge + '</div>' +
         addr +
+        addrSelect +
       '</div>' +
       (alreadyIn ? '' : '<label onclick="event.stopPropagation()" style="display:flex;align-items:center;gap:4px;flex-shrink:0;cursor:pointer;font-size:9px;color:var(--danger);font-weight:700;white-space:nowrap;margin-top:2px">' +
         '<input type="checkbox" ' + contadoChecked + ' onchange="toggleContado(' + c.id + ', this.checked)" style="width:13px;height:13px;accent-color:var(--danger)"> CTD' +
@@ -1531,9 +1552,13 @@ async function addLineasToHoja() {
     for (const clientId of lineaSelectedClients) {
       const client = clients.find(c => c.id === clientId);
       const clientComercialId = pickClientCommercialId(client, userComercialIds);
+      // Obtener direccion seleccionada si el cliente tiene multiples
+      const addrSel = document.querySelector('select[data-addr-client="' + clientId + '"]');
+      const idDireccion = addrSel ? addrSel.value : null;
       await api('hojas-ruta/' + currentHoja.id + '/lineas', 'POST', {
-        client_id: clientId,
-        comercial_id: clientComercialId || defaultUserComercialId || null,
+        id_cliente: clientId,
+        id_comercial: clientComercialId || defaultUserComercialId || null,
+        id_direccion: idDireccion || null,
         carros: numVal(carros),
         cajas: numVal(cajas),
         zona: client?.addr || '',
@@ -1562,7 +1587,7 @@ function openEditLineaModal(lineaId) {
   loadComerciales().then(() => {
     const comSel = document.getElementById('hrEditComercial');
     comSel.innerHTML = '<option value="">—</option>' + comerciales.map(c =>
-      `<option value="${c.id}" ${parseInt(linea.comercial_id) === c.id ? 'selected' : ''}>${esc(c.name)}</option>`
+      `<option value="${c.id}" ${parseInt(linea.id_comercial) === c.id ? 'selected' : ''}>${esc(c.name)}</option>`
     ).join('');
   });
 
@@ -1573,6 +1598,24 @@ function openEditLineaModal(lineaId) {
   document.getElementById('hrEditZona').value = linea.zona || '';
   document.getElementById('hrEditObs').value = linea.observaciones || '';
   document.getElementById('hrEditEstado').value = linea.estado || 'pendiente';
+  // Selector de direccion de entrega
+  const cl = clients.find(c => c.id === parseInt(linea.id_cliente, 10));
+  const dirs = cl?.direcciones || [];
+  const editDirWrap = document.getElementById('hrEditDireccionWrap');
+  const editDirSel = document.getElementById('hrEditDireccion');
+  if (editDirWrap && editDirSel) {
+    if (dirs.length > 1) {
+      editDirWrap.style.display = '';
+      editDirSel.innerHTML = dirs.map(d => {
+        const dLabel = d.descripcion ? esc(d.descripcion) : esc([d.direccion, d.localidad].filter(Boolean).join(', '));
+        const selected = linea.id_direccion == d.id ? ' selected' : (d.principal == 1 && !linea.id_direccion ? ' selected' : '');
+        return '<option value="' + d.id + '"' + selected + '>' + dLabel + (d.principal == 1 ? ' \u2605' : '') + '</option>';
+      }).join('');
+    } else {
+      editDirWrap.style.display = 'none';
+      editDirSel.innerHTML = '<option value="">Direccion principal</option>';
+    }
+  }
   document.getElementById('hrEditLineaModal').classList.add('open');
 }
 function closeEditLineaModal() { closeModal('hrEditLineaModal'); }
@@ -1582,7 +1625,8 @@ async function saveEditLinea() {
   if (!lineaId || !currentHoja) return;
   try {
     currentHoja = await api('hojas-ruta/' + currentHoja.id + '/lineas/' + lineaId, 'PUT', {
-      comercial_id: document.getElementById('hrEditComercial').value || null,
+      id_comercial: document.getElementById('hrEditComercial').value || null,
+      id_direccion: document.getElementById('hrEditDireccion')?.value || null,
       carros: numVal(document.getElementById('hrEditCarros').value),
       cajas: numVal(document.getElementById('hrEditCajas').value),
       zona: document.getElementById('hrEditZona').value,
@@ -1701,8 +1745,8 @@ function drawHojaOnMap() {
     const units = formatLineaUnits(l);
     const tooltip = l.client_name + (units ? ' (' + units + ')' : '');
     // Ocultar el marker general de este cliente si existe
-    if (clientMarkerMap[l.client_id]) {
-      map.removeLayer(clientMarkerMap[l.client_id]);
+    if (clientMarkerMap[l.id_cliente]) {
+      map.removeLayer(clientMarkerMap[l.id_cliente]);
     }
     const marker = L.marker([lat, lng], { icon: clientIcon('#2563eb', num), zIndexOffset: 900 })
       .bindTooltip(tooltip, { direction: 'top', offset: [0, -12] })
@@ -1730,8 +1774,8 @@ function printHoja() {
   if (!currentHoja) return;
   const h = currentHoja;
   const lineas = getHojaActiveLineas(h);
-  const hasCostColumns = lineas.some(l => l.cost_own_route !== null || l.cost_gls_adjusted !== null || l.gls_recommendation);
-  const externalizable = lineas.filter(l => getEffectiveLineaRecommendation(l) === 'externalize' && l.cost_gls_adjusted !== null);
+  const hasCostColumns = lineas.some(l => l.coste_ruta_propia !== null || l.coste_gls_ajustado !== null || l.recomendacion_gls);
+  const externalizable = lineas.filter(l => getEffectiveLineaRecommendation(l) === 'externalizar' && l.coste_gls_ajustado !== null);
   const summary = getHojaGlsSummary(h);
   const showPlanSummary = hasCostColumns && (
     externalizable.length > 0
@@ -1747,7 +1791,7 @@ function printHoja() {
 
   let rows = lineas.map((l, i) => {
     const num = l.orden_descarga || (i + 1);
-    const cl = clients.find(c => c.id === parseInt(l.client_id));
+    const cl = clients.find(c => c.id === parseInt(l.id_cliente));
     const contado = cl?.al_contado ? ' <span style="color:red;font-weight:700">[CTD]</span>' : '';
     const meta = glsRecommendationMeta(getEffectiveLineaRecommendation(l));
     return `<tr>
@@ -1757,8 +1801,8 @@ function printHoja() {
       <td>${esc(l.comercial_name || '')}</td>
       <td style="text-align:center">${numVal(l.carros) > 0 ? formatQty(l.carros) : ''}</td>
       <td style="text-align:center">${numVal(l.cajas) > 0 ? formatQty(l.cajas) : ''}</td>
-      ${hasCostColumns ? `<td style="text-align:right">${l.cost_own_route !== null ? esc(formatMoney(l.cost_own_route)) : '—'}</td>` : ''}
-      ${hasCostColumns ? `<td style="text-align:right">${l.cost_gls_adjusted !== null ? esc(formatMoney(l.cost_gls_adjusted)) : '—'}</td>` : ''}
+      ${hasCostColumns ? `<td style="text-align:right">${l.coste_ruta_propia !== null ? esc(formatMoney(l.coste_ruta_propia)) : '—'}</td>` : ''}
+      ${hasCostColumns ? `<td style="text-align:right">${l.coste_gls_ajustado !== null ? esc(formatMoney(l.coste_gls_ajustado)) : '—'}</td>` : ''}
       ${hasCostColumns ? `<td>${esc(meta.label)}</td>` : ''}
       <td></td>
       <td>${esc(l.observaciones || '')}</td>
@@ -1793,7 +1837,7 @@ function printHoja() {
   ${showPlanSummary ? `<div style="margin-top:16px;font-size:11px">
     <div style="font-weight:700;margin-bottom:6px">${esc(planHeadline)}</div>
     ${externalizable.length
-      ? externalizable.map(line => `<div>- ${esc(line.client_name)} - GLS ${esc(formatMoney(numVal(line.cost_gls_adjusted)))}</div>`).join('')
+      ? externalizable.map(line => `<div>- ${esc(line.client_name)} - GLS ${esc(formatMoney(numVal(line.coste_gls_ajustado)))}</div>`).join('')
       : `<div>${summary.globalRecommendation === 'externalize_all'
         ? 'La hoja completa sale mejor por paqueteria.'
         : summary.globalRecommendation === 'do_route'
@@ -1822,7 +1866,7 @@ function exportHojaHtml() {
 
   let rows = lineas.map((l, i) => {
     const num = l.orden_descarga || (i + 1);
-    const cl = clients.find(c => c.id === parseInt(l.client_id));
+    const cl = clients.find(c => c.id === parseInt(l.id_cliente));
     const contado = cl?.al_contado ? ' <span style="color:#c00;font-weight:700">[CTD]</span>' : '';
     const carros = numVal(l.carros) > 0 ? formatQty(l.carros) : '';
     const cajas = numVal(l.cajas) > 0 ? formatQty(l.cajas) : '';
@@ -1961,6 +2005,12 @@ function tickClock() {
 // ── GESTIÓN DE USUARIOS ──────────────────────────────────
 let appUsers = [];
 let allComerciales = [];
+
+async function openUsersPanel() {
+  await loadUsers();
+  document.getElementById('usersPanel').classList.add('open');
+}
+function closeUsersPanel() { closeModal('usersPanel'); }
 
 async function loadUsers() {
   try {
@@ -2127,6 +2177,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     await loadHojasRuta();
     refreshAll();
     fitMapToMarkers();
+    initUploadDropzone();
   }
 });
 
@@ -2348,7 +2399,7 @@ function renderShippingZonesListV2() {
   el.innerHTML = shippingZones.map(zone => `
     <div class="client-card" style="padding:8px 10px;margin-bottom:6px;cursor:default">
       <div class="card-top">
-        <div class="cname">${esc(zone.carrier_name)} · CP ${esc(zone.cp_prefix)}</div>
+        <div class="cname">${esc(zone.carrier_name)} · CP ${esc(zone.prefijo_cp)}</div>
         <div class="card-actions" style="opacity:1">
           <button class="icon-btn" onclick="openShippingZoneModal(${zone.id})" title="Editar">&#9998;</button>
         </div>
@@ -2474,8 +2525,8 @@ function openShippingZoneModal(id = null) {
   const zone = id ? shippingZones.find(row => parseInt(row.id, 10) === parseInt(id, 10)) : null;
   document.getElementById('shippingZoneModalTitle').textContent = zone ? 'Editar zona' : 'Nueva zona';
   document.getElementById('shippingZoneId').value = zone?.id || '';
-  document.getElementById('shippingZoneCarrier').innerHTML = shippingCarrierOptions(zone?.carrier_id || '');
-  document.getElementById('shippingZonePrefix').value = zone?.cp_prefix || '';
+  document.getElementById('shippingZoneCarrier').innerHTML = shippingCarrierOptions(zone?.id_transportista || '');
+  document.getElementById('shippingZonePrefix').value = zone?.prefijo_cp || '';
   document.getElementById('shippingZoneNumber').value = zone?.zona || 1;
   document.getElementById('shippingZoneRemote').checked = zone ? !!parseInt(zone.remoto, 10) : false;
   document.getElementById('shippingZoneDeleteBtn').style.display = zone ? '' : 'none';
@@ -2490,8 +2541,8 @@ async function saveShippingZone() {
   const id = document.getElementById('shippingZoneId').value;
   const payload = {
     entity_type: 'zone',
-    carrier_id: document.getElementById('shippingZoneCarrier').value,
-    cp_prefix: document.getElementById('shippingZonePrefix').value.trim(),
+    id_transportista: document.getElementById('shippingZoneCarrier').value,
+    prefijo_cp: document.getElementById('shippingZonePrefix').value.trim(),
     zona: document.getElementById('shippingZoneNumber').value,
     remoto: document.getElementById('shippingZoneRemote').checked ? 1 : 0,
   };
@@ -2529,7 +2580,7 @@ function openShippingRateBandModal(id = null) {
   const rate = id ? shippingRates.find(row => parseInt(row.id, 10) === parseInt(id, 10)) : null;
   document.getElementById('shippingRateBandModalTitle').textContent = rate ? 'Editar tarifa' : 'Nueva tarifa';
   document.getElementById('shippingRateBandId').value = rate?.id || '';
-  document.getElementById('shippingRateCarrier').innerHTML = shippingCarrierOptions(rate?.carrier_id || '');
+  document.getElementById('shippingRateCarrier').innerHTML = shippingCarrierOptions(rate?.id_transportista || '');
   document.getElementById('shippingRateZone').value = rate?.zona || 1;
   document.getElementById('shippingRatePesoMin').value = rate?.peso_min || 0;
   document.getElementById('shippingRatePesoMax').value = rate?.peso_max || 1;
@@ -2548,7 +2599,7 @@ async function saveShippingRateBand() {
   const id = document.getElementById('shippingRateBandId').value;
   const payload = {
     entity_type: 'rate',
-    carrier_id: document.getElementById('shippingRateCarrier').value,
+    id_transportista: document.getElementById('shippingRateCarrier').value,
     zona: document.getElementById('shippingRateZone').value,
     peso_min: document.getElementById('shippingRatePesoMin').value,
     peso_max: document.getElementById('shippingRatePesoMax').value,
@@ -2590,7 +2641,7 @@ function openShippingSurchargeModal(id = null) {
   const surcharge = id ? shippingSurcharges.find(row => parseInt(row.id, 10) === parseInt(id, 10)) : null;
   document.getElementById('shippingSurchargeModalTitle').textContent = surcharge ? 'Editar recargo' : 'Nuevo recargo';
   document.getElementById('shippingSurchargeId').value = surcharge?.id || '';
-  document.getElementById('shippingSurchargeCarrier').innerHTML = shippingCarrierOptions(surcharge?.carrier_id || '');
+  document.getElementById('shippingSurchargeCarrier').innerHTML = shippingCarrierOptions(surcharge?.id_transportista || '');
   document.getElementById('shippingSurchargeTipo').value = surcharge?.tipo || '';
   document.getElementById('shippingSurchargeImporte').value = surcharge?.importe ?? '';
   document.getElementById('shippingSurchargePct').value = surcharge?.porcentaje ?? '';
@@ -2607,7 +2658,7 @@ async function saveShippingSurcharge() {
   const id = document.getElementById('shippingSurchargeId').value;
   const payload = {
     entity_type: 'surcharge',
-    carrier_id: document.getElementById('shippingSurchargeCarrier').value,
+    id_transportista: document.getElementById('shippingSurchargeCarrier').value,
     tipo: document.getElementById('shippingSurchargeTipo').value.trim(),
     importe: document.getElementById('shippingSurchargeImporte').value,
     porcentaje: document.getElementById('shippingSurchargePct').value,
@@ -2654,11 +2705,11 @@ async function openSettingsModal() {
       ? (results[2] || { carriers: [], zones: [], rates: [], surcharges: [] })
       : { carriers: [], zones: [], rates: [], surcharges: [] };
 
-    document.getElementById('sLunchDur').value = s.lunch_duration_min || 60;
-    document.getElementById('sLunchEarly').value = s.lunch_earliest || '12:00';
-    document.getElementById('sLunchLate').value = s.lunch_latest || '15:30';
-    document.getElementById('sBaseUnload').value = s.base_unload_min || 5;
-    document.getElementById('sSpeed').value = s.default_speed_kmh || 50;
+    document.getElementById('sLunchDur').value = s.almuerzo_duracion_min || 60;
+    document.getElementById('sLunchEarly').value = s.almuerzo_hora_min || '12:00';
+    document.getElementById('sLunchLate').value = s.almuerzo_hora_max || '15:30';
+    document.getElementById('sBaseUnload').value = s.descarga_min_base || 5;
+    document.getElementById('sSpeed').value = s.velocidad_defecto_kmh || 50;
 
     glsConfigState = shippingConfig;
     applyShippingConfigToForm(shippingConfig);

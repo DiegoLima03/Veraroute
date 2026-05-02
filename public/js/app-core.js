@@ -158,7 +158,7 @@ let hrAutoOrderFocusMode = false;
 let hrGlsAutoCalcTimer = null;
 let hrGlsAutoCalcRunning = false;
 let lastGlsCalcResult = null; // { hojaId, total_route_km, total_route_cost, optimized_savings, line_recommendations, ... }
-let simulationOverrides = {}; // lineaId -> 'fleet' | 'externalize'  (override local del simulador)
+let simulationOverrides = {}; // lineaId -> 'fleet' | 'externalizar'  (override local del simulador)
 let lastSimResult = null; // { hojaId, fleet_km, fleet_cost, gls_total, total }
 let simulationDebounceTimer = null;
 let simulationInFlight = false;
@@ -176,8 +176,8 @@ function getUserComercialIds() {
     ? APP_USER.comercial_ids.map(id => parseInt(id, 10)).filter(Boolean)
     : [];
 
-  if (!ids.length && APP_USER.comercial_id) {
-    ids.push(parseInt(APP_USER.comercial_id, 10));
+  if (!ids.length && APP_USER.id_comercial) {
+    ids.push(parseInt(APP_USER.id_comercial, 10));
   }
 
   return Array.from(new Set(ids));
@@ -188,7 +188,7 @@ function getClientCommercialIds(client) {
 
   const source = Array.isArray(client.comercial_ids) && client.comercial_ids.length
     ? client.comercial_ids
-    : [client.comercial_id, client.comercial_planta_id, client.comercial_flor_id, client.comercial_accesorio_id];
+    : [client.id_comercial, client.id_comercial_planta, client.id_comercial_flor, client.id_comercial_accesorio];
 
   return Array.from(new Set(source.map(id => parseInt(id, 10)).filter(Boolean)));
 }
@@ -276,11 +276,11 @@ function hojaLineaHasCarga(linea) {
 }
 
 function hasLineaCostData(linea) {
-  return linea?.detour_km !== null
-    || linea?.cost_own_route !== null
-    || linea?.cost_gls_adjusted !== null
-    || !!linea?.gls_recommendation
-    || !!linea?.gls_notes;
+  return linea?.desvio_km !== null
+    || linea?.coste_ruta_propia !== null
+    || linea?.coste_gls_ajustado !== null
+    || !!linea?.recomendacion_gls
+    || !!linea?.notas_gls;
 }
 
 function getHojaActiveLineas(hoja) {
@@ -288,7 +288,7 @@ function getHojaActiveLineas(hoja) {
 }
 
 function getHojaVisibleLineas(hoja, isComercialView) {
-  return isComercialView ? (hoja?.lineas || []) : getHojaActiveLineas(hoja);
+  return hoja?.lineas || [];
 }
 
 function getHojaSummaryLineCount(hoja) {
@@ -301,9 +301,9 @@ function getHojaSummaryLineCount(hoja) {
 function getHojaRouteDelegation(lineas) {
   const delCount = {};
   (lineas || []).forEach(l => {
-    const cl = clients.find(c => c.id === parseInt(l.client_id, 10));
-    if (cl?.delegation_id) {
-      delCount[cl.delegation_id] = (delCount[cl.delegation_id] || 0) + 1;
+    const cl = clients.find(c => c.id === parseInt(l.id_cliente, 10));
+    if (cl?.id_delegacion) {
+      delCount[cl.id_delegacion] = (delCount[cl.id_delegacion] || 0) + 1;
     }
   });
 
@@ -322,24 +322,24 @@ function getHojaRouteDelegation(lineas) {
     || null;
 }
 
-function glsRecommendationMeta(recommendation) {
-  const rec = recommendation || 'unavailable';
+function glsRecommendationMeta(recomendacion) {
+  const rec = recomendacion || 'no_disponible';
   const isOptimal = typeof rec === 'string' && rec.endsWith('_optimal');
   const baseRec = isOptimal ? rec.slice(0, -'_optimal'.length) : rec;
   const star = isOptimal ? ' \u2605' : '';
-  if (baseRec === 'own_route') return { cls: 'own', label: 'Ruta propia' + star, optimal: isOptimal };
-  if (baseRec === 'externalize') return { cls: 'externalize', label: 'Enviar por paqueteria' + star, optimal: isOptimal };
-  if (baseRec === 'break_even') return { cls: 'break_even', label: 'Empate tecnico', optimal: false };
-  return { cls: 'unavailable', label: 'No calculable', optimal: false };
+  if (baseRec === 'ruta_propia') return { cls: 'own', label: 'Ruta propia' + star, optimal: isOptimal };
+  if (baseRec === 'externalizar') return { cls: 'externalizar', label: 'Enviar por paqueteria' + star, optimal: isOptimal };
+  if (baseRec === 'equilibrio') return { cls: 'equilibrio', label: 'Empate tecnico', optimal: false };
+  return { cls: 'no_disponible', label: 'No calculable', optimal: false };
 }
 
 function isExternalizeRecommendation(rec) {
   const r = rec || '';
-  return r === 'externalize' || r === 'externalize_optimal';
+  return r === 'externalizar' || r === 'externalize_optimal';
 }
 
 function getEffectiveLineaRecommendation(linea) {
-  return linea?.gls_recommendation_effective || linea?.gls_recommendation || 'unavailable';
+  return linea?.gls_recommendation_effective || linea?.recomendacion_gls || 'no_disponible';
 }
 
 function getEffectiveLineaRecommendationNote(linea) {
@@ -347,12 +347,12 @@ function getEffectiveLineaRecommendationNote(linea) {
 }
 
 function getGlobalGlsRecommendationMeta(summary) {
-  const recommendation = summary?.globalRecommendation || 'unavailable';
+  const recomendacion = summary?.globalRecommendation || 'no_disponible';
   const totalRouteCost = numVal(summary?.totalRouteCost);
   const totalGlsAllClients = numVal(summary?.totalGlsAllClients);
   const globalSavings = numVal(summary?.globalSavings);
 
-  if (recommendation === 'externalize_all') {
+  if (recomendacion === 'externalize_all') {
     return {
       bannerHtml: `<div class="hr-gls-banner externalize">
         <div class="hr-gls-banner-title">Externaliza TODOS los clientes - ahorro real: ${esc(formatMoney(globalSavings))}</div>
@@ -365,7 +365,7 @@ function getGlobalGlsRecommendationMeta(summary) {
     };
   }
 
-  if (recommendation === 'do_route') {
+  if (recomendacion === 'do_route') {
     return {
       bannerHtml: `<div class="hr-gls-banner do-route">
         <div class="hr-gls-banner-title">La ruta merece la pena en flota propia - ahorro: ${esc(formatMoney(globalSavings))} vs GLS</div>
@@ -420,7 +420,7 @@ function friendlyGlsNote(note) {
 
 function getComercialQuickSearchClients() {
   const ids = getUserComercialIds();
-  let rows = activeClients().filter(c => c.ruta_id);
+  let rows = activeClients().filter(c => c.id_ruta);
   if (ids.length) {
     rows = rows.filter(c => clientMatchesCommercialIds(c, ids));
   }
@@ -443,7 +443,7 @@ function getComercialQuickSearchClients() {
 
 function getQuickHojaAndLineaForClient(clientId) {
   for (const hoja of hojasData.hojas || []) {
-    const linea = (hoja.lineas || []).find(l => parseInt(l.client_id, 10) === parseInt(clientId, 10));
+    const linea = (hoja.lineas || []).find(l => parseInt(l.id_cliente, 10) === parseInt(clientId, 10));
     if (linea) return { hoja, linea };
   }
   return { hoja: null, linea: null };
@@ -525,7 +525,7 @@ function renderComercialQuickSearchSection() {
 
 async function saveQuickHojaLine(clientId) {
   const client = clients.find(c => c.id === parseInt(clientId, 10));
-  if (!client || !client.ruta_id) return;
+  if (!client || !client.id_ruta) return;
 
   const carrosInput = document.getElementById(`hrQuickCarros-${clientId}`);
   const cajasInput = document.getElementById(`hrQuickCajas-${clientId}`);
@@ -544,22 +544,22 @@ async function saveQuickHojaLine(clientId) {
     let linea = existing.linea;
 
     if (!hoja) {
-      const created = await api('hojas-ruta', 'POST', { ruta_id: client.ruta_id, fecha: getHrDate() });
+      const created = await api('hojas-ruta', 'POST', { id_ruta: client.id_ruta, fecha: getHrDate() });
       hoja = await api('hojas-ruta/' + created.id);
-      linea = (hoja.lineas || []).find(l => parseInt(l.client_id, 10) === client.id) || null;
+      linea = (hoja.lineas || []).find(l => parseInt(l.id_cliente, 10) === client.id) || null;
     }
 
     if (!linea) {
       await api('hojas-ruta/' + hoja.id + '/lineas', 'POST', {
-        client_id: client.id,
-        comercial_id: pickClientCommercialId(client, getUserComercialIds()),
+        id_cliente: client.id,
+        id_comercial: pickClientCommercialId(client, getUserComercialIds()),
         carros: 0,
         cajas: 0,
         zona: client.addr || '',
         observaciones: '',
       });
       hoja = await api('hojas-ruta/' + hoja.id);
-      linea = (hoja.lineas || []).find(l => parseInt(l.client_id, 10) === client.id) || null;
+      linea = (hoja.lineas || []).find(l => parseInt(l.id_cliente, 10) === client.id) || null;
     }
 
     if (!linea) throw new Error('No se pudo preparar la linea del cliente');
@@ -687,7 +687,7 @@ function getRutaColor(rutaId) {
 }
 
 // Devuelve el id de ruta que se usara para colorear al cliente.
-// Prioriza la asignacion N:M (c.rutas[]) sobre el legacy c.ruta_id, y entre
+// Prioriza la asignacion N:M (c.rutas[]) sobre el legacy c.id_ruta, y entre
 // varias rutas escoge la que tenga menor indice en el array global `rutas`,
 // para que dos clientes de la misma ruta siempre salgan del mismo color.
 function pickClientRutaIdForColor(c) {
@@ -703,7 +703,7 @@ function pickClientRutaIdForColor(c) {
     });
     if (bestId !== null) return bestId;
   }
-  return c && c.ruta_id ? c.ruta_id : null;
+  return c && c.id_ruta ? c.id_ruta : null;
 }
 
 // Devuelve los colores de todas las rutas asociadas al cliente, ordenados por
@@ -720,7 +720,7 @@ function getClientRouteColors(c) {
     });
   }
 
-  const legacyId = parseInt(c?.ruta_id, 10);
+  const legacyId = parseInt(c?.id_ruta, 10);
   if (Number.isFinite(legacyId) && !routeItems.some(item => item.id === legacyId)) {
     routeItems.push({ id: legacyId, color: null });
   }
